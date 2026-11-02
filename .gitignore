@@ -1,0 +1,19 @@
+# 秘密の情報
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store
+
+# Python の作業ファイル
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# 公式サイトからダウンロードした公募要領や様式
+downloads/
