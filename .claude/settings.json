@@ -15,7 +15,9 @@
       "mcp__Claude_Browser__get_page_text",
       "mcp__Claude_Browser__find",
       "mcp__terminal__read_terminal",
-      "mcp__ccd_pr__get_status"
+      "mcp__ccd_pr__get_status",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ],
     "ask": [
       "Bash(git push:*)",
