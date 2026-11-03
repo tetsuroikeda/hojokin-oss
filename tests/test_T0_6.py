@@ -398,6 +398,95 @@ def test_submit_refuses_when_a_copy_is_left_out_by_gitignore(company) -> None:
     assert f"- {FINANCE}（版の履歴に入っていない" in out
 
 
+# ---- 別名（シンボリックリンク）があるときも、提出版を記録しない ----
+# 版の履歴は、Git と同じく、別名を「指す先の名前」だけのファイルとして残す。そのまま提出版にすると、取り出したときに
+# 写しの中身でなく場所の文字が出てくる（フォルダの別名なら、中の写しが丸ごと抜ける）ので、記録せずに断る。
+
+LINK_WHY = "別名なので中身を提出版に残せない"
+COPY2 = f"{STAGE_DIR}/添付する書類/見積書2_写し.pdf"
+ORIGINAL2 = "原本/見積・契約・請求/見積書2.pdf"
+MODEL_ORIGINAL = "原本/会社の資料/財務モデル_元.xlsx"
+
+
+def assert_submitted_as_is(company: vt.Company, words: str, expected: set) -> None:
+    """別名を本物に置き換えて記録し直すと、置き換えた写しも入り、取り出すと提出時と同じ中身になる。"""
+    at_submit = submission_set(company.folder)
+    assert set(at_submit) == expected
+    out = submit(company, words)
+    assert f"（{len(expected)}件。" in out, out
+    (entry,) = submissions(company)
+    assert {f["書類"]: f["sha256"] for f in entry["ファイル"]} == {
+        p: hashlib.sha256(data).hexdigest() for p, data in at_submit.items()
+    }
+    out = ct.ok(run_tool(company, "show-submitted"))
+    assert "提出したときと同じ中身" in out
+    assert from_view(view_files(company.folder)) == at_submit
+
+
+def test_submit_refuses_when_a_folder_in_the_stage_is_a_link(company) -> None:
+    """段階のフォルダの中のフォルダが別名なら、中の写しが提出版から抜けるので、提出版を記録しない
+    （版の履歴に別名が入っていても）。本物のフォルダに置き換えてから記録し直すと、その写しも入る。"""
+    edit_three_times(company)
+    outside = company.env.root / "外の写し"
+    outside.mkdir()
+    (outside / "納税証明書_写し.pdf").write_bytes(blob("pdf", 7))
+    company.say("追加の写しのフォルダを置いて")
+    os.symlink(str(outside), str(company.folder / EXTRA_DIR))
+    assert company.stop() is None
+    assert EXTRA_DIR in company.tracked()  # 版の履歴は、別名そのものを1つのファイルとして残している
+    company.say(SUBMIT_WORDS)
+    out = submit_refused(company)
+    assert_not_recorded(company, out, EXTRA_DIR, LINK_WHY)
+    assert "納税証明書" not in out  # 別名の先はたどらない
+
+    os.unlink(str(company.folder / EXTRA_DIR))
+    company.write(EXTRA_COPY, blob("pdf", 7))
+    assert_submitted_as_is(company, "別名を写しのフォルダに置き換えたので、もう一度記録して",
+                           {SONO1, INPUT, COPY, FINANCE, EXTRA_COPY})
+
+
+def test_submit_refuses_when_a_copy_or_the_financial_model_is_a_link(company) -> None:
+    """写しや財務モデル.xlsx が別名（原本を指すなど）なら、取り出しても場所の文字しか出ないので、提出版を記録しない。
+    断るときは、別名をすべて挙げる。本物のファイルに置き換えてから記録し直すと、同じ中身を取り出せる。"""
+    edit_three_times(company)
+    company.say("見積書2の写しを置き、財務モデルは会社の資料のものを使って")
+    company.write(ORIGINAL2, blob("pdf", 8))
+    company.write(MODEL_ORIGINAL, blob("xlsx", 103))
+    # 写しは原本を指す別名（相対の場所）、財務モデルは原本を指す別名（絶対の場所）
+    os.symlink(os.path.relpath(str(company.folder / ORIGINAL2), str((company.folder / COPY2).parent)),
+               str(company.folder / COPY2))
+    os.unlink(str(company.folder / FINANCE))
+    os.symlink(str(company.folder / MODEL_ORIGINAL), str(company.folder / FINANCE))
+    assert (company.folder / COPY2).read_bytes() == blob("pdf", 8)  # 開けば中身が見える別名
+    assert company.stop() is None
+    assert COPY2 in company.tracked() and FINANCE in company.tracked()
+    company.say(SUBMIT_WORDS)
+    out = submit_refused(company)
+    assert_not_recorded(company, out, COPY2, LINK_WHY)
+    assert f"- {FINANCE}（{LINK_WHY}）" in out
+
+    for rel, data in ((COPY2, blob("pdf", 8)), (FINANCE, blob("xlsx", 103))):
+        os.unlink(str(company.folder / rel))
+        company.write(rel, data)
+    assert_submitted_as_is(company, "別名を写しに置き換えたので、もう一度記録して",
+                           {SONO1, INPUT, COPY, FINANCE, COPY2})
+
+
+def test_submit_refuses_when_the_stage_folder_is_a_link(company) -> None:
+    """段階のフォルダそのものが別名でも、中をたどらずに、その別名を挙げて断る。"""
+    real = company.env.root / "外の段階"
+    company.say("段階のフォルダを置いて")
+    (real / "申請書").mkdir(parents=True)
+    (real / "申請書" / "その1.docx").write_bytes(blob("docx", 1))
+    (company.folder / vt.CASE_DIR).mkdir(parents=True)
+    os.symlink(str(real), str(company.folder / STAGE_DIR))
+    assert company.stop() is None
+    company.say(SUBMIT_WORDS)
+    out = submit_refused(company)
+    assert_not_recorded(company, out, STAGE_DIR, LINK_WHY)
+    assert "その1.docx" not in out
+
+
 def test_temporary_files_do_not_block_submission(company) -> None:
     """Word・Excel が開いている間だけ作るファイルや .DS_Store は、書類でないので、残っていても断らない。
     提出版にも入れない。"""

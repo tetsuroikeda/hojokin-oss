@@ -16,6 +16,9 @@
    （.gitignore に当たる写しや、読めないフォルダの中の写しが、黙って提出版から抜けないように）。ただし、
    Word・Excel が開いている間だけ作るファイルと、パソコンが自動で作るファイル（プラグインが .gitignore に書くもの。
    lib/company_init.py）は、書類でないので見逃す。財務モデル.xlsx も同じく確かめる。
+   別名（シンボリックリンク）があっても、提出版を記録しない。版の履歴は、Git と同じく、別名を指す先の名前だけの
+   ファイルとして残すので、別名の先の写し（フォルダなら中のすべて）が提出版に入らないため。段階のフォルダの中の
+   別名、財務モデル.xlsx の別名、段階のフォルダやその上のフォルダの別名のどれも断る。
 3. そのときの版の印（40桁）と、提出するファイルごとの場所・大きさ・中身の印（sha256）を、
    `記録/提出版.json`（版の一覧）に足し、その変更も版に残す。
 4. Git の印（`refs/tags/提出版/<案件>/<段階>/<番号>`）を、提出したときの版に付ける。名前に使えない文字があれば、
@@ -59,6 +62,7 @@ TOO_LARGE = "大きすぎる"
 DEFERRED = "残しきる前に時間が切れた"
 STILL_CHANGING = "版に残す間に変わった"
 NOT_IN_HISTORY = "版の履歴に入っていない（.gitignore で除かれているなど）"
+LINK = "別名なので中身を提出版に残せない"
 
 
 class SubmissionError(Exception):
@@ -189,7 +193,7 @@ def _tag_name(case: str, stage: str, number: int) -> bytes:
 
 
 def _related_dir(directory: str, base: str) -> bool:
-    """中を読めないフォルダが、段階のフォルダ（base）の中か、段階のフォルダそのもの・その上か。"""
+    """場所（中を読めないフォルダや別名）が、段階のフォルダ（base）の中か、段階のフォルダそのもの・その上か。"""
     return directory == base or directory.startswith(base + "/") or base.startswith(directory + "/")
 
 
@@ -227,10 +231,25 @@ def _actual(folder: Path, rel: str) -> Optional[str]:
     return current
 
 
+def _link_on_the_way(folder: Path, rel: str) -> Optional[str]:
+    """会社のフォルダからの場所（NFC）までの途中のフォルダか、その場所そのものが別名なら、その別名の場所。"""
+    parts = rel.split("/")
+    for i in range(1, len(parts) + 1):
+        prefix = "/".join(parts[:i])
+        actual = _actual(folder, prefix)
+        if actual is None:
+            return None
+        if os.path.islink(actual):
+            return prefix
+    return None
+
+
 def _outside_history(folder: Path, case: str, stage: str, recorded: Set[str]) -> Dict[str, str]:
     """段階のフォルダ（と 財務モデル.xlsx）にあって、そのときの版にないもの（場所 → わけ）。
     .gitignore は使わずにたどる。書類でないもの（TEMPORARY_PATTERNS に当たるもの）と、.git のフォルダは見逃す。
-    別名（シンボリックリンク）は、版の履歴と同じく1つのファイルとして扱い、先はたどらない。"""
+    別名（シンボリックリンク）は先をたどらず、版の履歴に入っていても、中身を提出版に残せないものとして挙げる
+    （版の履歴は、別名を指す先の名前だけのファイルとして残すため）。段階のフォルダやその上のフォルダが別名なら、
+    中はたどらずに、その別名を挙げる。"""
     from dulwich.ignore import IgnoreFilter
 
     temporary = IgnoreFilter(p.encode("utf-8") for p in TEMPORARY_PATTERNS)
@@ -241,16 +260,19 @@ def _outside_history(folder: Path, case: str, stage: str, recorded: Set[str]) ->
         return nfc(os.path.relpath(path, root)).replace(os.sep, "/")
 
     def check(full: str, rel: str) -> None:
-        if rel in recorded or temporary.is_ignored(rel):
+        if temporary.is_ignored(rel):
             return
         try:
             st = os.lstat(full)
         except FileNotFoundError:
             return  # たどる間に消えた
         except OSError:
-            found[rel] = UNREADABLE
+            if rel not in recorded:
+                found[rel] = UNREADABLE
             return
-        if stat_mode.S_ISREG(st.st_mode) or stat_mode.S_ISLNK(st.st_mode):
+        if stat_mode.S_ISLNK(st.st_mode):
+            found[rel] = LINK
+        elif stat_mode.S_ISREG(st.st_mode) and rel not in recorded:
             found[rel] = NOT_IN_HISTORY
 
     def walk_error(error: OSError) -> None:
@@ -258,7 +280,10 @@ def _outside_history(folder: Path, case: str, stage: str, recorded: Set[str]) ->
         if where and not isinstance(error, (FileNotFoundError, NotADirectoryError)):
             found[rel_of(where) + "/"] = UNREADABLE_DIR
 
-    start = _actual(folder, stage_dir(case, stage))
+    link = _link_on_the_way(folder, stage_dir(case, stage))
+    if link is not None:
+        found[link] = LINK
+    start = None if link is not None else _actual(folder, stage_dir(case, stage))
     if start is not None:
         for dirpath, dirnames, filenames in os.walk(start, onerror=walk_error):
             keep = []
@@ -283,7 +308,8 @@ def _refuse_left(left: Dict[str, str]) -> SubmissionError:
     lines = "\n".join(f"- {path}（{why}）" for path, why in sorted(left.items()))
     return SubmissionError(
         "次のものを版の履歴に残せなかったため、提出版を記録していません（取り出しても、提出したときと同じ中身に"
-        "ならないため）。読めるようにする、.gitignore から外すなどしてから、もう一度記録してください：\n" + lines
+        "ならないため）。読めるようにする、.gitignore から外す、別名を本物のファイルやフォルダに置き換えるなどしてから、"
+        "もう一度記録してください：\n" + lines
     )
 
 
@@ -316,8 +342,13 @@ def record(folder: Path, case: str, stage: str, reason: Optional[str] = None,
                 raise SubmissionError("版の履歴がまだないため、提出版を記録できません")
             head = repo.head()
             files = []
+            links: Dict[str, str] = {}
             for item in iter_tree_contents(repo.object_store, repo[head].tree):
                 path = nfc(item.path.decode("utf-8", "surrogateescape"))
+                if stat_mode.S_ISLNK(item.mode) and (in_submission(path, case, stage) or _related_dir(path, base)):
+                    # 別名は、版に指す先の名前しか残らない（先の写しが提出版から抜ける）ので、提出版に入れずに断る
+                    links[path] = LINK
+                    continue
                 if not in_submission(path, case, stage):
                     continue
                 blob = repo[item.sha]
@@ -325,10 +356,10 @@ def record(folder: Path, case: str, stage: str, reason: Optional[str] = None,
                     continue
                 data = blob.data
                 files.append({"書類": path, "大きさ": len(data), "sha256": hashlib.sha256(data).hexdigest()})
-            # 段階のフォルダにあって、版にないもの（.gitignore に当たる写しなど）があれば断る
-            outside = _outside_history(folder, case, stage, {f["書類"] for f in files})
-            if outside:
-                raise _refuse_left(outside)
+            # 段階のフォルダにあって、版にないもの（.gitignore に当たる写しなど）や、別名があれば断る
+            outside = _outside_history(folder, case, stage, {f["書類"] for f in files} | set(links))
+            if links or outside:
+                raise _refuse_left({**outside, **links})
             if not any(f["書類"].startswith(base + "/") for f in files):
                 raise SubmissionError(f"{base}/ に書類がないため、提出版を記録していません")
             files.sort(key=lambda f: f["書類"])
