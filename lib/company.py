@@ -14,6 +14,9 @@ from typing import Optional, Union
 
 MARKER_DIR = ".hojokin"
 SETTINGS_FILE = "設定.json"
+# `.hojokin/` の中で、版の履歴に入れない、その場限りのものを置くフォルダ
+# （画面入力の許可、ブラウザの部品の控えなど。DESIGN 4.5）。会社のフォルダの .gitignore に書く。
+TEMP_DIR = "一時"
 
 
 def project_dir() -> Path:
