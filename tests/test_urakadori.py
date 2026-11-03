@@ -724,13 +724,11 @@ def test_chapter_name_cannot_leave_the_place(company, chapter) -> None:
     data = good_chapter()
     data["読み取り"]["章"] = chapter
     before = hr.snapshot(company.folder)
-    r = company.run(data)
-    after = hr.snapshot(company.folder)
-    for path in changed(before, after):
-        rel = Path(path).relative_to(company.folder)
-        assert rel.parts[:2] == ("記録", "制度データ"), rel
-        assert len(rel.parts) <= 5, rel
-    assert r.returncode in (0, 2), text(r)
+    check_code(company.run(data), 0)  # 「/」は使えない文字なので「・」にし、両端の「.」は除いて、決まった場所に置く
+    files = [Path(p).relative_to(company.folder) for p in changed(before, hr.snapshot(company.folder))
+             if Path(p).is_file()]
+    assert len(files) == 1 and files[0].parent == READING_REL, files
+    assert "/" not in files[0].name and not files[0].name.startswith("."), files
 
 
 def test_alias_folder_cannot_redirect_the_place(company) -> None:
