@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>試しの申請画面 2（実験 E1）</title>
+<style>
+  body { font-family: sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+  .banner { background: #fde68a; padding: 8px 12px; margin-bottom: 16px; }
+  fieldset { margin: 12px 0; }
+  label { display: block; margin: 6px 0; }
+  .buttons button { margin-right: 8px; }
+</style>
+</head>
+<body>
+<div class="banner">架空の試しの画面です（実験 E1）。本物の申請画面ではありません。</div>
+<h1>試しの申請画面 2：事業の計画</h1>
+<form method="post" action="/submit" enctype="multipart/form-data">
+  <input type="hidden" name="page" value="2">
+  <label>補助事業の名前 <input type="text" name="project" value=""></label>
+  <fieldset>
+    <legend>加点</legend>
+    <label><input type="checkbox" name="katen_keiei"> 経営革新計画の加点を申請する</label>
+  </fieldset>
+  <fieldset>
+    <legend>宣誓</legend>
+    <label><input type="checkbox" name="sensei"> 補助金の不正受給をしないことを宣誓します</label>
+  </fieldset>
+  <label>カタログの添付 <input type="file" name="catalog"></label>
+  <div class="buttons">
+    <button type="submit" name="button" value="back">戻る</button>
+    <button type="submit" name="button" value="save">一時保存</button>
+    <button type="submit" name="button" value="submit">送信する</button>
+  </div>
+</form>
+</body>
+</html>

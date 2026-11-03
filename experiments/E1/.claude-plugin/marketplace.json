@@ -1,0 +1,14 @@
+{
+  "name": "hojokin-e1",
+  "description": "実験 E1 の試しのマーケットプレイス（ブラウザの道具と画面入力の守りを見る）",
+  "owner": {
+    "name": "hojokin-oss"
+  },
+  "plugins": [
+    {
+      "name": "e1-probe",
+      "source": "./e1-probe",
+      "description": "ブラウザの道具の呼び出しと結果を記録し、決まった操作だけ拒む試しのプラグイン"
+    }
+  ]
+}

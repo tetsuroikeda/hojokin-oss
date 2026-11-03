@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>試しの申請画面 1（実験 E1）</title>
+<style>
+  body { font-family: sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+  .banner { background: #fde68a; padding: 8px 12px; margin-bottom: 16px; }
+  fieldset { margin: 12px 0; }
+  label { display: block; margin: 6px 0; }
+  .buttons button { margin-right: 8px; }
+</style>
+</head>
+<body>
+<div class="banner">架空の試しの画面です（実験 E1）。本物の申請画面ではありません。</div>
+<h1>試しの申請画面 1：事業者の情報</h1>
+<form method="post" action="/submit" enctype="multipart/form-data">
+  <input type="hidden" name="page" value="1">
+  <label>会社名 <input type="text" name="company" value=""></label>
+  <label>事業の概要 <textarea name="summary" rows="3" cols="40"></textarea></label>
+  <label>業種
+    <select name="industry">
+      <option value="">選んでください</option>
+      <option value="manufacturing">製造業</option>
+      <option value="retail">小売業</option>
+      <option value="service">サービス業</option>
+    </select>
+  </label>
+  <fieldset>
+    <legend>申請する枠</legend>
+    <label><input type="radio" name="frame" value="ippan"> 一般型</label>
+    <label><input type="radio" name="frame" value="tokubetsu"> 特別枠</label>
+  </fieldset>
+  <fieldset>
+    <legend>加点</legend>
+    <label><input type="checkbox" name="katen_chinage"> 賃上げ加点を申請する</label>
+  </fieldset>
+  <fieldset>
+    <legend>確認</legend>
+    <label><input type="checkbox" name="seiyaku"> 申請の内容に相違ないことを誓約します</label>
+  </fieldset>
+  <div>名前のない欄：<input type="checkbox" name="noname"></div>
+  <label>見積書の添付 <input type="file" name="mitsumori"></label>
+  <label>パスワード <input type="password" name="password"></label>
+  <div class="buttons">
+    <button type="submit" name="button" value="save">一時保存</button>
+    <button type="submit" name="button" value="next">次へ</button>
+    <button type="submit" name="button" value="submit">提出する</button>
+  </div>
+</form>
+</body>
+</html>
