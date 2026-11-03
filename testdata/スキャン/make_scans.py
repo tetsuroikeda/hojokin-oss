@@ -21,7 +21,10 @@ T5-8（スキャンした書類の金額と明細を、正解と突き合わせ�
 どの書類と写真にも「架空のテスト用データ」を出す。
 
 作者が手で書いて撮ったメモの写真に替えるときは、作者の写真/経費のメモ.jpg に置いてから、このスクリプトを流す
-（あれば、描いたメモの代わりにそれを写す）。書く中身は 材料の一覧.md にある。
+（あれば、描いたメモの代わりにそれを使う）。書く中身は 材料の一覧.md にある。そのまま写さず、向きを直して画素だけを
+経費のメモ_作者の写真.jpg に保存し直し、それを 材料/ に写すので、EXIF・XMP（撮った位置・機種・日時）や色の情報は
+入らない。作者の写真/ は Git の外（testdata/スキャン/.gitignore）で、元の写真はコミットされない。
+経費のメモ_作者の写真.jpg はコミットし、元の写真がない機械でも、これから同じ 材料/ を作る。
 
 同じ元のファイルと同じ版のライブラリからなら、何度作っても同じバイト列になる。PDF の日本語の字形は埋め込まれていないので、
 PDFium が手元の字形で描く（Mac ならヒラギノ）。手書き風の字は Mac の Klee を使う。別の機械で作り直すと、画像のバイト列は変わることがある。
@@ -61,7 +64,8 @@ PRESIDENT = d2a.PRESIDENT  # A-08
 
 MATERIAL_DIR = HERE / "材料"
 ORIGINAL_DIR = HERE / "元の書類"
-AUTHOR_PHOTO = HERE / "作者の写真" / "経費のメモ.jpg"
+AUTHOR_PHOTO = HERE / "作者の写真" / "経費のメモ.jpg"  # 作者が置く元の写真。EXIF を持つので Git の外（.gitignore）
+AUTHOR_MEMO = HERE / "経費のメモ_作者の写真.jpg"  # 上から EXIF などを落としたもの。コミットし、次からはこれから作る
 ANSWER = HERE / "正解.json"
 EXPENSE_ANSWER = HERE / "経費明細の正解.json"
 
@@ -570,6 +574,58 @@ def make_photo(page: Image.Image, dst: Path, *, angle: float, keystone: float, b
     photo.save(dst, "JPEG", quality=quality)
 
 
+PHOTO_LONG_SIDE = 2048  # 作者の写真を縮める長辺（描いた写真の 1536×2048 にそろえる）
+
+
+def photo_leftovers(path: Path) -> list[str]:
+    """JPEG に残った付けたし（EXIF・XMP・色の情報・コメントなど）を挙げる。なければ空。
+    画像のデータ（SOS）の前にある APP1〜APP15 と COM の区切りも見る（Pillow が書くのは APP0 だけ）。"""
+    found = []
+    with Image.open(path) as img:
+        if img.format != "JPEG":
+            return [f"形式 {img.format}"]
+        if img.getexif():
+            found.append("EXIF")
+        found += [k for k in ("exif", "xmp", "icc_profile", "photoshop", "comment") if k in img.info]
+    data = path.read_bytes()
+    i = 2
+    while i + 4 <= len(data) and data[i] == 0xFF:
+        marker = data[i + 1]
+        if marker == 0xFF:
+            i += 1
+            continue
+        if marker == 0xDA:
+            break
+        if 0xE1 <= marker <= 0xEF or marker == 0xFE:
+            found.append(f"区切り 0x{marker:02X}")
+        i += 2 + int.from_bytes(data[i + 2:i + 4], "big")
+    return found
+
+
+def strip_author_photo(src: Path, dst: Path) -> None:
+    """作者が撮った写真から、撮った位置・機種・日時などを落として dst に保存し直す。
+
+    スマホの写真の EXIF には GPS の位置・機種・撮影日時が入る。XMP にも入ることがある。
+    EXIF の向きの印で画素を回してから、画素だけを新しい画像に写して保存する（img.info の
+    exif・xmp・icc_profile を引き継がない）。長辺を PHOTO_LONG_SIDE に縮める。"""
+    try:
+        with Image.open(src) as img:
+            if img.format != "JPEG":
+                raise SystemExit(f"{src.name} は JPEG ではありません（{img.format}）。JPEG で撮るか、JPEG に書き出してください")
+            upright = ImageOps.exif_transpose(img).convert("RGB")
+    except OSError as err:
+        raise SystemExit(f"{src.name} を開けません（{err}）。JPEG で撮るか、JPEG に書き出してください") from err
+    clean = Image.frombytes("RGB", upright.size, upright.tobytes())
+    if max(clean.size) > PHOTO_LONG_SIDE:
+        k = PHOTO_LONG_SIDE / max(clean.size)
+        clean = clean.resize((round(clean.width * k), round(clean.height * k)), LANCZOS)
+    clean.save(dst, "JPEG", quality=85)
+    left = photo_leftovers(dst)
+    if left:
+        dst.unlink()
+        raise SystemExit(f"{dst.name} に {left} が残りました。作るのを止めます")
+
+
 # ---------------------------------------------------------------------------
 # 手書きのメモ（手書き風の字で描く。作者が書いて撮った写真に替えられる）
 # ---------------------------------------------------------------------------
@@ -850,7 +906,10 @@ def answers() -> tuple[dict, dict]:
         "材料": [f"材料/{FILES['tsubasa']}", f"材料/{FILES['hoshimi']}", f"材料/{FILES['rough']}", f"材料/{FILES['memo']}"],
         "経費のメモ": {
             "ファイル": f"材料/{FILES['memo']}",
-            "形": "手書きのメモをスマホで撮った写真（JPEG）。いまは手書き風の字で描いた仮のもの。作者が書いて撮った写真に替えてよい",
+            "形": (f"手書きのメモをスマホで撮った写真（JPEG）。作者が手で書いて撮ったもの（{AUTHOR_MEMO.name}。"
+                  "EXIF などを落として保存し直した）"
+                  if AUTHOR_MEMO.is_file() else
+                  "手書きのメモをスマホで撮った写真（JPEG）。いまは手書き風の字で描いた仮のもの。作者が書いて撮った写真に替えてよい"),
             "書いた日": MEMO_DATE.isoformat(),
             "文面": MEMO_LINES,
             "経費": [{"品名": n, "書き方": w, "金額": a} for n, w, a in MEMO_EXPENSES],
@@ -918,8 +977,15 @@ def build() -> None:
                seed=7006)
     memo_dst = MATERIAL_DIR / FILES["memo"]
     if AUTHOR_PHOTO.is_file():
-        shutil.copyfile(AUTHOR_PHOTO, memo_dst)
-        print(f"経費のメモは、作者の写真（{AUTHOR_PHOTO.relative_to(HERE)}）を写しました")
+        strip_author_photo(AUTHOR_PHOTO, AUTHOR_MEMO)
+        print(f"作者の写真（{AUTHOR_PHOTO.relative_to(HERE)}）から EXIF などを落として、{AUTHOR_MEMO.name} に保存し直しました"
+              "（元の写真は Git の外です）")
+    if AUTHOR_MEMO.is_file():
+        left = photo_leftovers(AUTHOR_MEMO)
+        if left:
+            sys.exit(f"{AUTHOR_MEMO.name} に {left} が残っています。元の写真を 作者の写真/経費のメモ.jpg に置いて流し直してください")
+        shutil.copyfile(AUTHOR_MEMO, memo_dst)
+        print(f"経費のメモは、作者が撮った写真（{AUTHOR_MEMO.name}）を使いました")
     else:
         make_photo(draw_memo(), memo_dst, angle=-2.4, keystone=0.03, blur=0.7, dim=25, quality=85, seed=7007)
 

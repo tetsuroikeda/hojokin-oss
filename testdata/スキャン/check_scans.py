@@ -8,6 +8,7 @@ make_scans.py の計算には頼らず、正解.json と 経費明細の正解.j
 
 確かめること：
 1. 材料/ に、正解にある書類と経費のメモだけがある。PDF は文字のない画像だけの PDF、写真は JPEG。
+   写真に EXIF・XMP（撮った位置・機種・日時）などの付けたしがない。作者が撮った元の写真（作者の写真/）は Git の外。
 2. 正解のどの書類でも、明細ごとの「数量 × 単価 ＝ 金額」、明細の和 ＝ 小計、税率ごとの対象額と消費税、小計 ＋ 消費税 ＝ 合計が合う。
 3. D2b の見積書2通の正解が、make_documents_part2.py の明細と、D2b の PDF の文字と合う。回答表（H-02〜H-05、A-01、A-08）とも合う。
 4. このスクリプトの外で描いた書類（概算見積・納品書・請求書）の正解が、元の書類/ のきれいな PDF の文字と合う。
@@ -27,6 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -42,6 +44,8 @@ import make_documents_part2 as d2b  # noqa: E402
 
 MATERIAL_DIR = HERE / "材料"
 ORIGINAL_DIR = HERE / "元の書類"
+AUTHOR_DIR = HERE / "作者の写真"  # 作者が置く元の写真（EXIF を持つので Git の外）
+AUTHOR_MEMO = HERE / "経費のメモ_作者の写真.jpg"  # make_scans.py が元の写真から EXIF などを落としたもの
 ANSWER = HERE / "正解.json"
 EXPENSE_ANSWER = HERE / "経費明細の正解.json"
 ANSWER_SHEET = HERE.parent / "デモの会社" / "回答表.md"
@@ -102,6 +106,47 @@ def show_materials(answer: dict, expense: dict) -> None:
     print()
 
 
+def jpeg_app_segments(path: Path) -> list[int]:
+    """JPEG の頭から画像のデータ（SOS）の前までにある、付けたしの区切り（APP0〜APP15 と COM）の印を並べる。
+    EXIF と XMP は APP1、色の情報（ICC）は APP2、IPTC は APP13 に入る。Pillow が書くのは APP0（JFIF）だけ。"""
+    data = path.read_bytes()
+    if data[:2] != b"\xff\xd8":
+        return [-1]
+    found, i = [], 2
+    while i + 4 <= len(data):
+        if data[i] != 0xFF:
+            return found + [-1]  # 区切りの形がこわれている
+        marker = data[i + 1]
+        if marker == 0xFF:  # 詰め物
+            i += 1
+            continue
+        if marker == 0xDA:  # SOS。ここから先は画像のデータ
+            break
+        length = int.from_bytes(data[i + 2:i + 4], "big")
+        if 0xE0 <= marker <= 0xEF or marker == 0xFE:
+            found.append(marker)
+        i += 2 + length
+    return found
+
+
+def check_author_photo_ignored() -> None:
+    """作者が撮った元の写真（作者の写真/）は EXIF を持つので、Git に入らないようにしてある。"""
+    probe = f"{AUTHOR_DIR.relative_to(REPO).as_posix()}/経費のメモ.jpg"
+    try:
+        ignored = subprocess.run(["git", "check-ignore", "-q", probe], cwd=REPO).returncode
+        tracked = subprocess.run(["git", "ls-files", "--", AUTHOR_DIR.relative_to(REPO).as_posix()], cwd=REPO,
+                                 capture_output=True, text=True)
+    except OSError:
+        print("－ git がないので、作者の写真/ が Git の外かは確かめなかった")
+        return
+    if ignored not in (0, 1) or tracked.returncode != 0:
+        print("－ Git の作業フォルダの外なので、作者の写真/ が Git の外かは確かめなかった")
+        return
+    check(ignored == 0 and tracked.stdout.strip() == "",
+          "作者の写真/（作者が撮った元の写真。EXIF を持つ）は Git の外で、コミットされたファイルもない",
+          f"無視されるか {ignored == 0}、コミットされたもの {tracked.stdout.split()}")
+
+
 def check_files(answer: dict, expense: dict) -> None:
     print("## 1. 材料のファイル")
     listed = {Path(d["ファイル"]).name for d in answer["書類"]} | {Path(expense["経費のメモ"]["ファイル"]).name}
@@ -120,6 +165,28 @@ def check_files(answer: dict, expense: dict) -> None:
             with Image.open(path) as img:
                 check(img.format == "JPEG" and img.size[0] >= 1000, f"{name}：JPEG の写真（{img.size[0]}×{img.size[1]}）",
                       f"形式 {img.format}")
+                left = sorted(k for k in ("exif", "xmp", "icc_profile", "photoshop", "comment") if k in img.info)
+                exif = img.getexif()
+            segments = jpeg_app_segments(path)
+            extra = [f"APP{m - 0xE0}" for m in segments if m != 0xE0]
+            check(not exif and not left and not extra,
+                  f"{name}：EXIF・XMP（撮った位置・機種・日時）も、色などのほかの付けたしもない（APP0 だけ）",
+                  f"EXIF {len(exif)}項目、残った情報 {left}、ほかの区切り {extra}")
+    check_author_photo_ignored()
+    memo = expense["経費のメモ"]
+    memo_file = HERE / memo["ファイル"]
+    if AUTHOR_MEMO.is_file():
+        with Image.open(AUTHOR_MEMO) as img:
+            left = sorted(k for k in ("exif", "xmp", "icc_profile", "photoshop", "comment") if k in img.info)
+            exif = img.getexif()
+        extra = [f"APP{m - 0xE0}" for m in jpeg_app_segments(AUTHOR_MEMO) if m != 0xE0]
+        check(not exif and not left and not extra, f"{AUTHOR_MEMO.name}（作者の写真から EXIF などを落としたもの）に、付けたしがない",
+              f"EXIF {len(exif)}項目、残った情報 {left}、ほかの区切り {extra}")
+        check(memo_file.is_file() and memo_file.read_bytes() == AUTHOR_MEMO.read_bytes(),
+              f"{memo_file.name} は、{AUTHOR_MEMO.name} と同じバイト列（作者の写真を使っている）")
+        check("作者が手で書いて撮った" in memo["形"], "経費明細の正解の「形」が、作者の写真を使ったことを書いている", memo["形"])
+    else:
+        check("手書き風の字で描いた仮のもの" in memo["形"], "経費明細の正解の「形」が、手書き風の字で描いた仮のものと書いている", memo["形"])
     originals = sorted(p.name for p in ORIGINAL_DIR.iterdir() if p.suffix == ".pdf")
     check(len(originals) == 3, f"元の書類/ に、描いた書類のきれいな PDF が3つある（{'、'.join(originals)}）")
     bad = [p.name for p in HERE.rglob("*") if OFFICIAL_NAME_WORDS.search(p.name)]
