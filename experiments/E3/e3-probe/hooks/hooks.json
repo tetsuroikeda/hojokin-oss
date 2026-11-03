@@ -56,7 +56,7 @@
         ]
       },
       {
-        "matcher": "shinsa-mitate",
+        "matcher": "^e3-probe:shinsa-mitate$",
         "hooks": [
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" SubagentStop-save" }
         ]
