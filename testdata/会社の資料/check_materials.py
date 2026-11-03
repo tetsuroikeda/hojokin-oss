@@ -2,13 +2,14 @@
 # requires-python = ">=3.9"
 # dependencies = ["pypdf>=4", "python-docx>=1.1", "openpyxl>=3.1", "pillow>=10"]
 # ///
-"""デモの会社の、会社の資料と過去の書類（TASKS D8）を、回答表と D2a・D2b の書類と照らす。
+"""デモの会社の、会社の資料と過去の書類（TASKS D8、D8b）を、回答表と D2a・D2b の書類と照らす。
 
 make_materials.py の中の数字ではなく、できたファイルから取り出した文字を照らす。
 - どのページ・シート・写真にも「架空のテスト用データ」があるか
 - 会社案内・商品のご案内・議事録・既存事業の内訳が、回答表と D2a の決算書・法人事業概況説明書、D2b の労働者名簿と合うか
 - 過去の申請（2025年 ものづくり補助金）が J-06 に合い、第17期の数字が D2a の決算書と合うか。
-  目標値の計算と、審査のコメントの指摘が申請書の弱い所と対応しているか
+  目標値の計算と、通知に理由が書かれていないこと。不採択の後の相談で受けた指摘のメモ（D8b）の指摘が、
+  申請書の弱い所と対応し、議事録の振り返りと食い違わないか。相談先が実在の団体を特定しないか
 - 議事録にしかない事実が、回答表・ほかの書類・ほかの材料のどこにもないか（T8-7 の材料）
 合わないものがあれば終了コード1で終わる。
 
@@ -40,7 +41,7 @@ BREAKDOWN = "既存事業の売上と経費_第17期_第18期.xlsx"
 PHOTOS = ["作業の写真_1_盛り付け.jpg", "作業の写真_2_計量.jpg", "作業の写真_3_包装.jpg", "作業の写真_4_ラベル貼りと検品.jpg"]
 PAST_PLAN = "2025_ものづくり補助金_事業計画書の控え.docx"
 PAST_NOTICE = "2025_ものづくり補助金_採択結果の通知.pdf"
-PAST_REVIEW = "2025_ものづくり補助金_審査のコメント.pdf"
+PAST_MEMO = "2025_ものづくり補助金_不採択の後の相談のメモ.docx"
 
 # 議事録にしかない事実（T8-7 で、計画書と根拠対照表に出てくるかを見る材料）
 MINUTES_ONLY = [
@@ -200,7 +201,7 @@ def monthly_sales_18() -> list[int]:
 def check_materials_folder() -> None:
     print("\n■ 材料のフォルダ")
     names = sorted(p.name for p in HERE.iterdir())
-    want = sorted([PROFILE, PRODUCTS, MINUTES, BREAKDOWN, PAST_PLAN, PAST_NOTICE, PAST_REVIEW, *PHOTOS])
+    want = sorted([PROFILE, PRODUCTS, MINUTES, BREAKDOWN, PAST_PLAN, PAST_NOTICE, PAST_MEMO, *PHOTOS])
     report(names == want, f"材料/ にあるのは材料の{len(want)}ファイルだけ（スクリプト・資料の一覧・答えは入れない）")
 
 
@@ -369,7 +370,8 @@ def check_past() -> None:
     body, tables, _, _ = docx_parts(HERE / PAST_PLAN)
     plan = docx_text(HERE / PAST_PLAN)
     notice = "\n".join(pdf_pages(HERE / PAST_NOTICE))
-    review = "\n".join(pdf_pages(HERE / PAST_REVIEW))
+    memo_body, memo_tables, _, _ = docx_parts(HERE / PAST_MEMO)
+    memo = docx_text(HERE / PAST_MEMO)
     info = {r[0]: r[1] for r in tables[0][1:]}
 
     # J-06・J-07・C-01
@@ -381,11 +383,11 @@ def check_past() -> None:
     report(info["従業員の数"].startswith(find("C-01", r"^(\d+)人")[1] + "人"), "C-01 従業員15人")
     number = info["申請番号"]
     title = info["事業計画の名前"]
-    report(number in notice and number in review, f"申請番号 {number} が、通知と審査のコメントでも同じ")
-    report(flat(title) in flat(notice) and flat(title) in flat(review), "事業計画の名前が、通知と審査のコメントでも同じ")
+    report(number in notice, f"申請番号 {number} が、通知でも同じ")
+    report(flat(title) in flat(notice), "事業計画の名前が、通知でも同じ")
     report(
-        all(re.search(rf"事業計画の名前\s+{re.escape(title)}\s*$", t, re.M) for t in (notice, review)),
-        "通知と審査のコメントで、事業計画の名前が折り返さずに1行に収まっている",
+        re.search(rf"事業計画の名前\s+{re.escape(title)}\s*$", notice, re.M) is not None,
+        "通知で、事業計画の名前が折り返さずに1行に収まっている",
     )
     report("2025年10月28日" in notice, "通知の日 2025年10月28日（20次締切の採択の発表の日）")
     report(flat(ANSWERS["A-01"]) in flat(notice), "A-01 通知の宛名")
@@ -440,19 +442,120 @@ def check_past() -> None:
         "1人あたり給与支給総額 ＝ 給与支給総額（従業員）÷ 人数",
     )
 
-    # 審査のコメントの指摘が、申請書の弱い所と対応しているか（T13-9 の材料）
-    headings = re.findall(r"審査項目(\d)", review)
-    report(headings == ["1", "2", "3", "4", "5"], "審査のコメントに、審査項目1〜5がそろっている")
+    check_memo(plan, notice, memo_body, memo_tables, memo)
+
+
+def jp_date(text: str) -> tuple[int, int, int]:
+    m = re.search(r"(\d{4})年(\d+)月(\d+)日", text)
+    if not m:
+        raise SystemExit(f"日付が見つかりません：{text}")
+    return int(m[1]), int(m[2]), int(m[3])
+
+
+def check_memo(plan: str, notice: str, memo_body: str, memo_tables: list, memo: str) -> None:
+    """不採択の後の相談で受けた指摘のメモ（TASKS D8b、T13-9 の材料）。"""
+    print(f"\n■ {PAST_MEMO}：通知・申請書・議事録・回答表と照らす（D8b）")
+    meta = {r[0]: r[1] for r in memo_tables[0][1:]}
+    minutes = docx_text(HERE / MINUTES)
+
+    # 通知に理由がない（ものづくり補助金は採択結果の理由を開示しない）
+    notice_flat = flat(notice)
+    report(
+        all(w not in notice_flat for w in ("審査のコメント", "別紙", "指摘")),
+        "通知に、審査のコメント・別紙・指摘が書かれていない（理由は開示されない）",
+    )
+    report("理由" in notice_flat and "お答えしていません" in notice_flat, "通知に、理由の問い合わせには答えないとある")
+
+    # メモの形：社長が書き留めた、不採択の後の相談のメモ
+    president = flat(re.search(r"代表取締役\s*(\S+\s?\S+)（", ANSWERS["A-08"])[1])
+    report(president in flat(meta.get("書いた人", "")) and "書き留めた" in meta.get("書いた人", ""), "メモを書いたのは社長（A-08）で、相談の後に書き留めた形")
+    report("ものづくり補助金" in memo and "2025年" in memo and "不採択" in memo, "J-06 2025年のものづくり補助金の不採択についてのメモ")
+    report("理由が書かれていなかった" in memo, "メモに、通知に理由が書かれていなかったとある")
+
+    # 日付：通知（2025年10月28日）の後、議事録の会議（2026年9月10日。「去年の11月」）の前
+    memo_date = jp_date(meta["相談した日"])
+    notice_date = jp_date(notice[notice.index("2025年10月28日") :])
+    meeting_date = jp_date(re.search(r"日時\t(.+)", minutes)[1])
+    report(notice_date < memo_date < meeting_date, f"相談の日 {memo_date} は、通知 {notice_date} の後、議事録の会議 {meeting_date} の前")
+    report(memo_date[0] == meeting_date[0] - 1 and f"去年の{memo_date[1]}月" in minutes, f"議事録の「去年の{memo_date[1]}月」に相談した、と合う")
+
+    # 相談先は一般の呼び方。実在の団体や人を特定しない。商工会議所・商工会ではない（J-03）
+    place = meta["相談した所"]
+    report("公的な経営相談の窓口" in place, f"相談先は一般の呼び方：{place}")
+    named = ["商工会議所", "商工会", "よろず支援拠点", "中小企業診断士", "認定支援機関", "中小機構", "協会", "財団", "振興", "株式会社", "先生", "さん"]
+    found = [w for w in named if w in memo.replace(president, "")]
+    report(not found, f"メモに、団体の名前・資格・人の名前を書いていない（あったもの：{found or 'なし'}）")
+    report("相談に行ったこともない" in ANSWERS["J-03"], "J-03 商工会議所に相談に行ったことはない（相談先は商工会議所ではない）")
+    report("メモ" in ANSWERS["J-06"] and "審査のコメント" not in ANSWERS["J-06"], "J-06 回答表は、審査のコメントではなく相談のメモを指す")
+
+    # 計画への指摘（6つ）が、申請書の弱い所とそのとおり対応しているか
+    points = re.findall(r"^(\d)．(.+?)：(.+)$", memo_body, re.M)
+    report([p[0] for p in points] == ["1", "2", "3", "4", "5", "6"], f"計画への指摘が6つ（{[p[1] for p in points]}）")
+    text = {p[1]: p[2] for p in points}
     pairs = [
-        ("効果の根拠が業者の説明だけ", "業者の説明" in review, "業者の説明" in plan),
-        ("工程ごとの作業時間が示されていない", "工程ごとの作業時間" in review, "工程ごと" not in plan and not re.search(r"約\d+時間", plan)),
-        ("検品など、誤りの解決の方法がない", "検品" in review, "検品" not in plan and "カメラ" not in plan and "画像検査" not in plan),
-        ("資金調達の見込みが確かめられない", "資金調達" in review, "これから相談" in plan),
-        ("目標値の算出の根拠がない", "算出の根拠" in review, "根拠" not in plan),
-        ("新しい製品・サービスとしての新しさがない（工程の改善）", "工程の改善" in review, "機械で行います" in plan),
+        (
+            "効果の根拠",
+            "業者の説明" in text.get("効果の根拠", "") and "工程ごと" in text.get("効果の根拠", ""),
+            "業者の説明" in plan and "工程ごと" not in plan and not re.search(r"約\d+時間", plan),
+        ),
+        (
+            "ミスを防ぐ仕組み",
+            "検品" in text.get("ミスを防ぐ仕組み", "") and "ラベル" in text.get("ミスを防ぐ仕組み", ""),
+            "ラベルの貼り間違い" in plan and all(w not in plan for w in ("検品", "カメラ", "画像検査", "重量チェッカー")),
+        ),
+        (
+            "浮いた人手の使い道",
+            "浮いた人手で、注文の増加に応えます" in text.get("浮いた人手の使い道", ""),
+            "浮いた人手で、注文の増加に応えます" in plan and all(w not in plan for w in ("品質管理", "冷凍")),
+        ),
+        (
+            "数値目標の組み立て",
+            "取引先の種類ごと" in text.get("数値目標の組み立て", ""),
+            "種類ごと" not in plan and "根拠" not in plan,
+        ),
+        (
+            "お金の用意",
+            "金融機関には、これから相談します" in text.get("お金の用意", ""),
+            "金融機関には、これから相談します" in plan and "信用金庫" not in plan,
+        ),
+        (
+            "動かす人と日程",
+            "工場長と盛り付け・包装の担当で機械を動かします" in text.get("動かす人と日程", "") and "研修" in text.get("動かす人と日程", ""),
+            "工場長と盛り付け・包装の担当で機械を動かします" in plan and "研修" not in plan,
+        ),
     ]
-    for label, in_review, in_plan in pairs:
-        report(in_review and in_plan, f"指摘「{label}」：コメントにあり、申請書がそのとおりになっている")
+    for label, in_memo, in_plan in pairs:
+        report(in_memo and in_plan, f"指摘「{label}」：メモにあり、申請書がそのとおりになっている")
+
+    # 指摘に応える事実が、回答表にある（省力化の計画書で応えられる。対応の見込みは資料の一覧.md）
+    answers = [
+        ("効果の根拠", "G-03 今の延べ時間と H-09 入れた後の時間", "延べ約" in ANSWERS["G-03"] and "延べ約" in ANSWERS["H-09"]),
+        ("ミスを防ぐ仕組み", "H-02 画像検査装置と重量チェッカー・ラベラー", "画像検査装置" in ANSWERS["H-02"] and "重量チェッカー" in ANSWERS["H-02"]),
+        ("浮いた人手の使い道", "H-09 浮いた4人の行き先", "浮いた4人" in ANSWERS["H-09"]),
+        ("数値目標の組み立て", "E-02 取引先の種類ごとの売上と H-10・H-11", "スーパー" in ANSWERS["E-02"] and "パック" in ANSWERS["H-10"] and "千円" in ANSWERS["H-11"]),
+        ("お金の用意", "H-12 自己資金と信用金庫の借入", "自己資金" in ANSWERS["H-12"] and "信用金庫" in ANSWERS["H-12"]),
+        ("動かす人と日程", "C-12 研修と H-07 納期", "研修" in ANSWERS["C-12"] and "か月" in ANSWERS["H-07"]),
+    ]
+    for label, source, ok in answers:
+        report(ok, f"指摘「{label}」に応える事実が回答表にある：{source}")
+
+    # 議事録の振り返り（作業時間・検品とラベルのミス・お金の用意）が、メモの指摘と食い違わない
+    reflection = re.search(r"相談では、(.+?)などを指摘された", minutes)
+    report(reflection is not None, "議事録の振り返りに、相談で指摘されたことがある")
+    if reflection:
+        said = reflection[1]
+        report(
+            "作業時間" in said and "効果の根拠" in text
+            and "検品とラベルのミス" in said and "ミスを防ぐ仕組み" in text
+            and "お金の用意" in said and "お金の用意" in text,
+            "議事録が挙げた3つ（作業時間、検品とラベルのミス、お金の用意）が、メモの指摘にある",
+        )
+    report("審査のコメント" not in minutes, "議事録に「審査のコメント」と書いていない")
+
+    # 計画への指摘ではない話（制度の選び方）は、別の見出しに分けてある
+    cut = memo_body.find("そのほかに言われたこと")
+    before, after = (memo_body[:cut], memo_body[cut:]) if cut >= 0 else (memo_body, "")
+    report("省力化" in after and "省力化" not in before, "制度の選び方の話は「そのほかに言われたこと」に分け、計画への指摘に混ぜていない")
 
 
 def check_minutes_only() -> None:
