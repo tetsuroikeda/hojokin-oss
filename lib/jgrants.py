@@ -16,7 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from lib import dates
 
@@ -80,17 +80,22 @@ def build_url(query: Dict[str, str], base_url: str = BASE_URL) -> str:
     return base_url + "?" + urllib.parse.urlencode(query)
 
 
-def fetch(url: str, timeout: float = TIMEOUT_SECONDS) -> Dict[str, Any]:
-    """1回だけ通信して、応答の JSON を返す。"""
+def fetch_raw(url: str, timeout: float = TIMEOUT_SECONDS) -> Tuple[int, bytes]:
+    """1回だけ通信して、HTTP の状態と応答のバイト列を返す（fetch と、応答を記録する開発用の道具が使う）。"""
     request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read()
+            return getattr(response, "status", 200), response.read()
     except urllib.error.HTTPError as e:
         raise JGrantsError(f"jGrants が検索を受け付けませんでした（HTTP {e.code}）") from e
     except (urllib.error.URLError, OSError) as e:
         reason = getattr(e, "reason", e)
         raise JGrantsError(f"jGrants につながりませんでした（{reason}）") from e
+
+
+def fetch(url: str, timeout: float = TIMEOUT_SECONDS) -> Dict[str, Any]:
+    """1回だけ通信して、応答の JSON を返す。"""
+    _status, body = fetch_raw(url, timeout)
     return parse_body(body)
 
 

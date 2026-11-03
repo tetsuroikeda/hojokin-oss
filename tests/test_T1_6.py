@@ -7,6 +7,8 @@ SPEC：候補の一覧から Word を作る。
 - 道具（skills/sagasu/scripts/kouho_word.py）を、社長の Mac と同じ /usr/bin/python3（3.9）で動かす。
 - Word は zip と XML を標準のライブラリで読み、候補ごとの表の「項目 → 中身」を、渡した一覧と1つずつ突き合わせる。
 - 探し直す前後で、会社のフォルダのファイルの一覧（隠しファイルを含む）が同じで、中身だけが変わることを見る。
+- XML で使えない文字（PDF から写した改ページなど）が入っても、どの部品も XML として読める Word になり、
+  前の正常な版を壊れたもので置き換えないことを見る。
 """
 
 from __future__ import annotations
@@ -273,6 +275,89 @@ def test_failed_write_keeps_old_file_and_leaves_nothing(tmp_path, monkeypatch) -
     changed["候補"][0]["合う理由"] = "書き換えた理由"
     with pytest.raises(OSError):
         kouho.write(folder, changed)
+    assert listing(folder) == before
+    assert (folder / "補助金の候補.docx").read_bytes() == old
+
+
+# --- XML で使えない文字（PDF から写した改ページなど）が入っても、読める Word にする ---
+
+@pytest.mark.parametrize(
+    "raw, shown",
+    [
+        ("A\u000bB", "A\nB"),  # 垂直タブ → 改行
+        ("A\u000cB", "A\nB"),  # 改ページ → 改行
+        ("A\r\nB", "A\nB"),
+        ("A\x00B", "AB"),
+        ("A\x1fB", "AB"),
+        ("A￾B", "AB"),
+        ("A\ud800B", "AB"),  # 対になっていないサロゲート
+    ],
+)
+def test_characters_not_allowed_in_xml_still_make_readable_word(tmp_path, raw, shown) -> None:
+    folder = make_company(tmp_path)
+    assert run_tool(folder, SAMPLE).returncode == 0  # 前の正常な版
+    data = copy.deepcopy(SAMPLE)
+    item = data["候補"][0]
+    item["名前"] = "省力化" + raw
+    item["合う理由"] = ["一つめ" + raw, "二つめ"]
+    item["予算の状況"] = "予算" + raw
+    data["聞き取りの要点"] = "要点" + raw
+    # サロゲートは UTF-8 で送れないので、JSON の \\uXXXX の形で渡す
+    r = run_tool(folder, json.dumps(data, ensure_ascii=True))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Traceback" not in r.stderr
+    doc = Docx(folder / "補助金の候補.docx")  # どの部品も XML として読める（読めなければここで落ちる）
+    title = "省力化" + shown
+    assert title in doc.headings[2]
+    rows = doc.detail(title)
+    assert text_of(rows["合う理由"]) == f"・一つめ{shown}\n・二つめ"
+    assert text_of(rows["予算の状況"]) == "予算" + shown
+    assert "要点" + shown in doc.all_text
+    summary = [[text_of(c) for c in row] for row in doc.tables["一覧"]]
+    assert ["例年公募がある", title] in [row[:2] for row in summary]
+    assert listing(folder) == sorted([".hojokin", "メモ.txt", "補助金の候補.docx"])
+
+
+@pytest.mark.parametrize("url", ["https://ok.go.jp/a\u000cb", "https://ok.go.jp/a b", "https://ok.go.jp/\x00"])
+def test_url_with_space_or_control_character_is_refused_and_old_file_stays(tmp_path, url) -> None:
+    folder = make_company(tmp_path)
+    assert run_tool(folder, SAMPLE).returncode == 0
+    old = (folder / "補助金の候補.docx").read_bytes()
+    broken = copy.deepcopy(SAMPLE)
+    broken["候補"][2]["出典URL"] = ["https://ok.go.jp/", url]
+    r = run_tool(folder, json.dumps(broken, ensure_ascii=True))
+    assert r.returncode == 2, r.stdout
+    assert "空白か使えない文字" in r.stdout
+    assert (folder / "補助金の候補.docx").read_bytes() == old
+
+
+def test_name_of_only_unusable_characters_is_empty(tmp_path) -> None:
+    folder = make_company(tmp_path)
+    broken = copy.deepcopy(SAMPLE)
+    broken["候補"][0]["名前"] = "\x00\ud800"
+    r = run_tool(folder, json.dumps(broken, ensure_ascii=True))
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "「名前」が空" in r.stdout
+    assert "Traceback" not in r.stderr
+    assert not (folder / "補助金の候補.docx").exists()
+
+
+def test_broken_xml_part_is_not_written_and_old_file_stays(tmp_path, monkeypatch) -> None:
+    """文字を直しても読めない部品ができたとき（道具の誤り）は、書く前に止まり、前の版が残る。"""
+    from lib import docx_min
+
+    broken_doc = docx_min.Document()
+    broken_doc._body.append("<w:p>")  # 閉じていない
+    with pytest.raises(docx_min.DocxError):
+        broken_doc.to_bytes()
+
+    folder = make_company(tmp_path)
+    kouho.write(folder, SAMPLE)
+    before = listing(folder)
+    old = (folder / "補助金の候補.docx").read_bytes()
+    monkeypatch.setattr(kouho, "build", lambda data, day: broken_doc)
+    with pytest.raises(kouho.KouhoError):
+        kouho.write(folder, SAMPLE)
     assert listing(folder) == before
     assert (folder / "補助金の候補.docx").read_bytes() == old
 

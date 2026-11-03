@@ -7,6 +7,10 @@ SPEC：記録しておいたAPIの応答で確かめ、実際の通信でも1回
 - 実際の通信は、tests/jgrants_record.py で1回だけ行い、送った URL と応答をそのまま
   tests/data/jgrants/記録_補助金.json に残した（2026-11-03、HTTP 200、158件）。この記録で、
   必須の4条件で送って取得できたこと、応答のすべての締切が日本時間で示されることを確かめる。
+- 製品の通信の経路（道具 → jgrants.fetch → 出力）でも、tests/jgrants_record.py --tool で1回だけ本物の jGrants に
+  当て、動かしたコマンド・終了コード・出力をそのまま tests/data/jgrants/道具の実行_補助金.json に残した
+  （2026-11-04、終了コード0、158件）。この記録で、記録した応答を使わずに必須の4条件で取得でき、
+  すべての締切が日本時間で示されたことを確かめる。
 - 道具（skills/sagasu/scripts/jgrants_search.py）は、社長の Mac と同じ /usr/bin/python3（3.9）で動かす。
 - 通信して確かめ直すテストは、HOJOKIN_JGRANTS_LIVE=1 のときだけ流す（相手のサイトに負担をかけないため）。
 """
@@ -16,10 +20,11 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import urllib.error
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -29,6 +34,7 @@ from lib import jgrants
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "skills" / "sagasu" / "scripts" / "jgrants_search.py"
 RECORD = REPO_ROOT / "tests" / "data" / "jgrants" / "記録_補助金.json"
+TOOL_RECORD = REPO_ROOT / "tests" / "data" / "jgrants" / "道具の実行_補助金.json"
 SYSTEM_PYTHON = "/usr/bin/python3"
 REQUIRED = {"keyword", "sort", "order", "acceptance"}
 WEEKDAYS = "月火水木金土日"
@@ -267,6 +273,58 @@ def test_tool_reports_unreadable_response_and_continues(tmp_path) -> None:
     assert r.returncode == 1
     assert "jGrants で検索できませんでした" in r.stdout
     assert "候補を集め続けてください" in r.stdout
+
+
+# --- 製品の道具を本物の jGrants に当てた記録（1回だけ動かしたもの） ---
+
+JST_SHOWN = re.compile(r"^(\d{4})年(\d{1,2})月(\d{1,2})日（([月火水木金土日])）(\d{1,2}):(\d{2})$")
+
+
+def tool_record() -> dict:
+    return json.loads(TOOL_RECORD.read_text(encoding="utf-8"))
+
+
+def assert_jst_shown(text: str) -> None:
+    match = JST_SHOWN.match(text)
+    assert match, text
+    year, month, day, weekday, hour, minute = match.groups()
+    assert WEEKDAYS[date(int(year), int(month), int(day)).weekday()] == weekday, text  # 曜日も合う
+    assert 0 <= int(hour) <= 23 and 0 <= int(minute) <= 59, text
+
+
+def test_tool_record_ran_product_tool_against_real_jgrants() -> None:
+    """記録した応答を使わず、社長の Mac と同じ /usr/bin/python3 で製品の道具を動かした（jgrants.fetch を通った）。"""
+    rec = tool_record()
+    command = rec["コマンド"]
+    assert command[:4] == [SYSTEM_PYTHON, "-I", "-B", str(SCRIPT.relative_to(REPO_ROOT))]
+    assert "--response-file" not in command
+    assert "--json" in command
+    assert rec["終了コード"] == 0, rec["エラー出力"]
+    assert rec["エラー出力"] == ""
+    assert rec["動かした日時"].endswith("+09:00")
+
+
+def test_tool_record_was_fetched_with_all_required_params() -> None:
+    out = tool_record()["出力"]
+    assert REQUIRED <= set(out["条件"])
+    assert REQUIRED <= set(query_of(out["検索した URL"]))
+    assert query_of(out["検索した URL"]) == out["条件"]
+    assert jgrants.build_url(jgrants.build_query(out["条件"]["keyword"])) == out["検索した URL"]
+    assert out["件数"] == out["示した件数"] == len(out["候補"]) > 0  # 取得できた（全件を出した）
+
+
+def test_tool_record_shows_every_deadline_in_jst() -> None:
+    out = tool_record()["出力"]
+    for item in out["候補"]:
+        assert_jst_shown(item["締切（日本時間）"])
+        assert_jst_shown(item["受付開始（日本時間）"])
+        assert item["出典URL"] == f"https://www.jgrants-portal.go.jp/subsidy/{item['id']}"
+    # 応答そのものの記録（11/3）にもある補助金は、そこでの世界標準時の締切を9時間進めた日時と同じ
+    raw = {r["id"]: r for r in record()["応答"]["result"]}
+    both = [item for item in out["候補"] if item["id"] in raw]
+    assert both
+    for item in both:
+        assert item["締切（日本時間）"] == expected_jst(raw[item["id"]]["acceptance_end_datetime"]), item["id"]
 
 
 # --- 実際の通信（HOJOKIN_JGRANTS_LIVE=1 のときだけ） ---

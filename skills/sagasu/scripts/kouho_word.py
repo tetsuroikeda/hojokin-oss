@@ -8,7 +8,9 @@
 
 - 会社のフォルダ（.hojokin/ があるフォルダ）の直下の「補助金の候補.docx」だけを書く。ほかのファイルは作らない。
 - 探した日は、今日の日付（.hojokin/設定.json の差し替えを含む）。
-- 終了コード：0 書いた、2 書かなかった（会社のフォルダでない、候補の一覧の形が正しくない）。
+- 終了コード：0 書いた、2 書かなかった（会社のフォルダでない、候補の一覧の形が正しくない、Word を正しく作れない）。
+  書かなかったときは、前の補助金の候補.docx がそのまま残る。
+- 文字の欄に XML で使えない文字（PDF から写した改ページなど）があれば、改行にするか落としてから書く。
 """
 
 import sys
@@ -33,7 +35,8 @@ def parse(argv):
 
 
 def main(argv) -> int:
-    sys.stdout.reconfigure(encoding="utf-8")
+    # 候補の名前に対になっていないサロゲートがあっても、直す所の文を出せるようにする
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     args = parse(argv)
     folder = Path(args.folder).expanduser() if args.folder else company.project_dir()
     try:

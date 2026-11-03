@@ -6,13 +6,17 @@ python-docx は C の拡張（lxml）が要り、プラグインに同梱でき�
 
 - 同じ中身からは、いつも同じバイト列になる（zip の時刻を固定する）。版の履歴で、変わっていない回を見分けるため。
 - 書くときは同じ名前のファイルを置き換える。書きかけの一時ファイルは、成功しても失敗しても残さない。
+- XML で使えない文字（PDF から写した改ページなど）は、入れる前に直す（clean_text）。それでも読めない部品が
+  できたときは、書く前に DocxError にして、前のファイルをそのまま残す。
 """
 
 from __future__ import annotations
 
 import io
 import os
+import re
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple, Union
 from xml.sax.saxutils import escape
@@ -29,8 +33,23 @@ FONT = "游ゴシック"
 Run = Union[str, Tuple[str, str]]
 
 
+# XML 1.0 で使えない文字。改ページ（\x0c）と垂直タブ（\x0b）は公募要領の PDF から写した文によく混ざるので、
+# 行の区切りにする。ほかの制御文字・￾・￿・サロゲート（str の中では必ず対になっていない）は落とす。
+_LINE_BREAKS = re.compile("\r\n|[\r\x0b\x0c]")
+_NOT_XML = re.compile("[\x00-\x08\x0e-\x1f￾￿\ud800-\udfff]")
+
+
+class DocxError(ValueError):
+    """書こうとした Word の部品が XML として読めないとき（書く前に止め、前のファイルを残す）。"""
+
+
+def clean_text(text: str) -> str:
+    """Word に入れられる文字だけにする（改ページ・垂直タブは改行に、ほかの使えない文字は落とす）。"""
+    return _NOT_XML.sub("", _LINE_BREAKS.sub("\n", str(text)))
+
+
 def _attr(value: str) -> str:
-    return escape(value, {'"': "&quot;"})
+    return escape(_NOT_XML.sub("", _LINE_BREAKS.sub("", str(value))), {'"': "&quot;"})
 
 
 def _text_run(text: str, bold: bool = False, style: Optional[str] = None) -> str:
@@ -39,7 +58,7 @@ def _text_run(text: str, bold: bool = False, style: Optional[str] = None) -> str
         props = "<w:rPr>" + (f'<w:rStyle w:val="{style}"/>' if style else "") + ("<w:b/>" if bold else "") + "</w:rPr>"
     parts = []
     # 改行は w:br にする
-    for i, line in enumerate(str(text).split("\n")):
+    for i, line in enumerate(clean_text(text).split("\n")):
         if i:
             parts.append("<w:br/>")
         parts.append(f'<w:t xml:space="preserve">{escape(line)}</w:t>')
@@ -136,13 +155,22 @@ class Document:
             ("word/_rels/document.xml.rels", self._document_rels()),
             ("word/styles.xml", STYLES),
         ]
+        encoded = []
+        for name, text in parts:
+            # どの部品も、XML として読めることを書く前に確かめる（読めない Word で前のファイルを置き換えない）
+            try:
+                data = text.encode("utf-8")
+                ET.fromstring(data)
+            except (UnicodeEncodeError, ET.ParseError) as e:
+                raise DocxError(f"Word の中身（{name}）を正しく作れませんでした（{e}）") from e
+            encoded.append((name, data))
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for name, text in parts:
+            for name, data in encoded:
                 info = zipfile.ZipInfo(name, date_time=FIXED_ZIP_TIME)
                 info.compress_type = zipfile.ZIP_DEFLATED
                 info.external_attr = 0o644 << 16
-                zf.writestr(info, text.encode("utf-8"))
+                zf.writestr(info, data)
         return buffer.getvalue()
 
     def save(self, path: Union[str, Path]) -> None:

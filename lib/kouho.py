@@ -21,16 +21,22 @@ Claude が調べた候補の一覧（JSON）を受け取り、会社のフォル
 }
 文字の欄は、文字か文字の並び（並びは箇条書きにする）で書く。
 出典を示せない候補は出さない決まり（SPEC F1）なので、出典URL のない候補があれば、何も書かずに止める。
+出典URL に空白や制御文字が入っているときも、リンク先を書き換えずに止める。
+文字の欄に XML で使えない文字（PDF から写した改ページなど）があれば、Word に入れる前に直す（lib/docx_min.py）。
 """
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from lib import company, dates
-from lib.docx_min import Document
+from lib.docx_min import Document, DocxError, clean_text
+
+# URL の中の空白・制御文字・XML で使えない文字（全角の空白も含む）
+_BAD_IN_URL = re.compile("[\\s\x00-\x1f\x7f　￾￿\ud800-\udfff]")
 
 FILE_NAME = "補助金の候補.docx"
 CATEGORIES = ("公募中", "公募予定（発表済み）", "例年公募がある")
@@ -53,11 +59,16 @@ class KouhoError(Exception):
         self.problems = problems
 
 
+def _filled(value: Any) -> bool:
+    """Word に入れたあとも文字が残るか（使えない文字だけの欄は、空とみなす）。"""
+    return isinstance(value, str) and bool(clean_text(value).strip())
+
+
 def _is_text(value: Any) -> bool:
     if isinstance(value, str):
-        return bool(value.strip())
+        return _filled(value)
     if isinstance(value, list):
-        return bool(value) and all(isinstance(v, str) and v.strip() for v in value)
+        return bool(value) and all(_filled(v) for v in value)
     return False
 
 
@@ -88,15 +99,15 @@ def validate(data: Any) -> List[str]:
             problems.append(f"{where}は {{ }} で囲んだ形にしてください")
             continue
         name = item.get("名前")
-        if isinstance(name, str) and name.strip():
-            where = f"{i}件目の候補（{name.strip()}）"
+        if _filled(name):
+            where = f"{i}件目の候補（{clean_text(name).strip()}）"
         for key in item:
             if key not in REQUIRED_FIELDS + OPTIONAL_FIELDS:
                 problems.append(f"{where}に、使わない欄「{key}」があります")
         for key in REQUIRED_FIELDS:
             if key not in item:
                 problems.append(f"{where}に「{key}」がありません")
-        if "名前" in item and not (isinstance(name, str) and name.strip()):
+        if "名前" in item and not _filled(name):
             problems.append(f"{where}の「名前」が空です")
         if "区分" in item and item["区分"] not in CATEGORIES:
             problems.append(f"{where}の「区分」は、{' / '.join(CATEGORIES)} のどれかにしてください（{item['区分']}）")
@@ -110,6 +121,9 @@ def validate(data: Any) -> List[str]:
             urls = _urls(item["出典URL"])
             if not urls or not all(u.startswith(("https://", "http://")) and len(u) > 8 for u in urls):
                 problems.append(f"{where}の「出典URL」は、https:// で始まる URL を1つ以上入れてください（出典を示せない候補は出さない）")
+            elif any(_BAD_IN_URL.search(u) for u in urls):
+                # リンク先を黙って書き換えると、示した出典と違う所を指しうるので、直してもらう
+                problems.append(f"{where}の「出典URL」に、空白か使えない文字が入っています（URL を写し直してください）")
         if "締切" in item and not _is_text(item["締切"]):
             problems.append(f"{where}の「締切」が空です（なければ欄ごと外す）")
         if "対象外の可能性が高い" in item and not isinstance(item["対象外の可能性が高い"], bool):
@@ -199,5 +213,9 @@ def write(folder: Path, data: Any, searched_on: Optional[date] = None) -> Path:
         raise KouhoError(problems)
     day = searched_on or dates.today(folder)
     path = folder / FILE_NAME
-    build(data, day).save(path)
+    try:
+        build(data, day).save(path)
+    except DocxError as e:
+        # 書く前に止まったので、前の「補助金の候補.docx」はそのまま残る
+        raise KouhoError([str(e)]) from e
     return path
