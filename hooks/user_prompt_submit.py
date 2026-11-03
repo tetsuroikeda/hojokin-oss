@@ -10,9 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import version_hooks
 from lib import browser_guard
 
 
 def handle(data: dict, folder: Path) -> Optional[dict]:
     browser_guard.user_prompt_submit(data, folder)
+    version_hooks.user_prompt_submit(data, folder)
     return None

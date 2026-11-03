@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import version_hooks
+
 
 def handle(data: dict, folder: Path) -> Optional[dict]:
-    return None
+    return version_hooks.stop(data, folder)

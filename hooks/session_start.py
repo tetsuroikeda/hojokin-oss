@@ -9,6 +9,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import version_hooks
+
 
 def handle(data: dict, folder: Path) -> Optional[dict]:
+    version_hooks.session_start(data, folder)
     return None
