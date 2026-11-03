@@ -1,5 +1,26 @@
 {
   "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:code.claude.com)",
+      "WebFetch(domain:shoryokuka.smrj.go.jp)",
+      "WebFetch(domain:r6.jizokukahojokin.info)",
+      "WebFetch(domain:official.jizokukanb.com)",
+      "WebFetch(domain:www.chusho.meti.go.jp)",
+      "WebFetch(domain:www.mhlw.go.jp)",
+      "mcp__claude-in-chrome__find",
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "mcp__claude-in-chrome__get_page_text",
+      "mcp__claude-in-chrome__read_page",
+      "mcp__Claude_Browser__get_page_text",
+      "mcp__Claude_Browser__find",
+      "mcp__terminal__read_terminal",
+      "mcp__ccd_pr__get_status",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(claude plugin validate:*)"
+    ],
     "ask": [
       "Bash(git push:*)",
       "Bash(gh pr merge:*)"
