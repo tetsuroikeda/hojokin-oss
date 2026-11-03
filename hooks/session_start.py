@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Optional
 
 import version_hooks
+from lib import view_only
 
 
 def handle(data: dict, folder: Path) -> Optional[dict]:
-    return version_hooks.session_start(data, folder)
+    return view_only.session_start(data, folder, version_hooks.session_start(data, folder))
