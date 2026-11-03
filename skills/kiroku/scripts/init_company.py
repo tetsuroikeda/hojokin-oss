@@ -13,7 +13,10 @@
 - 結果として、作ったものと、どの段階にも共通の決まりの短い文を出す
   （初めて使うセッションでは、SessionStart がもう動いた後のため。DESIGN 4.7）。
 - 終了コード：0 用意した（すでに会社のフォルダだったときも）、
-  1 補助プログラムが動かない（読み込めない。途中で止まったときは、書きかけたものを戻す）、2 会社のフォルダにできない。
+  1 補助プログラムが動かない（読み込めない。途中で止まったときは、書きかけたものを戻す）、
+  2 会社のフォルダにできない（ホームのフォルダ、ディスクの根、前からある設定、同期されるフォルダなど。何も書いていない）。
+  2 のときの出力には、社長への案内（新しいフォルダで始め、書類は取り込む）と、
+  同期されるフォルダなら版の持ち方を選んでもらう問いが入る（DESIGN 4.7、TASKS S5b）。
 """
 
 import sys
@@ -53,7 +56,7 @@ def main(argv) -> int:
     try:
         result = company_init.init(folder)
     except company_init.Refused as e:
-        print(company_init.refusal(folder, e.reasons), end="")
+        print(company_init.refusal(folder, e.reasons, e.synced), end="")
         return 2
     except Exception as e:  # dulwich が使うときだけ読み込むモジュールが欠けていた、など。init() が書いたものを戻した後
         print(

@@ -1,0 +1,19 @@
+{
+  "説明": "小規模事業者持続化補助金（一般型・通常枠）第20回の公式資料（DESIGN 15.3。2026-11-03 に確かめた）。操作手引きと補助事業の手引きは、第19回版が最新",
+  "制度": {
+    "名前": "小規模事業者持続化補助金",
+    "略称": "持続化",
+    "枠": "一般型・通常枠",
+    "種類": "補助金",
+    "公募回": "第20回"
+  },
+  "資料": [
+    {"id": "要領20", "名前": "公募要領", "公募回": "第20回", "URL": "https://r6.jizokukahojokin.info/doc/r6_koubover8_ip20.pdf"},
+    {"id": "Q&A20", "名前": "申請時によくあるご質問", "公募回": "第20回", "URL": "https://r6.jizokukahojokin.info/doc/r6_qa_ip20.pdf"},
+    {"id": "参考資料20", "名前": "参考資料", "公募回": "第20回", "URL": "https://r6.jizokukahojokin.info/doc/r6_sanko_ip20.pdf"},
+    {"id": "判定シート20", "名前": "賃金引上げ特例・加点要件達成判定シート", "公募回": "第20回", "URL": "https://r6.jizokukahojokin.info/doc/r6_chantei_ip20.xlsx"},
+    {"id": "判定シートの操作マニュアル20", "名前": "判定シートの操作マニュアル", "公募回": "第20回", "URL": "https://r6.jizokukahojokin.info/doc/r6_chanteimanual_ip20.pdf"},
+    {"id": "操作手引き19", "名前": "申請システム操作手引き", "公募回": "第19回", "URL": "https://r6.jizokukahojokin.info/doc/r6_koubomanual_ip0306.pdf"},
+    {"id": "補助事業の手引き19", "名前": "補助事業の手引き", "公募回": "第19回", "URL": "https://r6.jizokukahojokin.info/doc/r6_js_tebiki_ip19.pdf"}
+  ]
+}
