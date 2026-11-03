@@ -10,6 +10,10 @@ hooks から次の3つを呼ぶ。どれも会社のフォルダ（目印のあ�
 - computer-use（画面を操作する機能）は、会社のフォルダではすべて拒む。
 - ページを読むだけの道具（read_page・find・画面の写しなど）と、タブの切り替え、ページの移動は、許可がなくても通す。
   ページの移動とタブの切り替えでは、部品の控えを捨てる（番号が画面ごとに振り直されるため。実験 E1）。
+  ページの移動は、http・https で始まる URL と back・forward だけを通す（javascript: などは拒む）。
+- 控えは、読んだタブと同じタブと分かる操作にだけ使う。tabId を付けて読んだ控えは、同じ tabId を
+  付けた操作だけ。tabId を省いて読んだ控えは、tabId を省いた操作か、結果の「Executed on tabId」と
+  同じ tabId を付けた操作だけ。
 - クリック・入力・添付は、許可がなければ拒む。許可があっても、次のものだけを通す。
   - クリック：番号で指し、控えで「押してよいボタン」（制度データの画面の定義の和）に当たるボタン・リンク。
     名前に押さないボタンの語（PROHIBITED_BUTTON_WORDS）を含むものは、制度データにかかわらず拒む。
@@ -79,7 +83,7 @@ COMPUTER_READ_ACTIONS = {"screenshot", "zoom", "wait", "scroll", "scroll_to"}
 ROLE_KIND = {"checkbox": "チェック", "switch": "チェック", "radio": "ラジオ", "combobox": "選択", "listbox": "選択"}
 
 _SAFE_SESSION = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-_SCHEME = re.compile(r"^([a-z][a-z0-9+.-]*):")
+_WEB_URL = re.compile(r"^https?://")
 _STAGE = re.compile(r"^[0-9]+_")
 
 
@@ -284,6 +288,7 @@ class Context:
                 "部品の番号は画面ごとに振り直されるので、クリックやページの移動の後は控えを捨てています。"
                 "先にページを読み直し（read_page。filter は all）、そこで分かった番号で操作してください。"
             )
+        _check_tab(snapshot, tool_input.get("tabId"))
         if not ref:
             raise Denied("部品は番号（ref）で指してください。座標で指す操作は止めています（hojokin プラグインの決まり）。")
         page = Page(elements)
@@ -293,13 +298,43 @@ class Context:
                 f"番号 {ref} は、控えたページの部品にありません（hojokin プラグインの決まり）。"
                 "ページを読み直し（read_page。filter は all）、そこで分かった番号で操作してください。"
             )
-        tab = tool_input.get("tabId")
-        if tab is not None and snapshot.get("tab") is not None and str(tab) != str(snapshot.get("tab")):
+        return page, str(ref), element
+
+
+def _check_tab(snapshot: dict, tab) -> None:
+    """操作するタブが、控えを読んだタブと同じと分かるときだけ通す。
+
+    - タブを指して（tabId を付けて）読んだ控えは、同じ tabId を付けた操作にだけ使う。
+      tabId を省いた操作は、前に出ているタブで動くので、読んだタブと同じとは限らない。
+    - タブを指さずに読んだ控えは、tabId を省いた操作か、読んだ結果の「Executed on tabId」と
+      同じ tabId を付けた操作にだけ使う。
+    """
+    given = snapshot.get("tab_given")
+    read_tab = snapshot.get("tab")
+    if not isinstance(given, bool):
+        raise Denied(
+            "控えに、どのタブを読んだかがないため、止めました（hojokin プラグインの決まり）。"
+            "ページを読み直し（read_page。filter は all）、そこで分かった番号で操作してください。"
+        )
+    if given:
+        if tab is None:
+            raise Denied(
+                f"控えはタブ（tabId {read_tab}）を指して読んだものなので、操作にも同じ tabId を付けてください"
+                "（hojokin プラグインの決まり）。tabId を省くと前に出ているタブで動くため、"
+                "読んだタブと別のタブの部品を押すおそれがあります。"
+            )
+        if str(tab) != str(read_tab):
             raise Denied(
                 "控えたページと別のタブを操作しようとしたため、止めました（hojokin プラグインの決まり）。"
                 "操作するタブのページを読み直してから続けてください。"
             )
-        return page, str(ref), element
+        return
+    if tab is not None and (read_tab is None or str(tab) != str(read_tab)):
+        raise Denied(
+            "控えたページと別のタブを操作しようとしたため、止めました（hojokin プラグインの決まり）。"
+            "控えはタブを指さずに読んだものです。操作するタブを tabId で指して読み直し、"
+            "同じ tabId を付けて操作してください。"
+        )
 
 
 def _found_word(name: str, words: Tuple[str, ...]) -> Optional[str]:
@@ -509,17 +544,28 @@ def _changes_page(op: str, tool_input: dict) -> bool:
 
 
 def _check_navigate(tool_input: dict) -> None:
-    url = str(tool_input.get("url") or "").strip()
+    """移れるのは、http・https で始まる URL と、back・forward だけ。
+
+    スキームのない形（localhost:8780 など）も拒む。「javascript:1,…」のように、
+    スキームの名前の後に数字を続けた URL と見分けられないため。
+    中に空白・制御文字（タブ・改行・ゼロ幅の文字など）を含む URL も拒む。
+    ブラウザは URL の中のタブ・改行を捨てて読むので、「java<タブ>script:」がすり抜けないように。
+    """
+    raw = tool_input.get("url")
+    url = str(raw if raw is not None else "").strip()
+    if any(unicodedata.category(c)[0] in ("C", "Z") for c in url):
+        raise Denied(
+            "空白や制御文字（タブ・改行など）を含む URL には移れません（hojokin プラグインの決まり）。"
+            "空白は %20 のように書き換えた http・https の URL で指してください。"
+        )
     lower = url.lower()
-    if lower in ("back", "forward"):
+    if lower in ("back", "forward") or _WEB_URL.match(lower):
         return
-    m = _SCHEME.match(lower)
-    if "://" in lower:
-        if not (lower.startswith("http://") or lower.startswith("https://")):
-            raise Denied(f"「{url}」には移れません。移れるのは http・https のページだけです（hojokin プラグインの決まり）。")
-    elif m and not re.match(r"^[a-z0-9.-]+:\d", lower):
-        # javascript: や data: など（「localhost:8780」のようなポートの付いた名前は通す）
-        raise Denied(f"「{url}」には移れません。移れるのは http・https のページだけです（hojokin プラグインの決まり）。")
+    raise Denied(
+        f"「{url}」には移れません。移れるのは http:// か https:// で始まるページと、"
+        "back・forward だけです（hojokin プラグインの決まり）。"
+        "スキームのない名前（localhost:8780 など）は、http:// を付けて指してください。"
+    )
 
 
 def _judge(ctx: Context, op: str, tool_input: dict, in_batch: bool = False) -> None:
@@ -626,6 +672,8 @@ def post_tool_use(data: dict, folder: Path) -> None:
             tab = tool_input.get("tabId")
             snapshots[kind] = {
                 "tab": str(tab) if tab is not None else tree["tab"],
+                # タブを指して読んだか（指して読んだ控えは、同じ tabId を付けた操作にだけ使う）
+                "tab_given": tab is not None,
                 "elements": tree["elements"],
                 "time": int(time.time()),
             }

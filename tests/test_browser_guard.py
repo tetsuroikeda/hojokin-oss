@@ -214,6 +214,7 @@ def test_snapshot_is_kept_per_session_and_browser(folder) -> None:
     saved = json.loads(snap.read_text(encoding="utf-8"))
     assert set(saved) == {bg.BUILTIN}
     assert saved[bg.BUILTIN]["tab"] == "seed"
+    assert saved[bg.BUILTIN]["tab_given"] is False  # タブを指さずに読んだ
     assert saved[bg.BUILTIN]["elements"]["ref_954"]["name"] == "提出"
     # 版の履歴に入れない置き場（lib/company_init.py の .gitignore の行）
     from lib import company_init
@@ -407,6 +408,119 @@ def test_click_ref_not_on_page_and_other_tab_are_denied(folder) -> None:
     assert "ref_9999" in denied(pre(folder, CHROME + "computer", click("ref_9999", tabId=3)))
     assert "別のタブ" in denied(pre(folder, CHROME + "computer", click("ref_7", tabId=4)))
     passed(pre(folder, CHROME + "computer", click("ref_7", tabId=3)))
+
+
+def test_snapshot_read_with_tab_is_used_only_with_that_tab(folder) -> None:
+    """タブを指して読んだ控えは、同じ tabId を付けた操作にだけ使う。
+
+    tabId を省いた操作は前に出ているタブで動くので、別のタブで読んだ控えで押させない
+    （例：後ろに開いたタブ B を読み、tabId なしで押すと、前のタブ A の同じ番号の部品を押す）。
+    """
+    permit(folder)
+    attach = folder / "案件" / "2026_省力化（一般型）第8回" / "1_申請" / "添付する書類" / "見積書の写し.pdf"
+    page = [{"type": "text", "text": read_record("mock_shinsei.txt")}]
+    for tab in ("B", 881448174):
+        post(folder, CHROME + "read_page", {"tabId": tab, "filter": "all"}, page)
+        for tool, tool_input in (
+            (CHROME + "computer", click("ref_7")),
+            (CHROME + "form_input", {"ref": "ref_58", "value": "試し商事"}),
+            (CHROME + "form_input", {"ref": "ref_230", "value": True}),
+            (CHROME + "file_upload", {"paths": [str(attach)], "ref": "ref_694"}),
+            (CHROME + "browser_batch", {"actions": [{"name": "form_input", "input": {"ref": "ref_58", "value": "x"}}]}),
+        ):
+            reason = denied(pre(folder, tool, tool_input))
+            assert "tabId" in reason and str(tab) in reason, (tool, reason)
+        # 結果の「Executed on tabId: seed」の値でも通さない（指したタブで照らす）
+        assert "別のタブ" in denied(pre(folder, CHROME + "computer", click("ref_7", tabId="seed")))
+        passed(pre(folder, CHROME + "form_input", {"ref": "ref_58", "value": "試し商事", "tabId": tab}))
+        passed(pre(folder, CHROME + "file_upload", {"paths": [str(attach)], "ref": "ref_694", "tabId": tab}))
+        passed(pre(folder, CHROME + "computer", click("ref_7", tabId=tab)))
+    # 内蔵ブラウザでも、タブを指して読んだら同じ
+    read_mock(folder, tool_input={"tabId": "B", "filter": "all"})
+    assert "tabId" in denied(pre(folder, BUILTIN + "computer", click("ref_7")))
+    passed(pre(folder, BUILTIN + "computer", click("ref_7", tabId="B")))
+
+
+def test_snapshot_read_without_tab_is_used_without_tab_or_with_executed_tab(folder) -> None:
+    """タブを指さずに読んだ控えは、tabId を省いた操作か、結果の「Executed on tabId」と同じ tabId の操作にだけ使う。"""
+    permit(folder)
+    read_mock(folder)  # 結果に「Executed on tabId: seed」がある
+    passed(pre(folder, BUILTIN + "form_input", {"ref": "ref_58", "value": "試し商事"}))
+    passed(pre(folder, BUILTIN + "form_input", {"ref": "ref_58", "value": "試し商事", "tabId": "seed"}))
+    assert "別のタブ" in denied(pre(folder, BUILTIN + "form_input", {"ref": "ref_58", "value": "x", "tabId": "other"}))
+    assert "別のタブ" in denied(pre(folder, BUILTIN + "computer", click("ref_7", tabId="other")))
+    passed(pre(folder, BUILTIN + "computer", click("ref_7")))
+    # 結果にタブの番号がないときは、tabId を付けた操作を通さない（同じタブか分からない）
+    post(folder, BUILTIN + "read_page", {}, 'form [ref_1]\n button "次へ" [ref_2]\n textbox "会社名" [ref_3]')
+    assert "別のタブ" in denied(pre(folder, BUILTIN + "computer", click("ref_2", tabId="x")))
+    assert "別のタブ" in denied(pre(folder, BUILTIN + "form_input", {"ref": "ref_3", "value": "x", "tabId": "x"}))
+    passed(pre(folder, BUILTIN + "form_input", {"ref": "ref_3", "value": "試し商事"}))
+
+
+def test_snapshot_without_tab_record_is_not_used(folder) -> None:
+    """どのタブを読んだかの印のない控え（前の形の控えなど）は使わず、読み直させる。"""
+    permit(folder)
+    read_mock(folder)
+    snap = folder / ".hojokin" / "一時" / "画面入力" / SESSION / "控え.json"
+    saved = json.loads(snap.read_text(encoding="utf-8"))
+    del saved[bg.BUILTIN]["tab_given"]
+    snap.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
+    assert "読み直" in denied(pre(folder, BUILTIN + "form_input", {"ref": "ref_58", "value": "x"}))
+
+
+# ページの移動で拒む URL（JavaScript を動かす形と、空白・制御文字を中に入れた形）
+NAVIGATE_DENIED = [
+    "javascript:document.forms[0].submit()",
+    "javascript:alert(1)",
+    "javascript:1,document.forms[0].submit()",
+    "javascript:0;document.forms[0].submit()",
+    "javascript:0||document.forms[0].submit()",
+    "javascript:1/document.forms[0].submit()",
+    "JavaScript:1;x()",
+    "java\tscript:alert(1)",
+    "java\nscript:alert(1)",
+    "java\rscript:alert(1)",
+    "java​script:alert(1)",
+    " javascript:alert(1)",
+    "\tjavascript:alert(1)",
+    "vbscript:1",
+    "data:0,x",
+    "data:text/html,x",
+    "file:///etc/passwd",
+    "blob:http://127.0.0.1/x",
+    "about:blank",
+    "localhost:8780",
+    "127.0.0.1:8780/shinsei",
+    "//127.0.0.1/",
+    "http://127.0.0.1/\tx",
+    "http://127.0.0.1/\nx",
+    "http://127.0.0.1/ x",
+    "http://127.0.0.1/　x",
+    "",
+]
+
+
+@pytest.mark.parametrize("url", NAVIGATE_DENIED)
+@pytest.mark.parametrize("with_permission", [False, True])
+def test_navigate_to_scripts_and_odd_urls_is_denied(folder, url, with_permission) -> None:
+    """移れるのは http・https と back・forward だけ。ページの移動は許可がなくても通すので、許可の前後で確かめる。"""
+    if with_permission:
+        permit(folder)
+    read_mock(folder)
+    denied(pre(folder, BUILTIN + "navigate", {"url": url}))
+    denied(pre(folder, CHROME + "navigate", {"url": url, "tabId": 1}))
+    denied(pre(folder, BUILTIN + "browser_batch", {"actions": [{"name": "navigate", "input": {"url": url}}]}))
+    # 拒んだ移動では、控えを捨てない
+    if with_permission:
+        passed(pre(folder, BUILTIN + "form_input", {"ref": "ref_58", "value": "x"}))
+
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1:8780/", "https://example.jp/a?b=1", "HTTPS://example.jp/", "back", "Forward",
+])
+def test_navigate_to_web_pages_passes(folder, url) -> None:
+    passed(pre(folder, BUILTIN + "navigate", {"url": url}))
+    passed(pre(folder, CHROME + "navigate", {"url": url, "tabId": 1}))
 
 
 def test_partial_read_replaces_snapshot(folder) -> None:
