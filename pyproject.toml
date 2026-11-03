@@ -1,0 +1,25 @@
+[project]
+name = "hojokin-oss"
+version = "0.1.0"
+description = "補助金の申請を自社で進めるための Claude Code プラグイン（開発とテストの設定）"
+readme = "SPEC.md"
+license = "MIT"
+# 社長のパソコンに入っている Python でも動くよう、古い版に合わせる（実験 E5 で見直す）
+requires-python = ">=3.9"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "jsonschema>=4.23",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "slow: 通信するテストや時間のかかるテスト。開発用の Stop hook では流さない",
+]

@@ -1,0 +1,577 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "制度データ",
+  "description": "制度ごと・公募回ごとの違いをまとめたもの（DESIGN 9章）。置き場所は 記録/制度データ/<制度>_<公募回>.json。どの値も、値・出典・根拠の文・状態の組で持つ。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "スキーマの版", "制度", "資料", "資料どうしの食い違い", "補助額", "数値の要件", "決まった期日",
+    "審査の段階", "審査項目", "加点", "書類", "様式", "申請画面", "提出するファイルの決まり",
+    "地域による違い", "手続きの段階", "してはいけないこと", "支援者の欄", "読み取れなかった項目"
+  ],
+  "properties": {
+    "スキーマの版": { "const": 1 },
+    "制度": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["名前", "種類", "公募回"],
+      "properties": {
+        "名前": { "type": "string", "minLength": 1 },
+        "枠": { "type": "string" },
+        "種類": { "enum": ["補助金", "助成金"] },
+        "公募回": { "type": "string", "minLength": 1 }
+      }
+    },
+    "資料": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "名前", "公募回", "URL", "取得日", "ハッシュ"],
+        "properties": {
+          "id": { "$ref": "#/$defs/識別子" },
+          "名前": { "type": "string", "minLength": 1 },
+          "公募回": { "type": "string", "minLength": 1, "description": "資料そのものの回。案件の回と違うことがある（第6回版の手引きなど）" },
+          "版": { "type": "string" },
+          "URL": { "type": "string", "pattern": "^https?://" },
+          "取得日": { "$ref": "#/$defs/日付" },
+          "ハッシュ": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "中身の SHA-256" },
+          "ページのずれ": { "type": "integer", "description": "PDF のページから、下に印刷された番号を引いた数" },
+          "注記": { "type": "string" }
+        }
+      }
+    },
+    "資料どうしの食い違い": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["項目", "値"],
+        "properties": {
+          "項目": { "type": "string", "minLength": 1 },
+          "値": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["値", "出典", "根拠の文"],
+              "properties": {
+                "値": {},
+                "出典": { "$ref": "#/$defs/出典の一覧" },
+                "根拠の文": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "注記": { "type": "string" }
+        }
+      }
+    },
+    "補助額": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["区分", "上限", "補助率"],
+        "properties": {
+          "区分": { "type": "string", "minLength": 1 },
+          "上限": { "$ref": "#/$defs/出典つきの金額" },
+          "補助率": { "$ref": "#/$defs/出典つきの補助率" },
+          "特例": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["名前", "種類", "値"],
+              "properties": {
+                "名前": { "type": "string", "minLength": 1 },
+                "種類": { "enum": ["上限の置き換え", "上限の上乗せ", "補助率の置き換え"] },
+                "値": { "$ref": "#/$defs/出典つき値" },
+                "条件": { "$ref": "#/$defs/出典つき値" }
+              },
+              "allOf": [
+                {
+                  "if": { "properties": { "種類": { "const": "補助率の置き換え" } } },
+                  "then": { "properties": { "値": { "$ref": "#/$defs/出典つきの補助率" } } },
+                  "else": { "properties": { "値": { "$ref": "#/$defs/出典つきの金額" } } }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "数値の要件": {
+      "description": "名前が同じでも、制度をまたいで定義を共有しない。定義は制度データごとに持つ",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["名前", "基準"],
+        "properties": {
+          "名前": { "type": "string", "minLength": 1 },
+          "計算式": { "$ref": "#/$defs/出典つき値" },
+          "元の数字の決め方": { "$ref": "#/$defs/出典つき値", "description": "期間・範囲・換算" },
+          "基準": { "$ref": "#/$defs/出典つき値" },
+          "満たせないとき": { "$ref": "#/$defs/出典つき値" }
+        }
+      }
+    },
+    "決まった期日": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["名前", "日時"],
+        "properties": {
+          "名前": { "type": "string", "minLength": 1 },
+          "日時": {
+            "allOf": [
+              { "$ref": "#/$defs/出典つき値" },
+              { "properties": { "値": { "anyOf": [{ "$ref": "#/$defs/期日の形" }, { "type": "null" }] } } }
+            ]
+          },
+          "注記": { "type": "string", "description": "「予定」など" }
+        }
+      }
+    },
+    "審査の段階": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["名前", "条件"],
+        "properties": {
+          "名前": { "type": "string", "minLength": 1 },
+          "条件": { "$ref": "#/$defs/出典つき値" }
+        }
+      }
+    },
+    "審査項目": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["名前", "観点"],
+        "properties": {
+          "名前": { "type": "string", "minLength": 1 },
+          "区分": { "type": "string" },
+          "観点": {
+            "allOf": [
+              { "$ref": "#/$defs/出典つき値" },
+              { "properties": { "値": { "anyOf": [{ "type": "array", "items": { "type": "string" } }, { "type": "null" }] } } }
+            ]
+          }
+        }
+      }
+    },
+    "加点": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["区分ごとの上限", "項目"],
+      "properties": {
+        "種類の数": { "$ref": "#/$defs/出典つき値" },
+        "区分ごとの上限": {
+          "allOf": [
+            { "$ref": "#/$defs/出典つき値" },
+            { "properties": { "値": { "anyOf": [{ "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }, { "type": "null" }] } } }
+          ]
+        },
+        "項目": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["名前", "証拠の種類", "内容"],
+            "properties": {
+              "名前": { "type": "string", "minLength": 1 },
+              "区分": { "type": "string" },
+              "証拠の種類": {
+                "type": "array",
+                "items": { "enum": ["入力", "添付", "GビズIDでの照合", "外部機関の発行物"] }
+              },
+              "必要な書類": { "type": "array", "items": { "type": "string" } },
+              "かかる日数": { "$ref": "#/$defs/出典つき値" },
+              "自動で付く条件": { "$ref": "#/$defs/出典つき値" },
+              "重なったときの扱い": { "$ref": "#/$defs/出典つき値" },
+              "内容": { "$ref": "#/$defs/出典つき値" }
+            }
+          }
+        }
+      }
+    },
+    "書類": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["名前", "区分", "発行元", "手続き", "内容"],
+        "properties": {
+          "名前": { "type": "string", "minLength": 1 },
+          "区分": { "enum": ["必須", "任意", "条件付き"] },
+          "条件": { "$ref": "#/$defs/出典つき値" },
+          "出す人": { "type": "string" },
+          "発行元": { "enum": ["自社", "役所", "外部機関"] },
+          "有効期限": { "$ref": "#/$defs/出典つき値" },
+          "期数": { "$ref": "#/$defs/出典つき値" },
+          "形式": { "type": "string" },
+          "効く審査項目": { "type": "array", "items": { "type": "string" } },
+          "手続き": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/識別子" }, "description": "使う手続きの段階の id" },
+          "内容": { "$ref": "#/$defs/出典つき値" }
+        }
+      }
+    },
+    "様式": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["名前", "入力先", "項目"],
+        "properties": {
+          "名前": { "type": "string", "minLength": 1 },
+          "入力先": {
+            "allOf": [
+              { "$ref": "#/$defs/出典つき値" },
+              { "properties": { "値": { "anyOf": [{ "$ref": "#/$defs/入力先" }, { "type": "null" }] } } }
+            ]
+          },
+          "項目": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["名前"],
+              "properties": {
+                "名前": { "type": "string", "minLength": 1 },
+                "分量の上限": {
+                  "allOf": [
+                    { "$ref": "#/$defs/出典つき値" },
+                    { "properties": { "値": { "anyOf": [{ "$ref": "#/$defs/分量の上限" }, { "type": "null" }] } } }
+                  ]
+                },
+                "換算": {
+                  "allOf": [
+                    { "$ref": "#/$defs/出典つき値" },
+                    { "properties": { "値": { "anyOf": [{ "$ref": "#/$defs/換算" }, { "type": "null" }] } } }
+                  ]
+                },
+                "書き込む位置": { "type": "object", "description": "ファイルなら見出し・表・セル、行を足してよい表か。形は様式の対応づけ（9.1）で決める" },
+                "対応する審査項目": { "type": "array", "items": { "type": "string" } },
+                "役割": { "enum": ["現状と目標", "課題", "解決策", "効果"] },
+                "注記": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "申請画面": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["流れ", "画面"],
+      "properties": {
+        "流れ": { "$ref": "#/$defs/出典つき値" },
+        "画面": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["順番", "名前", "欄", "押してよいボタン"],
+            "properties": {
+              "順番": { "type": "integer", "minimum": 1 },
+              "名前": { "type": "string", "minLength": 1 },
+              "欄": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["名前", "種類", "担当者が入れる"],
+                  "properties": {
+                    "名前": { "type": "string", "minLength": 1 },
+                    "種類": { "enum": ["文字", "数字", "日付", "選択", "チェック", "ラジオ", "添付"] },
+                    "上限": { "$ref": "#/$defs/出典つき値" },
+                    "値の出どころ": { "type": "string" },
+                    "担当者が入れる": { "type": "boolean", "description": "true なら、ツールは入れずに担当者に任せる（DESIGN 5章）" }
+                  }
+                }
+              },
+              "押してよいボタン": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+            }
+          }
+        }
+      }
+    },
+    "提出するファイルの決まり": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["形式"],
+      "properties": {
+        "形式": { "$ref": "#/$defs/出典つき値" },
+        "容量": { "$ref": "#/$defs/出典つき値" },
+        "名前": { "$ref": "#/$defs/出典つき値" }
+      }
+    },
+    "地域による違い": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["何が変わるか", "調べ方"],
+        "properties": {
+          "何が変わるか": { "type": "string", "minLength": 1 },
+          "調べ方": { "$ref": "#/$defs/出典つき値" }
+        }
+      }
+    },
+    "手続きの段階": {
+      "description": "申請と採択後を同じ形で表す。段階のフォルダもここから作る（DESIGN 4.5）",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "順番", "名前"],
+        "properties": {
+          "id": { "$ref": "#/$defs/識別子" },
+          "順番": { "type": "integer", "minimum": 1 },
+          "名前": { "type": "string", "minLength": 1 },
+          "フォルダ": { "type": "string", "pattern": "^[0-9]+_[^/\\\\]+$", "description": "段階のフォルダの名前（1_申請 など）" },
+          "条件付き": { "type": "boolean", "description": "条件に当たるときだけ要る段階（状況報告など）" },
+          "始まる条件": { "$ref": "#/$defs/出典つき値" },
+          "期限": {
+            "allOf": [
+              { "$ref": "#/$defs/出典つき値" },
+              { "properties": { "値": { "anyOf": [{ "$ref": "#/$defs/期限" }, { "type": "null" }] } } }
+            ]
+          },
+          "書類": { "type": "array", "items": { "type": "string" } },
+          "様式": { "type": "array", "items": { "type": "string" } },
+          "画面": { "type": "string" },
+          "注意": { "type": "array", "items": { "$ref": "#/$defs/出典つき値" } }
+        }
+      }
+    },
+    "してはいけないこと": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["名前", "内容"],
+        "properties": {
+          "名前": { "type": "string", "minLength": 1 },
+          "内容": { "$ref": "#/$defs/出典つき値" }
+        }
+      }
+    },
+    "支援者の欄": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["欄の名前"],
+          "properties": {
+            "欄の名前": { "$ref": "#/$defs/出典つき値" },
+            "案内の文": { "$ref": "#/$defs/出典つき値" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "読み取れなかった項目": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["項目", "理由"],
+        "properties": {
+          "項目": { "type": "string", "minLength": 1 },
+          "理由": { "type": "string", "minLength": 1 },
+          "問い合わせ文の案": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "識別子": { "type": "string", "pattern": "^[^\\s]+$" },
+    "日付": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "日時": {
+      "type": "string",
+      "description": "日本時間。時刻を付けるときは +09:00 を付ける",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2})?\\+09:00)?$"
+    },
+    "状態": { "enum": ["確認済み", "読み取れない", "資料で食い違い", "要確認"] },
+    "出典": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["資料"],
+      "properties": {
+        "資料": { "$ref": "#/$defs/識別子", "description": "資料の id" },
+        "ページ": { "type": "integer", "minimum": 1, "description": "下に印刷された番号" },
+        "終わりのページ": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "出典の一覧": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/出典" } },
+    "出典つき値": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["値", "状態"],
+      "properties": {
+        "値": {},
+        "出典": { "type": "array", "items": { "$ref": "#/$defs/出典" } },
+        "根拠の文": { "type": "string" },
+        "状態": { "$ref": "#/$defs/状態" },
+        "理由": { "type": "string", "description": "読み取れないときの理由" },
+        "注記": { "type": "string" }
+      },
+      "if": { "properties": { "状態": { "const": "読み取れない" } } },
+      "then": {
+        "required": ["理由"],
+        "properties": { "値": { "type": "null" }, "理由": { "minLength": 1 } }
+      },
+      "else": {
+        "required": ["出典", "根拠の文"],
+        "properties": { "出典": { "minItems": 1 }, "根拠の文": { "minLength": 1 } }
+      }
+    },
+    "出典つきの金額": {
+      "allOf": [
+        { "$ref": "#/$defs/出典つき値" },
+        { "properties": { "値": { "type": ["integer", "null"], "minimum": 0, "description": "円" } } }
+      ]
+    },
+    "出典つきの補助率": {
+      "allOf": [
+        { "$ref": "#/$defs/出典つき値" },
+        { "properties": { "値": { "anyOf": [{ "type": "string", "pattern": "^[0-9]+/[0-9]+$" }, { "type": "null" }] } } }
+      ]
+    },
+    "期日の形": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["日時"],
+          "properties": { "日時": { "$ref": "#/$defs/日時" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["年月"],
+          "description": "日が決まっていないとき（「2月上旬」など）",
+          "properties": {
+            "年月": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}$" },
+            "旬": { "enum": ["上旬", "中旬", "下旬"] }
+          }
+        }
+      ]
+    },
+    "期間": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["数", "単位"],
+      "properties": {
+        "数": { "type": "integer", "minimum": 1 },
+        "単位": { "enum": ["日", "か月", "年"] }
+      }
+    },
+    "期限": {
+      "description": "期限の決め方。決まった日付／ある出来事からの期間／いくつかの期限のうち早いほう／繰り返しと提出期間",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["種類", "日時"],
+          "properties": {
+            "種類": { "const": "決まった日付" },
+            "日時": { "$ref": "#/$defs/日時" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["種類", "出来事", "期間"],
+          "properties": {
+            "種類": { "const": "出来事からの期間" },
+            "出来事": { "type": "string", "minLength": 1, "description": "手続きの段階の id か、採択発表などの出来事" },
+            "期間": { "$ref": "#/$defs/期間" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["種類", "期限"],
+          "properties": {
+            "種類": { "const": "早いほう" },
+            "期限": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/期限" } }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["種類", "回数", "間隔", "提出期間"],
+          "properties": {
+            "種類": { "const": "繰り返し" },
+            "回数": { "type": "integer", "minimum": 1 },
+            "間隔": { "$ref": "#/$defs/期間" },
+            "提出期間": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["始まりの月", "長さ"],
+              "properties": {
+                "始まりの月": { "type": "integer", "minimum": 1, "maximum": 12 },
+                "長さ": { "$ref": "#/$defs/期間" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "入力先": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["種類", "提出の形式"],
+          "properties": {
+            "種類": { "const": "ファイル" },
+            "提出の形式": { "type": "string", "minLength": 1, "description": "PDF、xlsx など" },
+            "元のファイル": { "$ref": "#/$defs/識別子", "description": "元の様式の資料の id" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["種類"],
+          "properties": {
+            "種類": { "const": "画面" },
+            "画面": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "分量の上限": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["種類"],
+      "properties": {
+        "種類": { "enum": ["なし", "目安", "上限", "システムの上限"] },
+        "文字数": { "type": "integer", "minimum": 1 }
+      },
+      "if": { "properties": { "種類": { "const": "なし" } } },
+      "then": { "not": { "required": ["文字数"] } },
+      "else": { "required": ["文字数"] }
+    },
+    "換算": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "画像1枚": { "type": "integer", "minimum": 0, "description": "字" },
+        "表1つ": { "type": "integer", "minimum": 0, "description": "字" }
+      }
+    }
+  }
+}
