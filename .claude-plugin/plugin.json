@@ -1,0 +1,10 @@
+{
+  "name": "hojokin",
+  "version": "0.1.0",
+  "description": "補助金の申請を、社長と担当者が自社で進めるための Claude Code プラグイン。探す・準備・書類の整理・申請書を書く・記録・電子申請の入力（一時保存まで）を手伝う",
+  "author": {
+    "name": "hojokin-oss"
+  },
+  "license": "MIT",
+  "keywords": ["補助金", "助成金", "申請", "中小企業"]
+}
