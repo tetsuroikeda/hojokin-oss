@@ -1,4 +1,4 @@
-"""模擬の申請画面（D11a）の自己テスト。`uv run pytest mock/test_server.py` で流す。
+"""模擬の申請画面（D11a の1画面版と、D11b の12画面版）の自己テスト。`uv run pytest mock/test_server.py` で流す。
 
 tests/ の外に置いているので、開発用の Stop hook の速いテストには入らない。
 """
@@ -9,6 +9,7 @@ import json
 import re
 import sys
 import threading
+from collections import Counter
 import urllib.error
 import urllib.request
 import uuid
@@ -36,9 +37,18 @@ class FormParser(HTMLParser):
         self.controls, self.buttons, self.label_stack = [], [], []
         self.button = None
         self.title, self.in_title = "", False
+        self.steps, self.current_steps, self.in_step = [], [], False
+        self.h1, self.in_h1 = "", False
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        if tag == "li":
+            self.in_step = True
+            self.steps.append("")
+            if a.get("aria-current") == "step":
+                self.current_steps.append(len(self.steps) - 1)
+        elif tag == "h1":
+            self.in_h1 = True
         if tag == "label":
             self.label_stack.append({"text": "", "controls": []})
         elif tag in ("input", "select", "textarea"):
@@ -61,8 +71,16 @@ class FormParser(HTMLParser):
             self.button = None
         elif tag == "title":
             self.in_title = False
+        elif tag == "li":
+            self.in_step = False
+        elif tag == "h1":
+            self.in_h1 = False
 
     def handle_data(self, data):
+        if self.in_step:
+            self.steps[-1] += data
+        if self.in_h1:
+            self.h1 += data
         if self.label_stack:
             self.label_stack[-1]["text"] += data
         if self.button is not None:
@@ -377,3 +395,283 @@ def test_subsidy_amount_rate():
     values = {"expense_machine_b": "22500000"}
     assert calc.compute(values)["subsidy_amount"] == "11,250,000"
     assert calc.compute({**values, "small_business": True})["subsidy_amount"] == "15,000,000"
+
+
+# ---- 12画面版（D11b） ----
+
+# 画面ごとのボタン（マニュアルの各画面の絵）。上と下に置くボタンは、ここでは1回ずつ書く
+NAV = ["戻る", "次へ"]
+NAV_SAVE = ["戻る", "一時保存", "次へ"]
+EXPECTED_BUTTONS = {
+    1: NAV, 2: NAV_SAVE + ["認証コード発行"], 3: NAV_SAVE, 4: NAV_SAVE, 5: NAV_SAVE, 6: NAV_SAVE,
+    7: NAV_SAVE + ["計算"], 8: NAV_SAVE + ["計算"], 9: NAV_SAVE, 10: NAV, 11: NAV + ["基本情報画面へ"],
+    12: ["修正"] * 11 + ["提出"],
+}
+# 押さないボタンの語（DESIGN 5章）。「提出」のほかのボタンの名前には入れない
+STOP_WORDS = ("提出", "送信", "申請する", "確定", "完了")
+
+
+@pytest.fixture()
+def running_screens(tmp_path):
+    srv = server.make_server(0, tmp_path / "記録", reset=True, screens=True)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{srv.server_address[1]}", tmp_path / "記録"
+    srv.shutdown()
+    srv.server_close()
+
+
+def login_screens(base):
+    body = "account_id=tanto%40example.test&password=x&button=login".encode()
+    status, headers, _ = request(base + "/login", body, {"Content-Type": "application/x-www-form-urlencoded"})
+    assert status == 303 and headers["Location"] == "/shinsei/1"
+    return headers["Set-Cookie"].split(";")[0]
+
+
+def post_screen(base, n, cookie, fields, files=None):
+    return request(f"{base}/shinsei/{n}", *multipart(fields, files), cookie)
+
+
+def read_state(record_dir):
+    return json.loads((record_dir / server.STATE_FILE).read_text(encoding="utf-8"))
+
+
+def test_screens_split_all_fields_in_manual_order():
+    """12画面に、すべての欄が1回ずつ、画面の順に入っている。"""
+    assert screen.SCREEN_COUNT == 12
+    ids = [f["id"] for n in range(1, 13) for f in screen.screen_fields(n)]
+    assert ids == [f["id"] for f in screen.all_fields()]
+    for n in range(1, 13):
+        section = screen.SECTIONS[n - 1]
+        assert all(f["section"] == f"{section['no']} {section['title']}" for f in screen.screen_fields(n))
+
+
+def test_screen_buttons_follow_manual():
+    """❶・❿・⓫ に一時保存がなく、⓬ は修正と提出だけ。提出は ⓬ にしかない。"""
+    for n, labels in EXPECTED_BUTTONS.items():
+        assert [label for _v, label, _p, _w in screen.screen_buttons(n)] == labels, n
+    for n in range(1, 13):
+        for value, label, _p, _w in screen.screen_buttons(n):
+            if value != "submit":
+                assert not any(w in label for w in STOP_WORDS), label
+            assert screen.button_label(value) == label
+
+
+def test_default_login_still_goes_to_one_page(running):
+    """--screens を付けないときは、D11a のとおりログインの後に1画面版へ入る。"""
+    base, _ = running
+    login(base)  # Location が /shinsei であることを確かめる
+
+
+def test_screens_login_goes_to_first_screen(running_screens):
+    base, record_dir = running_screens
+    cookie = login_screens(base)
+    status, headers, _ = request(base + "/", cookie=cookie)
+    assert status == 303 and headers["Location"] == "/shinsei/1"
+    start = read_log(record_dir, with_start=True)[0]
+    assert start["event"] == "server_start" and start["start_url"] == "/shinsei/1"
+
+
+def test_each_screen_has_its_fields_and_buttons(running_screens):
+    """どの画面も、その画面の欄と、マニュアルのとおりのボタンだけを出す。"""
+    base, _ = running_screens
+    cookie = login_screens(base)
+    for n in range(1, 13):
+        section = screen.SECTIONS[n - 1]
+        status, _, text = request(f"{base}/shinsei/{n}", cookie=cookie)
+        page = parse(text)
+        assert status == 200
+        assert "模擬画面" in page.title and section["title"] in page.title and server.BANNER in text
+        assert page.h1 == f"{section['no']} {section['title']}"
+        assert "maxlength" not in text
+        # 進み具合は12個で、今の画面にだけ印がある（リンクにはしない）
+        assert page.steps == [f"{s['no']} {s['title']}" for s in screen.SECTIONS]
+        assert page.current_steps == [n - 1]
+        steps_html = re.search(r'<ol class="steps">(.*?)</ol>', text, flags=re.S).group(1)
+        assert "<a " not in steps_html and "<button" not in steps_html
+        # 欄は、その画面の欄だけ
+        names = {c.get("name") for c in page.controls}
+        assert names == {f["id"] for f in screen.screen_fields(n)}, n
+        for control in page.controls:
+            if control["tag"] == "select" or control.get("type") in ("checkbox", "radio", "file"):
+                assert control["label"], f"囲むラベルがない：{control.get('name')}"
+        # ボタン：上と下のボタンは2回ずつ、ほかは1回ずつ
+        nav_labels = {label for v, label, _p in screen.NAV_BUTTONS if v in section["nav"]}
+        expected = Counter({label: (2 if label in nav_labels else 1) for label in EXPECTED_BUTTONS[n]})
+        if n == 12:
+            expected = Counter({"修正": 11, "提出": 1})
+        assert Counter(b["text"] for b in page.buttons) == expected, n
+        assert ("提出" in [b["text"] for b in page.buttons]) == (n == 12)
+
+
+def test_person_fields_on_screens_keep_the_words(running_screens):
+    """担当者が入れる欄は、画面に出たときも、囲むラベルの名前に4語のどれかが入る（DESIGN 5章）。"""
+    base, _ = running_screens
+    cookie = login_screens(base)
+    person = {f["id"] for f in screen.all_fields() if f["who"] == "person"}
+    seen = set()
+    for n in range(1, 13):
+        page = parse(request(f"{base}/shinsei/{n}", cookie=cookie)[2])
+        for control in page.controls:
+            if control.get("type") in ("checkbox", "radio") or control["tag"] == "select":
+                if control.get("name") in person:
+                    seen.add(control["name"])
+                    assert has_word(control["label"]), control["label"]
+                else:
+                    assert not has_word(control["label"]), control["label"]
+    assert seen == person
+
+
+def test_next_saves_only_that_screen_and_moves_on(running_screens):
+    """次へは、その画面の欄だけを保存して次の画面へ移る。ほかの画面の値は消さない。"""
+    base, record_dir = running_screens
+    cookie = login_screens(base)
+    status, headers, _ = post_screen(base, 2, cookie, {"button": "save", "biz_name": "株式会社やまぶき惣菜",
+                                                       "employees": "15"})
+    assert status == 303 and headers["Location"] == "/shinsei/2"
+    status, headers, _ = post_screen(base, 3, cookie, {"button": "next", "small_business": "on",
+                                                       "other_subsidy": "いいえ"})
+    assert status == 303 and headers["Location"] == "/shinsei/4"
+    fields = read_state(record_dir)["fields"]
+    assert fields["biz_name"]["value"] == "株式会社やまぶき惣菜" and fields["employees"]["value"] == "15"
+    assert fields["small_business"]["value"] is True and fields["other_subsidy"]["value"] == "いいえ"
+    assert fields["oath_1"]["value"] is False and fields["not_same_corp"]["value"] is False
+    entry = read_log(record_dir)[-1]
+    assert entry["page"] == "shinsei/3" and entry["screen"] == "❸ 要件"
+    assert entry["button"] == "next" and entry["button_label"] == "次へ" and entry["saved"] is True
+    # 記録の fields は、1画面版と同じく、すべての欄の値
+    assert set(entry["fields"]) == set(server.empty_values())
+    assert entry["fields"]["biz_name"] == "株式会社やまぶき惣菜" and entry["fields"]["small_business"] is True
+    # 知らせは、移った先の画面に1回だけ出る
+    text = request(base + "/shinsei/4", cookie=cookie)[2]
+    assert "前の画面で「次へ」を押しました" in text
+    assert "前の画面で「次へ」を押しました" not in request(base + "/shinsei/4", cookie=cookie)[2]
+    # 保存した値は、ほかの画面にも、1画面版にも出る
+    assert 'value="株式会社やまぶき惣菜"' in request(base + "/shinsei/2", cookie=cookie)[2]
+    assert 'value="株式会社やまぶき惣菜"' in request(base + "/shinsei", cookie=cookie)[2]
+
+
+def test_back_does_not_save_and_moves_back(running_screens):
+    base, record_dir = running_screens
+    cookie = login_screens(base)
+    status, headers, _ = post_screen(base, 3, cookie, {"button": "back", "small_business": "on"})
+    assert status == 303 and headers["Location"] == "/shinsei/2"
+    assert not (record_dir / server.STATE_FILE).exists() or read_state(record_dir)["fields"]["small_business"]["value"] is False
+    entry = read_log(record_dir)[-1]
+    assert entry["button"] == "back" and entry["saved"] is False and entry["fields"]["small_business"] is True
+    # ❶ より前の画面はないので、❶ のまま
+    status, headers, _ = post_screen(base, 1, cookie, {"button": "back"})
+    assert status == 303 and headers["Location"] == "/shinsei/1"
+    assert "マイページ" in request(base + "/shinsei/1", cookie=cookie)[2]
+
+
+def test_fix_goto_and_last_next_move_between_screens(running_screens):
+    base, record_dir = running_screens
+    cookie = login_screens(base)
+    for k in range(1, 12):
+        status, headers, _ = post_screen(base, 12, cookie, {"button": f"fix_{k}"})
+        assert status == 303 and headers["Location"] == f"/shinsei/{k}"
+    assert read_log(record_dir)[-1]["button_label"] == "修正"
+    status, headers, _ = post_screen(base, 11, cookie, {"button": "goto_2"})
+    assert status == 303 and headers["Location"] == "/shinsei/2"
+    status, headers, _ = post_screen(base, 11, cookie, {"button": "next", "auth_code": "123456"})
+    assert status == 303 and headers["Location"] == "/shinsei/12"
+    assert read_state(record_dir)["fields"]["auth_code"]["value"] == "123456"
+
+
+def test_button_not_on_the_screen_is_recorded_only(running_screens):
+    """その画面にないボタン（❸ に送られた「計算」など）は、記録だけして保存しない。"""
+    base, record_dir = running_screens
+    cookie = login_screens(base)
+    status, headers, _ = post_screen(base, 3, cookie, {"button": "calc_plan", "small_business": "on"})
+    assert status == 303 and headers["Location"] == "/shinsei/3"
+    entry = read_log(record_dir)[-1]
+    assert entry["button"] == "calc_plan" and entry["saved"] is False
+    assert "この画面にないボタンです" in request(base + "/shinsei/3", cookie=cookie)[2]
+    status, headers, _ = post_screen(base, 1, cookie, {"button": "save", "oath_1": "on"})
+    assert headers["Location"] == "/shinsei/1"
+    assert read_log(record_dir)[-1]["saved"] is False  # ❶ には一時保存がない
+
+
+def test_attach_on_document_screen(running_screens):
+    base, record_dir = running_screens
+    cookie = login_screens(base)
+    status, headers, _ = post_screen(base, 9, cookie, {"button": "next"},
+                                     {"doc_registry": ("履歴事項全部証明書.pdf", SAMPLE_PDF.read_bytes())})
+    assert status == 303 and headers["Location"] == "/shinsei/10"
+    state = read_state(record_dir)
+    assert state["files"]["doc_registry"]["filename"] == "履歴事項全部証明書.pdf"
+    assert (record_dir / state["files"]["doc_registry"]["path"]).read_bytes() == SAMPLE_PDF.read_bytes()
+    assert "添付済み：履歴事項全部証明書.pdf" in request(base + "/shinsei/9", cookie=cookie)[2]
+    # 形式の合わないファイルがあると、次へを押しても ❾ のまま
+    status, headers, _ = post_screen(base, 9, cookie, {"button": "next"}, {"doc_officers": ("役員名簿.pdf", b"%PDF-1.4")})
+    assert status == 303 and headers["Location"] == "/shinsei/9"
+    text = request(base + "/shinsei/9", cookie=cookie)[2]
+    assert "添付できませんでした" in text and "この画面のままです" in text
+    assert "doc_officers" not in read_state(record_dir)["files"]
+    # ほかの画面に送られた添付は受け取らない
+    post_screen(base, 3, cookie, {"button": "save"}, {"doc_tax": ("納税証明書.pdf", b"%PDF-1.4")})
+    assert "doc_tax" not in read_state(record_dir)["files"]
+
+
+def test_auth_code_screen(running_screens):
+    base, _ = running_screens
+    cookie = login_screens(base)
+    status, headers, _ = post_screen(base, 2, cookie, {"button": "issue_code", "staff_email": "tanto@example.test"})
+    assert status == 303 and headers["Location"] == "/shinsei/2"
+    assert "模擬の認証コードは" in request(base + "/shinsei/2", cookie=cookie)[2]
+    text = request(base + "/shinsei/11", cookie=cookie)[2]
+    assert "tanto@example.test" in text and "発行した認証コードは" in text
+
+
+def test_confirm_screen_and_submit(running_screens):
+    base, record_dir = running_screens
+    cookie = login_screens(base)
+    post_screen(base, 2, cookie, {"button": "save", "biz_name": "株式会社やまぶき惣菜"})
+    page = parse(request(base + "/shinsei/12", cookie=cookie)[2])
+    assert [b["value"] for b in page.buttons if b["text"] == "修正"] == [f"fix_{k}" for k in range(1, 12)]
+    assert "株式会社やまぶき惣菜" in request(base + "/shinsei/12", cookie=cookie)[2]
+    assert read_state(record_dir)["submit_pressed"] is False
+    status, _, text = post_screen(base, 12, cookie, {"button": "submit"})
+    assert status == 200 and "どこにも送っていません" in text and 'href="/shinsei/12"' in text
+    state = read_state(record_dir)
+    assert state["submit_pressed"] is True and len(state["submit_times"]) == 1
+    entry = read_log(record_dir)[-1]
+    assert entry["page"] == "shinsei/12" and entry["screen"] == "⓬ 確認"
+    assert entry["button_label"] == "提出" and entry["submit_pressed"] is True
+
+
+def test_screen_pages_need_login_and_exist(running_screens):
+    base, _ = running_screens
+    status, headers, _ = request(base + "/shinsei/1")
+    assert status == 303 and headers["Location"] == "/login"
+    status, headers, _ = request(base + "/shinsei/1", *multipart({"button": "next"}))
+    assert status == 303 and headers["Location"] == "/login"
+    cookie = login_screens(base)
+    for path in ("/shinsei/0", "/shinsei/13", "/shinsei/x"):
+        assert request(base + path, cookie=cookie)[0] == 404
+
+
+def test_client_events_on_screen_pages(running_screens):
+    base, record_dir = running_screens
+    request(base + "/log", json.dumps({"event": "change", "name": "kasan_navi", "type": "checkbox", "value": "on",
+                                      "checked": True, "page": "/shinsei/4"}).encode())
+    request(base + "/log", json.dumps({"event": "click", "button": "fix_3", "label": "修正",
+                                      "page": "/shinsei/12"}).encode())
+    change, click = read_log(record_dir)[-2:]
+    assert change["page"] == "shinsei/4" and change["label"].startswith("省力化ナビ加点") and change["checked"] is True
+    assert click["page"] == "shinsei/12" and click["button"] == "fix_3" and click["button_label"] == "修正"
+
+
+def test_screen_list_names_every_screen_and_field():
+    text = screen.markdown_screens()
+    for n, s in enumerate(screen.SECTIONS, start=1):
+        assert f"### {s['no']} {s['title']}（`/shinsei/{n}`、マニュアル p.{s['pages']}）" in text
+    for field in screen.all_fields():
+        assert field["id"] in text or field.get("grid") and f"{field['grid']}_<行>_<列>" in text
+
+
+def test_readme_has_the_current_screen_list():
+    """README の「画面ごとの欄とボタンの一覧」は、`python3 mock/screen.py` の今の出力と同じ。"""
+    readme = (Path(__file__).resolve().parent / "README.md").read_text(encoding="utf-8")
+    assert screen.markdown_screens() in readme
