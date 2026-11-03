@@ -1,0 +1,14 @@
+{
+  "name": "hojokin-e6",
+  "description": "実験 E6 の試しのマーケットプレイス（会社のフォルダの設定が Code タブで効くかを見る）",
+  "owner": {
+    "name": "hojokin-oss"
+  },
+  "plugins": [
+    {
+      "name": "e6-probe",
+      "source": "./e6-probe",
+      "description": "会社のフォルダの設定と、skill のスクリプト・Stop hook の効き方を見る試しのプラグイン"
+    }
+  ]
+}

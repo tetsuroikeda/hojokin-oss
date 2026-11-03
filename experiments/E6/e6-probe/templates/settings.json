@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "blockReadsOutsideWorkingDirectories": true,
+    "blockWritesOutsideWorkingDirectories": true,
+    "deny": [
+      "Edit(/原本/**)",
+      "Edit(/.hojokin/**)",
+      "Edit(/.claude/**)",
+      "Edit(/.git/**)",
+      "Edit(/**/*.docx)",
+      "Edit(/**/*.xlsx)"
+    ],
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:go.jp)"
+    ]
+  }
+}
