@@ -15,8 +15,10 @@
 
 - main に直接コミットしない。作業は作業用のブランチで行う。プルリクエストは、作者が頼んだときだけ作る。
 - 作業のブランチは日ごとに作る（day2 など。以下「日のブランチ」）。
+- worktree は、元のフォルダで今いるブランチの先のコミットから作られる（`.claude/settings.json` の `worktree.baseRef`）。worktree のセッションを始める前に、元のフォルダを日のブランチにし、直しをコミットしておく。
 - worktree で並べて進めるセッションは、次のようにする。
   - worktree のセッションかは、`git rev-parse --git-dir` と `git rev-parse --git-common-dir` の出力が違うかで分かる（作業フォルダは、たいてい `.claude/worktrees/` の下にある）。
+  - 始めたら、`git log -1 --oneline` が日のブランチの先（`git log -1 --oneline day2` など）と同じかを確かめる。違えば、作らずに作者に知らせる。
   - 直すのは、そのタスクの行の「触るファイル」だけ。SPEC・DESIGN も直さない。
   - TASKS.md の状態の欄も、experiments/結果.md も直さない（TASKS.md 2章の「済みに直す」はしない）。
   - 実験の結果は experiments/E<番号>/結果.md に書き、最後の報告にも書く。

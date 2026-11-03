@@ -25,5 +25,8 @@
       "Bash(git push:*)",
       "Bash(gh pr merge:*)"
     ]
+  },
+  "worktree": {
+    "baseRef": "head"
   }
 }
