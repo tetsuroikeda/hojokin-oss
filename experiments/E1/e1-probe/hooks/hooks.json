@@ -9,7 +9,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Claude_Browser|claude-in-chrome|computer-use",
+        "matcher": "(Claude_Browser|claude-in-chrome|computer-use)__",
         "hooks": [
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" PreToolUse" }
         ]
@@ -17,7 +17,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Claude_Browser|claude-in-chrome|computer-use",
+        "matcher": "(Claude_Browser|claude-in-chrome|computer-use)__",
         "hooks": [
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" PostToolUse" }
         ]

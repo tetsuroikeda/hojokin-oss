@@ -36,7 +36,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self) -> None:
-        if self.path in ("/", "/index.html"):
+        if self.path in ("/", "/index.html", "/submit"):
             self._send_page("index.html")
         elif self.path == "/page2.html":
             self._send_page("page2.html")
@@ -58,7 +58,9 @@ class Handler(BaseHTTPRequestHandler):
             if item.filename:
                 files[key] = item.filename
             else:
-                fields[key] = item.value
+                value = item.value
+                # multipart の欄の値はバイト列で来ることがある
+                fields[key] = value.decode("utf-8", "replace") if isinstance(value, bytes) else value
         button = fields.get("button", "")
         write_log({
             "time": datetime.now().astimezone().isoformat(timespec="seconds"),

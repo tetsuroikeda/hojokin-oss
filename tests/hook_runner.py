@@ -41,6 +41,21 @@ GUARDED_TOOLS = (
 UNGUARDED_TOOLS = ("Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "Skill", "Task")
 
 
+def claude_matches(matcher: str, tool_name: str) -> bool:
+    """Claude Code と同じ規則で、hooks.json の matcher が道具の名前に合うかを返す（公式文書の hooks）。
+
+    英字・数字・_・-・空白・,・| だけの matcher は、名前そのもの（| か , で区切った一覧）と比べる。
+    それ以外の文字を含むときだけ、正規表現として、名前のどこかに合えばよい。
+    （実験 E1 で、`Claude_Browser|claude-in-chrome` がどの道具にも合わないことが分かった）
+    """
+    if matcher in ("", "*"):
+        return True
+    if re.fullmatch(r"[A-Za-z0-9_\- ,|]*", matcher):
+        names = [n.strip() for n in re.split(r"[|,]", matcher)]
+        return tool_name in names
+    return re.search(matcher, tool_name) is not None
+
+
 @functools.lru_cache(maxsize=None)
 def real_python() -> str:
     """hook を動かす本物の Python。社長の Mac と同じ /usr/bin/python3（3.9）を優先する。"""
