@@ -129,7 +129,8 @@ def values_from_form(form: dict) -> dict:
         elif field["kind"] == "checkboxes":
             values[field["id"]] = [v for v in got if v in field["options"]]
         elif field["kind"] != "file":
-            values[field["id"]] = got[0] if got else ""
+            # ブラウザは複数行の欄の改行を CRLF にして送るので、入力シートと同じ LF にそろえる
+            values[field["id"]] = (got[0] if got else "").replace("\r\n", "\n")
     return values
 
 
@@ -143,6 +144,8 @@ class Store:
             shutil.rmtree(self.dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.state = self._load()
+        # 回の区切り。前の回の「提出」は、--reset を付けない限り入力値.json に残る
+        self.log({"event": "server_start", "reset": reset, "submit_pressed_before": self.state["submit_pressed"]})
 
     def _load(self) -> dict:
         path = self.dir / STATE_FILE
@@ -166,8 +169,11 @@ class Store:
         for field in screen.all_fields():
             if field["kind"] == "file":
                 continue
-            fields[field["id"]] = {"section": field["section"], "label": field["label"], "kind": field["kind"],
-                                   "who": field["who"], "value": self.state["values"].get(field["id"])}
+            fields[field["id"]] = {"section": field["section"], "group": field["group"], "label": field["label"],
+                                   "kind": field["kind"], "who": field["who"],
+                                   "value": self.state["values"].get(field["id"])}
+            if field.get("table"):
+                fields[field["id"]]["table"] = field["table"]
         data = {
             "screen": screen.SCREEN_NAME,
             "note": "模擬画面の記録です。実在の申請システムとは関係ありません。",
@@ -263,6 +269,7 @@ fieldset{border:1px solid #ccd;border-radius:4px;margin:6px 0}
 .note{font-size:.85rem;color:#555;margin:.2rem 0}
 .display{color:#555}
 .attached{flex-basis:100%;font-size:.85rem;color:#1d5c2e;padding-left:16.6rem}
+.picked{font-size:.85rem;color:#345}
 .notice{background:#e8f4ea;border:1px solid #6a6;padding:8px 12px;border-radius:4px}
 .error{background:#fbeaea;border:1px solid #c66;padding:8px 12px;border-radius:4px}
 .scroll{overflow-x:auto}
@@ -287,13 +294,20 @@ JS = """
     var d = {event:'change', name:t.name, type:t.type};
     if(t.type === 'password'){ d.entered = t.value.length > 0; }
     else if(t.type === 'checkbox' || t.type === 'radio'){ d.value = t.value; d.checked = t.checked; }
-    else if(t.type === 'file'){ d.files = Array.prototype.map.call(t.files, function(x){ return x.name; }); }
+    else if(t.type === 'file'){
+      d.files = Array.prototype.map.call(t.files, function(x){ return x.name; });
+      var picked = document.getElementById('picked_' + t.name);
+      if(picked){ picked.textContent = d.files.length ? '選んだファイル：' + d.files.join('、') + '（一時保存で添付されます）' : ''; }
+    }
     else { d.value = t.value; }
     send(d);
   }, true);
   document.addEventListener('click', function(e){
-    var b = e.target.closest ? e.target.closest('button') : null;
-    if(b){ send({event:'click', button:b.value, label:b.textContent.trim()}); }
+    if(!e.target.closest) return;
+    var b = e.target.closest('button');
+    if(b){ send({event:'click', button:b.value, label:b.textContent.trim()}); return; }
+    var a = e.target.closest('a');
+    if(a){ send({event:'click', link:a.getAttribute('href'), label:a.textContent.trim()}); }
   }, true);
 })();
 """
@@ -382,7 +396,8 @@ def render_field(field: dict, values: dict, files: dict, computed: dict) -> str:
                  f"（{attached['size']:,}バイト）</div>") if attached else ""
         return (f"<div class=\"row\"><label><span class=\"name\">{esc(label)}</span>"
                 f"<input type=\"file\" name=\"{fid}\" id=\"f_{fid}\" accept=\"{esc(field['accept'])}\"></label>"
-                f"<span class=\"fmt\">対応形式：{esc(screen.ACCEPT_NAMES[field['accept']])}</span>{required_mark(field)}{shown}</div>")
+                f"<span class=\"fmt\">対応形式：{esc(screen.ACCEPT_NAMES[field['accept']])}</span>{required_mark(field)}"
+                f"<span class=\"picked\" id=\"picked_{fid}\"></span>{shown}</div>")
     raise ValueError(f"知らない種類の欄です：{kind}")
 
 
@@ -477,6 +492,8 @@ def render_shinsei(state: dict, message: str = "", errors=()) -> bytes:
             inner.append("<p class=\"note\">一時保存した内容です。直すときは「修正」でその段へ移ります。"
                          "「提出」は担当者が押すボタンです（模擬なので、押してもどこにも送りません）。</p>")
             inner.append(render_summary(state))
+        for href, label in s.get("links", []):
+            inner.append(f"<p><a href=\"{esc(href)}\">{esc(label)}</a></p>")
         if "" in buttons:
             inner.append("<div class=\"nav\">" + render_button(*buttons[""]) + "</div>")
         parts.append(f"<section id=\"{s['key']}\"><h2>{s['no']} {esc(s['title'])}</h2>{''.join(inner)}</section>")
@@ -580,7 +597,10 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             return
         entry = {"event": str(data.get("event", ""))[:20], "page": str(data.get("page", ""))[:50].strip("/")}
-        if entry["event"] == "click":
+        if entry["event"] == "click" and data.get("link") is not None:
+            entry["link"] = str(data.get("link", ""))[:200]
+            entry["link_label"] = str(data.get("label", ""))[:50]
+        elif entry["event"] == "click":
             entry["button"] = str(data.get("button", ""))[:50]
             entry["button_label"] = str(data.get("label", ""))[:50]
         else:

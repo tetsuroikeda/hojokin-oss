@@ -175,7 +175,7 @@ def grid_cells(g: dict) -> list:
             if row.get("cells", {}).get(col, "in") != "in":
                 continue
             cells.append(f(f"{g['id']}_{row['key']}_{col}", f"{row['label']}（{col_label}）", kind, g["page"],
-                           grid=g["id"]))
+                           grid=g["id"], table=g["label"]))
     return cells
 
 
@@ -292,11 +292,12 @@ SECTIONS = [
     {
         "no": "❺", "key": "s5", "title": "事業計画名及び作成者情報", "pages": "14–15",
         "groups": [
-            group("5-1. 事業計画名", 14, [f("plan_name", "事業計画名", "text", 14, required=True)]),
+            # 「程度」は目安で、上限ではない。項目名は画面のとおりにし、上限は付けない
+            group("5-1. 事業計画名", 14, [f("plan_name", "事業計画名（３０文字程度）", "text", 14, required=True)]),
             group("5-2. 事業計画の概要", 14, [
                 f("plan_industry", "本事業で取り組む対象分野となる業種（日本標準産業分類、中分類）", "select", 14,
                   required=True, options=INDUSTRIES),
-                f("plan_summary", "事業計画の概要", "textarea", 14, required=True),
+                f("plan_summary", "事業計画の概要（１００字程度）", "textarea", 14, required=True),
                 f("plan_equipment", "導入予定の機械装置・システムの名称", "textarea", 14, required=True,
                   placeholder="メーカー名：型式：名称："),
                 f("no_equipment", "機器装置の導入を含まない", "checkbox", 14),
@@ -458,6 +459,7 @@ SECTIONS = [
             group("メールアドレス認証", 27, [f("auth_code", "認証コード", "text", 27, required=True)],
                   note="❷の「認証コード発行」で出た番号を入れます（本物ではメールで届きます）。"),
         ],
+        "links": [("#s2", "❷ 基本情報へ戻る")],
     },
     {
         "no": "⓬", "key": "s12", "title": "確認", "pages": "28",
@@ -485,7 +487,7 @@ def section_fields(section: dict) -> list:
     for g in section["groups"]:
         for field in g["fields"]:
             if field["kind"] == "grid":
-                fields.extend(grid_cells(field))
+                fields.extend({**cell, "group": g["title"]} for cell in grid_cells(field))
             elif field["kind"] != "display":
                 fields.append({**field, "group": g["title"]})
     return [{**field, "section": section["no"] + " " + section["title"]} for field in fields]

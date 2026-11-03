@@ -131,8 +131,9 @@ def multipart(fields: dict, files: dict = None):
     return out, {"Content-Type": f"multipart/form-data; boundary={boundary}"}
 
 
-def read_log(record_dir: Path) -> list:
-    return [json.loads(x) for x in (record_dir / server.LOG_FILE).read_text(encoding="utf-8").splitlines()]
+def read_log(record_dir: Path, with_start: bool = False) -> list:
+    log = [json.loads(x) for x in (record_dir / server.LOG_FILE).read_text(encoding="utf-8").splitlines()]
+    return log if with_start else [x for x in log if x["event"] != "server_start"]
 
 
 # ---- 画面の定義 ----
@@ -252,6 +253,44 @@ def test_save_records_values_files_and_button(running):
     assert entry["button"] == "save" and entry["button_label"] == "一時保存" and entry["saved"] is True
     assert entry["fields"]["not_same_corp"] is False  # チェックしていない欄も False で残る
     assert entry["uploads"][0]["accepted"] is True
+
+
+def test_textarea_newlines_become_lf(running):
+    """ブラウザは複数行の欄の改行を CRLF で送る。記録は入力シートと同じ LF にそろえる。"""
+    base, record_dir = running
+    cookie = login(base)
+    request(base + "/shinsei", *multipart({"button": "save", "plan_summary": "一行目\r\n二行目"}), cookie)
+    state = json.loads((record_dir / server.STATE_FILE).read_text(encoding="utf-8"))
+    assert state["fields"]["plan_summary"]["value"] == "一行目\n二行目"
+
+
+def test_state_tells_tables_apart(running):
+    """❽ 8-3 の2つの表は、項目名が同じ欄があるので、表の名前も残す。"""
+    base, record_dir = running
+    cookie = login(base)
+    request(base + "/shinsei", *multipart({"button": "save", "fund_all_own_amount": "100", "fund_d_own_amount": "50"}),
+            cookie)
+    fields = json.loads((record_dir / server.STATE_FILE).read_text(encoding="utf-8"))["fields"]
+    a, d = fields["fund_all_own_amount"], fields["fund_d_own_amount"]
+    assert a["label"] == d["label"] and a["section"] == d["section"]
+    assert a["table"] == "事業全体に要する経費調達一覧" and d["table"] == "補助金申請額（D）の経費内訳"
+    assert fields["biz_name"]["group"] == "2-1. 事業者情報"
+
+
+def test_server_start_marks_a_run(tmp_path):
+    record_dir = tmp_path / "記録"
+    store = server.Store(record_dir, reset=True)
+    store.handle_button("submit", {}, [])
+    server.Store(record_dir)
+    starts = [x for x in read_log(record_dir, with_start=True) if x["event"] == "server_start"]
+    assert [x["submit_pressed_before"] for x in starts] == [False, True]
+
+
+def test_link_click_is_recorded(running):
+    base, record_dir = running
+    request(base + "/log", json.dumps({"event": "click", "link": "#s2", "label": "修正", "page": "/shinsei"}).encode())
+    entry = read_log(record_dir)[-1]
+    assert entry["link"] == "#s2" and entry["link_label"] == "修正"
 
 
 def test_back_does_not_save(running):
