@@ -51,9 +51,9 @@ def guard_matcher() -> str:
 def test_guard_matcher_covers_writes_and_browser() -> None:
     matcher = guard_matcher()
     for tool in hr.GUARDED_TOOLS:
-        assert re.search(matcher, tool), tool
+        assert hr.claude_matches(matcher, tool), tool
     for tool in hr.UNGUARDED_TOOLS:
-        assert not re.search(matcher, tool), tool
+        assert not hr.claude_matches(matcher, tool), tool
 
 
 def test_post_tool_use_only_for_browser() -> None:
@@ -62,9 +62,17 @@ def test_post_tool_use_only_for_browser() -> None:
     # DESIGN 5章：名前に Claude_Browser か claude-in-chrome を含む道具が対象（前に何か付いた名前も）
     for tool in ("mcp__Claude_Browser__read_page", "mcp__remote-devices__Claude_Browser__read_page",
                  "mcp__claude-in-chrome__read_page", "mcp__remote-devices__claude-in-chrome__read_page"):
-        assert re.search(entry["matcher"], tool), tool
+        assert hr.claude_matches(entry["matcher"], tool), tool
     for tool in ("Write", "Edit", "Read", "Bash"):
-        assert not re.search(entry["matcher"], tool), tool
+        assert not hr.claude_matches(entry["matcher"], tool), tool
+
+
+def test_claude_matches_follows_claude_code_rules() -> None:
+    """テストの判定が Claude Code の規則どおりか（英字などだけの matcher は、名前そのものと比べる）。"""
+    assert not hr.claude_matches("Claude_Browser|claude-in-chrome", "mcp__Claude_Browser__read_page")
+    assert hr.claude_matches("Bash|Write", "Write")
+    assert not hr.claude_matches("Bash|Write", "NotebookWrite")
+    assert hr.claude_matches("(Claude_Browser|claude-in-chrome)__", "mcp__Claude_Browser__read_page")
 
 
 def test_company_folder_with_python_runs_python_hooks(tmp_path) -> None:

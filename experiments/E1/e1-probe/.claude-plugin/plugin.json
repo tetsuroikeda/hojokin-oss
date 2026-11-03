@@ -1,0 +1,8 @@
+{
+  "name": "e1-probe",
+  "version": "0.1.0",
+  "description": "実験 E1 の試しのプラグイン。ブラウザの道具の呼び出しと結果を hook で記録し、決まった操作だけ拒む",
+  "author": {
+    "name": "hojokin-oss"
+  }
+}

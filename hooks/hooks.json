@@ -25,7 +25,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Claude_Browser|claude-in-chrome",
+        "matcher": "(Claude_Browser|claude-in-chrome)__",
         "hooks": [
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" PostToolUse", "timeout": 10 }
         ]
