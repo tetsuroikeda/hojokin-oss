@@ -17,6 +17,8 @@
    - T13-6：数字・表現・書き方の方針・構成が1つずつ。数字の指摘は回答表 E-01 の値（3社・14店舗）に直すもので、
      わざと入れた誤り（14社）は回答表にない。表現・方針・構成は、次からも当てはまる言い方（うちでは・どの計画書でも・いつも）。
      避けたい言い方「高齢者向け」は、文体の基準 B・回答表・ほかの架空データ・プラグインのどこにもない。
+     書き方の方針は、回答表の事実を指さず、発言にある印（まちの台所）の「台所」が、文体の基準 B・回答表・
+     ほかの架空データ・プラグインのどこにもない（記録の事実から2件目に入る言葉だと、方針を学んだかを見分けられない）。
      どの指摘にも「今回だけ」がない。
    - T13-7：「今回だけ」を含む発言が1つ、どちらとも取れる発言（今回だけ・次から・いつも などの言葉がない）が1つ。
      両方に「次からもそうするか」の答えがある。「今回だけ」で変える言い方（当社）は、文体の基準の言い換えの例にある（ふだんの書き方）。
@@ -228,9 +230,20 @@ def main() -> int:
     check(avoid not in style_b_section(), f"T13-6：「{avoid}」は文体の基準 B にない（あるとコードの確かめで見つかり、学んだかを見分けられない）")
     found = files_containing("高齢者", other_files)
     check(not found, f"T13-6：「高齢者」は回答表・ほかの架空データ・プラグインのどこにもない（あったもの：{found}）")
-    allergy_ids = [i for i in by_kind.get("書き方の方針", {}).get("回答表", []) if "アレルギー" in sheet.get(i, "")]
-    check(allergy_ids, "T13-6：方針の指摘（アレルギーの表示）が、回答表のアレルギーの行を指す")
-    check(all(any(k in i["出ない文字"] or k in i["出る文字"] for i in c["見ること"]) for k in ("14社", avoid, "アレルギー")), "T13-6：確かめることに、14社・高齢者向け・アレルギーの文字がある")
+    # 方針：回答表や材料にある事実だと、T13-1・T13-3 で記録の事実から2件目に入り、学んだかを見分けられない
+    policy_line = by_kind.get("書き方の方針", {})
+    policy_mark = c.get("方針の印", "")
+    policy_stem = "台所"
+    check(policy_mark and policy_mark in policy_line.get("発言", ""), f"T13-6：方針の指摘の発言に、方針の印（{policy_mark}）がそのままある")
+    check(policy_stem in policy_mark, f"T13-6：方針の印（{policy_mark}）が「{policy_stem}」を含む")
+    check(not policy_line.get("回答表"), f"T13-6：方針の指摘は、回答表の事実を指さない（{policy_line.get('回答表')}）")
+    in_sheet = [i for i, text in sheet.items() if policy_stem in text]
+    check(not in_sheet, f"T13-6：「{policy_stem}」は回答表にない（あった ID：{in_sheet}）")
+    found = files_containing(policy_stem, other_files)
+    check(not found, f"T13-6：「{policy_stem}」は回答表・ほかの架空データ・プラグインのどこにもない（あったもの：{found}）")
+    check(policy_stem not in style_b_section(), f"T13-6：「{policy_stem}」は文体の基準 B にない")
+    marks = ("14社", avoid, policy_mark)
+    check(all(any(k in i["出ない文字"] or k in i["出る文字"] for i in c["見ること"]) for k in marks), f"T13-6：確かめることに、{'・'.join(marks)}の文字がある")
 
     # T13-7
     s = scripts["「今回だけ」の指示とどちらとも取れる指示"]
