@@ -1,0 +1,7 @@
+# このリポジトリでは CodeRabbit のレビューを使わない（作者の決定、2026-11-03）
+reviews:
+  auto_review:
+    enabled: false
+  high_level_summary: false
+chat:
+  auto_reply: false
