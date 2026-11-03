@@ -9,9 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import originals_hooks
 import version_hooks
 from lib import view_only
 
 
 def handle(data: dict, folder: Path) -> Optional[dict]:
-    return view_only.session_start(data, folder, version_hooks.session_start(data, folder))
+    notes = originals_hooks.check(data, folder)  # 原本と公式資料の照らしと戻し（M4）。版の記録より先に
+    return originals_hooks.session_start(view_only.session_start(data, folder, version_hooks.session_start(data, folder)), notes)
