@@ -4,7 +4,8 @@
   python3 -B <この場所>/gaiyou_word.py --folder "${CLAUDE_PROJECT_DIR}" [--case <案件>] <<'EOF'
   { "制度の概要": "…", "要件の判定": [ ... ], "加点の判定": [ ... ], "補助額の見込み": { ... } }
   EOF
-  （--input <ファイル> でも渡せる）
+  （--input - も標準入力。--input <ファイル> は、会社のフォルダの中のファイルだけ読む。外のファイルは読まずに断る。
+   相対の場所は会社のフォルダから解き、別名と「..」をたどった後で比べる。DESIGN 5章）
 
 - 書くのは `案件/<案件>/概要と流れ.docx` だけ。ほかのファイルは作らない。
 - 数字・期限・一覧は、制度データ（記録/制度データ/）と会社の記録（記録/会社の記録.json）から道具が入れる。
@@ -14,7 +15,8 @@
 - 終了コード：
   0 書いた。
   2 書かなかった（会社のフォルダでない、案件を決められない、制度データがない・形が合わない、
-    渡した JSON の形や名前が制度データ・会社の記録と合わない、Word を正しく作れない）。前の概要と流れ.docx はそのまま残る。
+    渡した JSON の形や名前が制度データ・会社の記録と合わない、--input のファイルが会社のフォルダの外にある、
+    Word を正しく作れない）。前の概要と流れ.docx はそのまま残る。
   3 補助プログラムが動かない、または途中で止まった。
 """
 
@@ -25,6 +27,8 @@ sys.dont_write_bytecode = True
 
 import argparse  # noqa: E402
 import json  # noqa: E402
+import os  # noqa: E402
+import unicodedata  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
@@ -38,8 +42,45 @@ def parse(argv):
     parser = argparse.ArgumentParser(description="概要と流れ.docx を作る（作り直すときも同じファイルを直す）")
     parser.add_argument("--folder", help="会社のフォルダ（${CLAUDE_PROJECT_DIR}）。なければ今いるフォルダ")
     parser.add_argument("--case", help="案件の名前（記録/資料の本文/ の下のフォルダの名前）")
-    parser.add_argument("--input", help="説明の文と判定の JSON のファイル。なければ標準入力から読む（- も標準入力）")
+    parser.add_argument("--input", help="説明の文と判定の JSON。なければ標準入力から読む（- も標準入力）。"
+                                        "ファイルなら会社のフォルダの中のものだけ")
     return parser.parse_args(argv)
+
+
+class OutsideInput(ValueError):
+    """--input のファイルが、会社のフォルダの外にある。"""
+
+
+class NotCompanyFolder(ValueError):
+    """--input にファイルを渡したが、--folder が会社のフォルダでない（中を確かめられないので読まない）。"""
+
+
+def real(path: Path) -> Path:
+    """別名（シンボリックリンク）と「..」をたどり、名前の文字の形を NFC にそろえた場所（DESIGN 5章 (b)）。"""
+    return Path(unicodedata.normalize("NFC", os.path.realpath(str(path))))
+
+
+def inside(path: Path, folder: Path) -> bool:
+    try:
+        real(path).relative_to(real(folder))
+        return True
+    except ValueError:
+        return False
+
+
+def read_input(where, folder: Path, company) -> str:
+    """渡された JSON の文字。ファイルは、会社のフォルダの中のものだけを読む（外のものは開かずに OutsideInput）。"""
+    if not where or where == "-":
+        return sys.stdin.read()
+    path = Path(where).expanduser()
+    if not path.is_absolute():
+        path = folder / path
+    # 会社のフォルダでない所のファイルも、外のファイルと同じく開かない
+    if not company.is_company_folder(folder):
+        raise NotCompanyFolder(where)
+    if not inside(path, folder):
+        raise OutsideInput(where)
+    return path.read_text(encoding="utf-8")
 
 
 def report(path: Path, folder: Path, summary: dict) -> str:
@@ -82,9 +123,16 @@ def main(argv) -> int:
 
     folder = Path(args.folder).expanduser() if args.folder else company.project_dir()
     try:
-        source = args.input if args.input and args.input != "-" else None
-        text = Path(source).read_text(encoding="utf-8") if source else sys.stdin.read()
-        data = json.loads(text)
+        data = json.loads(read_input(args.input, folder, company))
+    except OutsideInput:
+        print(f"{NOT_DONE}説明の文と判定のファイル（{args.input}）が、会社のフォルダ（{folder}）の外にあります。"
+              "外のファイルは読みません。JSON を、標準入力（--input - か、--input なし）で渡してください。")
+        return 2
+    except NotCompanyFolder:
+        print(f"{NOT_DONE}ここ（{folder}）は会社のフォルダではありません（{company.MARKER_DIR}/ がありません）。"
+              f"渡されたファイル（{args.input}）は読んでいません。"
+              "社長の了承を得て会社のフォルダを作り、公式資料を取って制度データを作ってから、もう一度試してください。")
+        return 2
     except (OSError, ValueError) as e:
         print(f"{NOT_DONE}渡された説明の文と判定を、JSON として読めません（{e}）。")
         return 2
