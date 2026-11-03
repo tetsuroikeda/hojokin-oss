@@ -549,12 +549,25 @@ def test_upload_only_copies_in_attach_folder(folder, tmp_path) -> None:
     # 相対の場所は cwd から解く
     passed(pre(folder, CHROME + "file_upload",
                {"paths": ["案件/2026_省力化（一般型）第8回/1_申請/添付する書類/見積書の写し.pdf"], "ref": "ref_739", "tabId": 5}))
+    # 効果報告の形（段階の下にもう1段ある。DESIGN 4.5）
+    yearly = folder / "案件" / "2026_省力化（一般型）第8回" / "4_効果報告" / "1年目" / "添付する書類" / "賃金台帳の写し.pdf"
+    yearly.parent.mkdir(parents=True)
+    yearly.write_bytes(b"x")
+    passed(pre(folder, CHROME + "file_upload", {"paths": [str(yearly)], "ref": "ref_694", "tabId": 5}))
+    case = folder / "案件" / "2026_省力化（一般型）第8回"
+    odd = [case / "添付する書類" / "a.pdf",                                  # 段階がない
+           case / "1_申請" / "申請書" / "添付する書類" / "a.pdf",              # 申請書の下
+           case / "1_申請" / "古い" / "下" / "添付する書類" / "a.pdf",         # 深すぎる
+           case / "申請" / "添付する書類" / "a.pdf"]                           # 段階の名前の形でない
+    for path in odd:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
     outside = tmp_path / "外" / "見積書.pdf"
     outside.parent.mkdir()
     outside.write_bytes(b"x")
     link = stage / "添付する書類" / "外へのリンク.pdf"
     os.symlink(outside, link)
-    (stage / "申請書").mkdir()
+    (stage / "申請書").mkdir(exist_ok=True)
     (stage / "申請書" / "入力シート.xlsx").write_bytes(b"x")
     for paths in (
         [str(folder / "原本" / "見積書.pdf")],
@@ -567,7 +580,7 @@ def test_upload_only_copies_in_attach_folder(folder, tmp_path) -> None:
         [str(outside)],
         [str(copy), str(folder / "原本" / "見積書.pdf")],
         [],
-    ):
+    ) + tuple([str(p)] for p in odd):
         reason = denied(pre(folder, CHROME + "file_upload", {"paths": paths, "ref": "ref_694", "tabId": 5}))
         assert "添付" in reason, paths
     # 添付の欄でない部品には使わない

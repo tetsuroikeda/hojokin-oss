@@ -22,7 +22,7 @@ hooks から次の3つを呼ぶ。どれも会社のフォルダ（目印のあ�
     名前の照らし方：画面の名前が欄の名前と同じか、画面の名前の「：」より前が欄の名前と同じか
     （模擬画面の「項目名：説明」の形と、ラジオボタンの「問い：値」の形。NFC・空白をそろえて比べる）。
   - 添付（file_upload）：控えで添付の欄に当たる部品に、会社のフォルダの
-    `案件/<案件>/<段階>/添付する書類/` の中にあるファイルだけ。
+    `案件/<案件>/<段階>/添付する書類/`（効果報告の `<段階>/1年目/添付する書類/` も）の中にあるファイルだけ。
   - まとめて動かす道具（browser_batch）：中を1つずつ同じ決まりで見る。ページが変わる動作
     （クリック・移動・タブの切り替え）は1回までで、最後に限る。中にまとめて動かす道具は入れない。
 - 座標でのクリック、ダブルクリック・右クリック・ドラッグ、打ち込み、Enter などのキー、
@@ -80,6 +80,7 @@ ROLE_KIND = {"checkbox": "チェック", "switch": "チェック", "radio": "ラ
 
 _SAFE_SESSION = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _SCHEME = re.compile(r"^([a-z][a-z0-9+.-]*):")
+_STAGE = re.compile(r"^[0-9]+_")
 
 
 # ---- 道具の名前 ----
@@ -435,6 +436,22 @@ def _real(path) -> Path:
     return Path(unicodedata.normalize("NFC", os.path.realpath(str(path))))
 
 
+def _is_attach_copy(parts: Tuple[str, ...]) -> bool:
+    """`案件/` からの場所の部分が、段階のフォルダの「添付する書類」の中のファイルか。
+
+    案件/<案件>/<段階>/添付する書類/<ファイル> と、段階の下にもう1段ある
+    案件/<案件>/4_効果報告/1年目/添付する書類/<ファイル> の形（DESIGN 4.5）を通す。
+    段階のフォルダの名前は「1_申請」の形（数字と _ で始まる）。「申請書」の下は通さない。
+    """
+    if len(parts) < 4 or not _STAGE.match(parts[1]):
+        return False
+    middle = parts[2:-1]
+    if ATTACH_DIR not in middle or "申請書" in middle:
+        return False
+    # 「添付する書類」は、段階のすぐ下か、その下の1段（1年目など）の下に限る
+    return middle.index(ATTACH_DIR) <= 1
+
+
 def _check_upload(ctx: Context, tool_input: dict) -> None:
     ctx.require_permission()
     _page, _ref, element = ctx.element(tool_input)
@@ -456,8 +473,7 @@ def _check_upload(ctx: Context, tool_input: dict) -> None:
             parts = real.relative_to(cases).parts
         except ValueError:
             parts = ()
-        # 案件/<案件>/<段階>/添付する書類/<ファイル>
-        if len(parts) < 4 or parts[2] != ATTACH_DIR or not real.is_file():
+        if not _is_attach_copy(parts) or not real.is_file():
             raise Denied(
                 f"「{raw}」は添付できません（hojokin プラグインの決まり）。"
                 "添付できるのは、案件の段階のフォルダの「添付する書類」にある写しだけです"
