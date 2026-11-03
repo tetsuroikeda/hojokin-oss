@@ -80,16 +80,21 @@ def test_no_copy_of_official_files(repo_files: list[Path], downloads_files: list
     assert found == [], f"公式資料の写しがリポジトリにあります：{found}"
 
 
-def test_no_official_file_names(repo_files: list[Path], downloads_files: list[Path]) -> None:
-    """公式資料と同じ名前の文書や、公式資料らしい名前の文書がリポジトリにない。"""
-    official_names = {p.name for p in downloads_files if p.suffix.lower() in DOCUMENT_SUFFIXES}
-    found = []
-    for p in repo_files:
-        if p.suffix.lower() not in DOCUMENT_SUFFIXES:
-            continue
-        if p.name in official_names or OFFICIAL_NAME_WORDS.search(p.name):
-            found.append(str(p.relative_to(REPO_ROOT)))
+def test_no_official_looking_names(repo_files: list[Path]) -> None:
+    """公式資料らしい名前の文書がリポジトリにない（downloads/ がなくても流す）。"""
+    found = [
+        str(p.relative_to(REPO_ROOT))
+        for p in repo_files
+        if p.suffix.lower() in DOCUMENT_SUFFIXES and OFFICIAL_NAME_WORDS.search(p.name)
+    ]
     assert found == [], f"公式資料らしい名前の文書がリポジトリにあります：{found}"
+
+
+def test_no_official_file_names(repo_files: list[Path], downloads_files: list[Path]) -> None:
+    """公式資料と同じ名前の文書がリポジトリにない。"""
+    official_names = {p.name for p in downloads_files if p.suffix.lower() in DOCUMENT_SUFFIXES}
+    found = [str(p.relative_to(REPO_ROOT)) for p in repo_files if p.name in official_names]
+    assert found == [], f"公式資料と同じ名前の文書がリポジトリにあります：{found}"
 
 
 def test_no_file_made_from_official_forms(repo_files: list[Path], downloads_files: list[Path]) -> None:

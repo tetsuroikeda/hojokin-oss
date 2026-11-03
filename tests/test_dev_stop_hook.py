@@ -21,6 +21,14 @@ def test_fail_blocks_up_to_max() -> None:
     assert state["blocks"] == hook.MAX_BLOCKS
 
 
+def test_missing_tool_does_not_block() -> None:
+    state, output = hook.decide({"blocks": 2, "passed": "old"}, "fp", [("速いテスト", "x")], ["claude"])
+    assert "decision" not in output
+    assert "claude" in output["systemMessage"]
+    # 通ったことにはせず、回数も変えない
+    assert state == {"blocks": 2, "passed": "old"}
+
+
 def test_stop_blocking_after_max() -> None:
     state, output = hook.decide({"blocks": hook.MAX_BLOCKS, "passed": "old"}, "fp", [("構成の検査", "x")])
     assert "decision" not in output

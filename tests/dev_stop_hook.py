@@ -65,14 +65,15 @@ def tree_fingerprint(root: Path) -> str:
     return h.hexdigest()
 
 
-def run_checks(root: Path) -> list[tuple[str, str]]:
-    """落ちた検査の名前と出力の終わりを返す。道具がないときは、その旨を出力にする。"""
+def run_checks(root: Path) -> tuple[list[tuple[str, str]], list[str]]:
+    """落ちた検査の名前と出力の終わり、見つからなかった道具の名前を返す。"""
     failures = []
+    missing = []
     for label, cmd in CHECKS:
         try:
             result = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=CHECK_TIMEOUT)
         except FileNotFoundError:
-            failures.append((label, f"{cmd[0]} が見つかりません"))
+            missing.append(cmd[0])
             continue
         except subprocess.TimeoutExpired:
             failures.append((label, f"{CHECK_TIMEOUT}秒で終わりませんでした"))
@@ -80,11 +81,18 @@ def run_checks(root: Path) -> list[tuple[str, str]]:
         if result.returncode != 0:
             output = (result.stdout + result.stderr)[-OUTPUT_TAIL:]
             failures.append((label, f"終了コード {result.returncode}\n{output}"))
-    return failures
+    return failures, missing
 
 
-def decide(state: dict, fingerprint: str, failures: list[tuple[str, str]]) -> tuple[dict, dict]:
+def decide(
+    state: dict, fingerprint: str, failures: list[tuple[str, str]], missing: list[str] | None = None
+) -> tuple[dict, dict]:
     """新しい状態と、hook の出力（JSON）を返す。"""
+    if missing:
+        # Claude には直せないので差し戻さない。通ったことにもしない
+        return {"blocks": state.get("blocks", 0), "passed": state.get("passed", "")}, {
+            "systemMessage": f"開発の確かめ：{'、'.join(missing)} が見つからないため、確かめられませんでした",
+        }
     if not failures:
         return {"blocks": 0, "passed": fingerprint}, {
             "systemMessage": "開発の確かめ：構成の検査と速いテストが通りました",
@@ -115,7 +123,7 @@ def main() -> int:
     if fingerprint == state.get("passed"):
         # 前に通ったときから何も変わっていない
         return 0
-    new_state, output = decide(state, fingerprint, run_checks(root))
+    new_state, output = decide(state, fingerprint, *run_checks(root))
     save_state(path, new_state)
     print(json.dumps(output, ensure_ascii=False))
     return 0
