@@ -121,8 +121,14 @@ def event_inputs(folder: Path) -> list:
     """場面ごとの入力の例（止められそうなものを選ぶ）。"""
     base = {"session_id": "test", "transcript_path": str(folder / "t.jsonl"), "cwd": str(folder)}
 
-    def tool(name: str, tool_input: dict) -> tuple:
-        return ("PreToolUse", {**base, "hook_event_name": "PreToolUse", "tool_name": name, "tool_input": tool_input})
+    def tool(name: str, tool_input: dict, cwd: Path = None) -> tuple:
+        payload = {**base, "hook_event_name": "PreToolUse", "tool_name": name, "tool_input": tool_input}
+        if cwd is not None:
+            payload["cwd"] = str(cwd)
+        return ("PreToolUse", payload)
+
+    # Bash の cd で移った先（追加の作業フォルダなど、会社のフォルダの外）
+    outside_cwd = folder.parent / "別の会社"
 
     return [
         ("SessionStart", {**base, "hook_event_name": "SessionStart", "source": "startup"}),
@@ -138,6 +144,10 @@ def event_inputs(folder: Path) -> list:
         tool("Read", {"file_path": str(folder.parent / "別の会社" / "決算書.pdf")}),
         tool("Grep", {"pattern": "売上", "path": str(folder.parent / "別の会社")}),
         tool("Glob", {"pattern": str(folder.parent / "別の会社" / "**" / "*.xlsx")}),
+        # いま居るフォルダが外のとき、path を省いた Grep・Glob と相対の場所は、外を読む
+        tool("Grep", {"pattern": "売上"}, cwd=outside_cwd),
+        tool("Glob", {"pattern": "**/*"}, cwd=outside_cwd),
+        tool("Read", {"file_path": "決算書.pdf"}, cwd=outside_cwd),
         ("PostToolUse", {**base, "hook_event_name": "PostToolUse", "tool_name": "mcp__Claude_Browser__read_page",
                          "tool_input": {}, "tool_response": "button \"提出する\" [ref_12]"}),
         ("Stop", {**base, "hook_event_name": "Stop", "stop_hook_active": False}),

@@ -11,7 +11,6 @@ hooks.json の matcher で、書き込みの道具（Write・Edit・NotebookEdit
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -30,31 +29,22 @@ def _deny(reason: str) -> dict:
     }
 
 
-def _is_inside(path: Path, folder: Path) -> bool:
-    try:
-        path.relative_to(folder)
-        return True
-    except ValueError:
-        return False
-
-
 def _outside_write(data: dict, folder: Path) -> Optional[dict]:
-    """会社のフォルダの外に書こうとしていれば、拒む判定を返す。"""
+    """会社のフォルダの外に書こうとしていれば、拒む判定を返す。
+
+    場所の解き方は、外を読む判定と同じにする（outside_read.py の説明）。
+    相対の場所は hook の入力の cwd から解き、別名と「..」をたどり、名前の文字の形を NFC にそろえて比べる。
+    """
     tool_input = data.get("tool_input") or {}
     raw = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not raw:
         return None
-    target = Path(os.path.expanduser(str(raw)))
-    if not target.is_absolute():
-        target = folder / target
-    # 別名（シンボリックリンク）と「..」をたどった先で比べる
-    real_target = Path(os.path.realpath(target))
-    real_folder = Path(os.path.realpath(folder))
-    if _is_inside(real_target, real_folder):
+    real_target = outside_read.resolve(str(raw), outside_read.tool_cwd(data, folder))
+    if outside_read.is_inside(real_target, outside_read.real_path(folder)):
         return None
     # Claude Code 自身の計画のファイルは、設定の blockWrites と同じく通す
-    plans = Path(os.path.realpath(Path.home() / ".claude" / "plans"))
-    if _is_inside(real_target, plans):
+    plans = outside_read.real_path(Path.home() / ".claude" / "plans")
+    if outside_read.is_inside(real_target, plans):
         return None
     return _deny(
         f"会社のフォルダの外には書き込めません（{raw}）。"

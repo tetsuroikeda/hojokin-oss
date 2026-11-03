@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -30,8 +31,12 @@ def folders(tmp_path):
     return company, outside
 
 
-def decide(tool: str, folder: Path, **tool_input):
-    return pre_tool_use.handle({"tool_name": tool, "tool_input": tool_input}, folder)
+def decide(tool: str, folder: Path, cwd=None, **tool_input):
+    """hook の入力を作って判定する。cwd を渡すと、hook の入力の cwd（Claude がいま居るフォルダ）にする。"""
+    data = {"tool_name": tool, "tool_input": tool_input}
+    if cwd is not None:
+        data["cwd"] = str(cwd)
+    return pre_tool_use.handle(data, folder)
 
 
 def is_denied(output) -> bool:
@@ -123,10 +128,110 @@ def test_read_outside_is_denied(folders, tool, key) -> None:
     assert "取り込み" in reason
 
 
-def test_grep_without_path_reads_company_folder(folders) -> None:
+def test_grep_without_path_in_company_folder_is_allowed(folders) -> None:
+    """path を省いた Grep は、いま居るフォルダ（cwd）を探す。cwd が会社のフォルダ（かその下）なら通す。"""
     company, _ = folders
+    assert decide("Grep", company, cwd=company, pattern="売上") is None
+    assert decide("Grep", company, cwd=company / "下書き", pattern="売上") is None
+    assert decide("Grep", company, cwd=company, pattern="売上", path=str(company / "下書き"), glob="*.md") is None
+    # cwd が渡らないときは、会社のフォルダに居るとみなす
     assert decide("Grep", company, pattern="売上") is None
-    assert decide("Grep", company, pattern="売上", path=str(company / "下書き"), glob="*.md") is None
+
+
+# ---- いま居るフォルダ（hook の入力の cwd）が会社のフォルダの外のとき ----
+# Bash の cd で追加の作業フォルダに移ると、path を省いた Grep・Glob や相対の場所は、そこを読む。
+# 相対の場所と Glob の起点は cwd から解き、読む場所が取れないときは cwd そのものを照らす。
+
+
+@pytest.mark.parametrize("tool,tool_input", [
+    ("Grep", {"pattern": "売上"}),
+    ("Grep", {"pattern": "売上", "glob": "*.xlsx"}),
+    ("Glob", {"pattern": "**/*"}),
+    ("Glob", {"pattern": "*.xlsx"}),
+    ("Glob", {"pattern": "決算/*.pdf"}),
+    ("Read", {"file_path": "決算書.pdf"}),
+    ("NotebookRead", {"notebook_path": "a.ipynb"}),
+    ("LS", {}),
+    ("LS", {"path": "."}),
+    ("Read", {}),
+])
+def test_read_from_outside_cwd_is_denied(folders, tool, tool_input) -> None:
+    company, outside = folders
+    read_denied_reason(decide(tool, company, cwd=outside, **tool_input))
+
+
+@pytest.mark.parametrize("tool", ["Write", "Edit"])
+def test_relative_write_from_outside_cwd_is_denied(folders, tool) -> None:
+    company, outside = folders
+    output = decide(tool, company, cwd=outside, file_path="メモ.txt")
+    assert is_denied(output)
+    assert "会社のフォルダの外" in output["hookSpecificOutput"]["permissionDecisionReason"]
+    assert is_denied(decide("NotebookEdit", company, cwd=outside, notebook_path="a.ipynb"))
+
+
+def test_absolute_inside_from_outside_cwd_is_allowed(folders) -> None:
+    """cwd が外でも、会社のフォルダの中を絶対の場所で指せば通す（拒みすぎない）。"""
+    company, outside = folders
+    inside = company / "下書き"
+    assert decide("Read", company, cwd=outside, file_path=str(inside / "計画.md")) is None
+    assert decide("Grep", company, cwd=outside, pattern="売上", path=str(inside)) is None
+    assert decide("Glob", company, cwd=outside, pattern=str(company / "**" / "*.md")) is None
+    assert decide("Glob", company, cwd=outside, pattern="*.md", path=str(inside)) is None
+    assert decide("Write", company, cwd=outside, file_path=str(inside / "計画.md")) is None
+    # 外の cwd から「..」で会社のフォルダの中へ戻る相対の場所も、中なので通す
+    assert decide("Read", company, cwd=outside, file_path="../会社のフォルダ/下書き/計画.md") is None
+
+
+def test_relative_from_subfolder_cwd(folders) -> None:
+    """cwd が会社のフォルダの下なら、相対の場所はそこから解く。「..」で外に出れば拒む。"""
+    company, _ = folders
+    sub = company / "下書き"
+    assert decide("Read", company, cwd=sub, file_path="計画.md") is None
+    assert decide("Glob", company, cwd=sub, pattern="../**/*.md") is None
+    assert decide("Write", company, cwd=sub, file_path="計画.md") is None
+    read_denied_reason(decide("Read", company, cwd=sub, file_path="../../別の会社/決算書.pdf"))
+    read_denied_reason(decide("Glob", company, cwd=sub, pattern="../../別の会社/*.xlsx"))
+    assert is_denied(decide("Write", company, cwd=sub, file_path="../../別の会社/メモ.txt"))
+
+
+# ---- 名前の文字の形（NFD と NFC） ----
+# Finder などで作った会社のフォルダの名前は、濁点が分かれた形（NFD）のことがある（実験 E5）。
+# CLAUDE_PROJECT_DIR は NFD のまま、Claude が渡す場所は濁点の付いた1文字の形（NFC）になりやすい。
+
+NAME = "株式会社グリーン"
+
+
+@pytest.mark.parametrize("folder_form,path_form", [("NFD", "NFC"), ("NFC", "NFD"), ("NFD", "NFD")])
+def test_nfd_and_nfc_names_are_the_same_folder(tmp_path, folder_form, path_form) -> None:
+    company = tmp_path / unicodedata.normalize(folder_form, NAME)
+    (company / ".hojokin").mkdir(parents=True)
+    (company / "下書き").mkdir()
+    (company / "下書き" / "計画.md").write_text("x", encoding="utf-8")
+    as_path = tmp_path / unicodedata.normalize(path_form, NAME)
+    sub = as_path / "下書き"
+    for cwd in (None, company, as_path):
+        assert decide("Read", company, cwd=cwd, file_path=str(sub / "計画.md")) is None
+        assert decide("Grep", company, cwd=cwd, pattern="売上", path=str(sub)) is None
+        assert decide("Glob", company, cwd=cwd, pattern=str(as_path / "**" / "*.md")) is None
+        assert decide("LS", company, cwd=cwd, path=str(as_path)) is None
+        assert decide("Write", company, cwd=cwd, file_path=str(sub / "計画.md")) is None
+        assert decide("Edit", company, cwd=cwd, file_path=str(sub / "計画.md")) is None
+    # cwd が別の形で渡っても、path を省いた Grep・Glob、相対の場所は中として通す
+    assert decide("Grep", company, cwd=as_path, pattern="売上") is None
+    assert decide("Glob", company, cwd=as_path, pattern="**/*.md") is None
+    assert decide("Read", company, cwd=as_path, file_path="下書き/計画.md") is None
+    assert decide("Write", company, cwd=as_path, file_path="下書き/計画.md") is None
+
+
+def test_nfc_normalizing_does_not_open_outside(tmp_path) -> None:
+    """形をそろえても、名前の違う外のフォルダ（似た名前、前方が同じ名前）は拒む。"""
+    company = tmp_path / unicodedata.normalize("NFD", NAME)
+    (company / ".hojokin").mkdir(parents=True)
+    for other in ("株式会社クリーン", NAME + "2", "株式会社グリーン別"):
+        for form in ("NFC", "NFD"):
+            path = tmp_path / unicodedata.normalize(form, other) / "決算書.pdf"
+            read_denied_reason(decide("Read", company, file_path=str(path)))
+            assert is_denied(decide("Write", company, file_path=str(path)))
 
 
 @pytest.mark.parametrize("pattern", ["**/*.md", "下書き/*.docx", "*.xlsx", "下書き/計画.md"])

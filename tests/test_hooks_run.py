@@ -16,6 +16,7 @@ import json
 import re
 import subprocess
 import time
+import unicodedata
 
 import hook_runner as hr
 import pytest
@@ -122,6 +123,45 @@ def test_company_folder_with_python_runs_python_hooks(tmp_path) -> None:
     assert (tmp_path / "python-ran").exists()
     # -B で動かすので、プラグインのフォルダに __pycache__ を書かない
     assert not list(plugin.rglob("__pycache__"))
+
+
+def test_nfd_company_folder_allows_nfc_paths_through_run_sh(tmp_path) -> None:
+    """会社のフォルダの名前が NFD（Finder で作った名前など）で、Claude が NFC の場所を渡しても、中は読めて書ける。
+
+    run.sh の目印の確かめも、NFD の CLAUDE_PROJECT_DIR で動く。外（cwd が外のときの相対の場所）は拒む。
+    """
+    plugin = hr.copy_plugin(tmp_path / "plugin")
+    name = "株式会社グリーン"
+    folder = tmp_path / unicodedata.normalize("NFD", name)
+    (folder / ".hojokin").mkdir(parents=True)
+    (folder / "下書き").mkdir()
+    home = tmp_path / "home"
+    data = tmp_path / "plugin-data"
+    home.mkdir()
+    data.mkdir()
+    path = hr.make_bin(tmp_path / "bin", "本物", tmp_path / "python-ran")
+    nfc = tmp_path / unicodedata.normalize("NFC", name)
+    base = {"session_id": "test", "transcript_path": str(nfc / "t.jsonl"), "cwd": str(nfc),
+            "hook_event_name": "PreToolUse"}
+    allowed = [
+        ("Read", {"file_path": str(nfc / "下書き" / "計画.md")}),
+        ("Grep", {"pattern": "売上"}),
+        ("Glob", {"pattern": "**/*.md"}),
+        ("Write", {"file_path": str(nfc / "下書き" / "計画.md"), "content": "x"}),
+    ]
+    for tool, tool_input in allowed:
+        for command in hr.hook_commands("PreToolUse", tool):
+            r = hr.run(command, {**base, "tool_name": tool, "tool_input": tool_input},
+                       plugin=plugin, folder=folder, path=path, home=home, data=data)
+            assert r.returncode == 0 and r.stderr == b"", (tool, r)
+            assert r.stdout == b"", (tool, r.stdout.decode("utf-8"))
+    assert (tmp_path / "python-ran").exists()
+    outside = {**base, "cwd": str(tmp_path / "別の会社"), "tool_name": "Read", "tool_input": {"file_path": "決算書.pdf"}}
+    (command,) = hr.hook_commands("PreToolUse", "Read")
+    r = hr.run(command, outside, plugin=plugin, folder=folder, path=path, home=home, data=data)
+    hso = json.loads(r.stdout.decode("utf-8"))["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "deny"
+    assert "会社のフォルダの外は読めません" in hso["permissionDecisionReason"]
 
 
 def assert_fallback(results, cause: str, python_stderr: bool = False) -> None:
