@@ -1,12 +1,15 @@
-"""模擬の申請画面を手元で出すサーバー（D11a・D11b）。Python の標準のライブラリだけで動く。
+"""模擬の申請画面を手元で出すサーバー（D11a・D11b・D11c）。Python の標準のライブラリだけで動く。
 
     python3 mock/server.py [--port 8780] [--record-dir mock/記録] [--reset] [--screens]
+    python3 mock/server.py --subsidy jizokuka [--port 8780] [--record-dir mock/記録_持続化] [--reset]
 
 - http://127.0.0.1:8780/ を開くと、ログインの画面が出る（模擬なので、どの値でも入れる）。
-- 申請の画面は2つの形で出す。どちらも同じ欄の定義（screen.py）を使い、同じ記録に残す。
+- 省力化（既定）の申請の画面は2つの形で出す。どちらも同じ欄の定義（screen.py）を使い、同じ記録に残す。
   - 1画面版（D11a）：/shinsei。❶〜⓬を縦に並べた1画面。ログインの後は、既定でここへ入る。
   - 12画面版（D11b）：/shinsei/1〜/shinsei/12。マニュアルの12画面に分け、画面ごとのボタンを置く。
     --screens を付けると、ログインの後にここ（❶）へ入る。
+- --subsidy jizokuka を付けると、持続化の模擬画面（D11c。定義は screen_jizokuka.py、動きは server_jizokuka.py）を出す。
+  Store と Handler は、画面の定義（defs）を差し替えて使う。
 - 入れた値・添付したファイル・押したボタンを、記録のフォルダに残す。
   - 操作記録.jsonl：1つの操作を1行（ボタン、ログイン、欄の変更、クリック）
   - 入力値.json：一時保存した値と添付の今の状態
@@ -143,9 +146,14 @@ def accepted(filename: str, accept: str) -> bool:
     return any(filename.lower().endswith(ext) for ext in accept.split(","))
 
 
-def empty_values() -> dict:
+def accept_name(field: dict) -> str:
+    """添付の欄の対応形式の名前。持続化の欄は、欄の定義に名前を持つ。"""
+    return field.get("accept_name") or screen.ACCEPT_NAMES[field["accept"]]
+
+
+def empty_values(defs=None) -> dict:
     values = {}
-    for field in screen.all_fields():
+    for field in (defs or screen).all_fields():
         if field["kind"] == "checkbox":
             values[field["id"]] = False
         elif field["kind"] == "checkboxes":
@@ -155,13 +163,13 @@ def empty_values() -> dict:
     return values
 
 
-def values_from_form(form: dict, fields: list = None) -> dict:
+def values_from_form(form: dict, fields: list = None, defs=None) -> dict:
     """送られた欄から、欄の値を作る。チェックしていない欄は送られないので False で埋める。
 
     fields は値を作る欄（既定はすべての欄）。12画面版では、その画面の欄だけを渡す。
     """
     values = {}
-    for field in screen.all_fields() if fields is None else fields:
+    for field in (defs or screen).all_fields() if fields is None else fields:
         got = form.get(field["id"], [])
         if field["kind"] == "checkbox":
             values[field["id"]] = bool(got)
@@ -174,9 +182,17 @@ def values_from_form(form: dict, fields: list = None) -> dict:
 
 
 class Store:
-    """記録のフォルダ。書き込みは1つずつ行う。"""
+    """記録のフォルダ。書き込みは1つずつ行う。
 
-    def __init__(self, record_dir: Path, reset: bool = False, start_url: str = "/shinsei"):
+    defs は画面の定義（既定は省力化の screen。持続化は screen_jizokuka）。持続化の動きの違いは、
+    server_jizokuka.JizokukaStore が下の saving_buttons・notice・extra_errors などを差し替えて足す。
+    """
+
+    # 値を保存するボタン
+    saving_buttons = SAVING_BUTTONS
+
+    def __init__(self, record_dir: Path, reset: bool = False, start_url: str = "/shinsei", defs=None):
+        self.defs = defs or screen
         self.dir = record_dir
         self.lock = threading.Lock()
         if reset and self.dir.exists():
@@ -189,15 +205,45 @@ class Store:
 
     def _load(self) -> dict:
         path = self.dir / STATE_FILE
-        state = {"values": empty_values(), "files": {}, "submit_pressed": False, "submit_times": [],
+        state = {"values": empty_values(self.defs), "files": {}, "submit_pressed": False, "submit_times": [],
                  "auth_code": "", "saved_at": ""}
+        saved = {}
         if path.exists():
             saved = json.loads(path.read_text(encoding="utf-8"))
             state["values"].update({k: v["value"] for k, v in saved.get("fields", {}).items()
                                     if k in state["values"]})
             for key in ("files", "submit_pressed", "submit_times", "auth_code", "saved_at"):
                 state[key] = saved.get(key, state[key])
+        state.update(self.load_extra(saved))
         return state
+
+    # ---- 持続化（server_jizokuka）が差し替えるところ。省力化では何もしない ----
+
+    def load_extra(self, saved: dict) -> dict:
+        """入力値.json から、決まった項目のほかに読み直す状態。"""
+        return {}
+
+    def extra_state(self) -> dict:
+        """入力値.json に、決まった項目のほかに書く状態。"""
+        return {}
+
+    def notice(self, button: str, screen_no: int, valid: bool, errors: list) -> str:
+        """12画面版で、ボタンを押した後に出す知らせ。"""
+        return screen_notice(button, screen_no, valid, errors)
+
+    def extra_errors(self, button: str, screen_no, submitted: dict) -> list:
+        """値を保存した後に見つけた、画面に知らせる誤り（持続化の文字数の上限など）。"""
+        return []
+
+    def extra_log(self, button: str, screen_no, submitted: dict, saving: bool) -> dict:
+        """ボタンの記録の行に足す中身。"""
+        return {}
+
+    def upload_problem(self, field: dict, filename: str, data: bytes) -> str:
+        """添付を受け取れないわけ。受け取れるなら空。"""
+        if not accepted(filename, field["accept"]):
+            return f"この欄に添付できるのは {accept_name(field)} だけです"
+        return ""
 
     def log(self, entry: dict) -> None:
         with self.lock:
@@ -206,7 +252,7 @@ class Store:
 
     def write_state(self) -> None:
         fields = {}
-        for field in screen.all_fields():
+        for field in self.defs.all_fields():
             if field["kind"] == "file":
                 continue
             fields[field["id"]] = {"section": field["section"], "group": field["group"], "label": field["label"],
@@ -214,8 +260,10 @@ class Store:
                                    "value": self.state["values"].get(field["id"])}
             if field.get("table"):
                 fields[field["id"]]["table"] = field["table"]
+            if field.get("limit"):
+                fields[field["id"]]["limit"] = field["limit"]
         data = {
-            "screen": screen.MOCK_NAME,
+            "screen": self.defs.MOCK_NAME,
             "note": "模擬画面の記録です。実在の申請システムとは関係ありません。",
             "saved_at": self.state["saved_at"],
             "submit_pressed": self.state["submit_pressed"],
@@ -223,6 +271,7 @@ class Store:
             "auth_code": self.state["auth_code"],
             "fields": fields,
             "files": self.state["files"],
+            **self.extra_state(),
         }
         path = self.dir / STATE_FILE
         tmp = path.with_suffix(".tmp")
@@ -232,9 +281,9 @@ class Store:
     def save_upload(self, field: dict, filename: str, data: bytes) -> dict:
         info = {"field": field["id"], "label": field["label"], "filename": filename, "size": len(data),
                 "sha256": hashlib.sha256(data).hexdigest()}
-        if not accepted(filename, field["accept"]):
-            return {**info, "accepted": False,
-                    "reason": f"この欄に添付できるのは {screen.ACCEPT_NAMES[field['accept']]} だけです"}
+        problem = self.upload_problem(field, filename, data)
+        if problem:
+            return {**info, "accepted": False, "reason": problem}
         folder = self.dir / FILES_DIR / field["id"]
         if folder.exists():
             shutil.rmtree(folder)
@@ -252,14 +301,14 @@ class Store:
         screen_no は12画面版の画面の番号（1画面版は None）。12画面版では、その画面の欄と添付だけを
         保存し、ほかの画面の値はそのまま残す。その画面にないボタンは、記録だけして保存しない。
         """
-        on_screen = screen.all_fields() if screen_no is None else screen.screen_fields(screen_no)
-        valid = screen_no is None or button in screen.screen_button_values(screen_no)
+        on_screen = self.defs.all_fields() if screen_no is None else self.defs.screen_fields(screen_no)
+        valid = screen_no is None or button in self.defs.screen_button_values(screen_no)
         fields = {field["id"]: field for field in on_screen}
         submitted = values_from_form(form, on_screen)
         upload_results = []
         message, errors = NOTICES.get(button, ""), []
         with self.lock:
-            saving = valid and button in SAVING_BUTTONS
+            saving = valid and button in self.saving_buttons
             if saving:
                 self.state["values"].update(submitted)
                 self.state["saved_at"] = now()
@@ -271,11 +320,12 @@ class Store:
                     upload_results.append(result)
                     if not result["accepted"]:
                         errors.append(f"{field['label']}：{result['reason']}（{filename}）")
+                errors.extend(self.extra_errors(button, screen_no, submitted))
             else:
                 upload_results = [{"field": n, "filename": fn, "size": len(d), "accepted": False,
                                    "reason": "保存しないボタンなので受け取っていません"} for n, fn, d in uploads]
             if screen_no is not None:
-                message = screen_notice(button, screen_no, valid, errors)
+                message = self.notice(button, screen_no, valid, errors)
             if saving and button == "issue_code":
                 self.state["auth_code"] = f"{secrets.randbelow(10**6):06d}"
                 message = (f"「認証コード発行」を押しました。模擬の認証コードは {self.state['auth_code']} です"
@@ -289,13 +339,15 @@ class Store:
             # 記録の fields は、すべての欄の値。保存しないボタンでは、保存してある値に送られた値を重ねる
             logged = dict(self.state["values"])
             logged.update(submitted)
-        entry = {"event": "button", "page": "shinsei" if screen_no is None else screen.screen_url(screen_no).strip("/"),
-                 "button": button, "button_label": screen.button_label(button)}
+        entry = {"event": "button",
+                 "page": "shinsei" if screen_no is None else self.defs.screen_url(screen_no).strip("/"),
+                 "button": button, "button_label": self.defs.button_label(button)}
         if screen_no is not None:
-            section = screen.SECTIONS[screen_no - 1]
+            section = self.defs.SECTIONS[screen_no - 1]
             entry["screen"] = f"{section['no']} {section['title']}"
         entry.update({"saved": saving, "fields": logged, "uploads": upload_results, "files": self.state["files"],
                       "submit_pressed": self.state["submit_pressed"]})
+        entry.update(self.extra_log(button, screen_no, submitted, saving))
         self.log(entry)
         return {"message": message, "errors": errors, "valid": valid}
 
@@ -421,17 +473,24 @@ def render_field(field: dict, values: dict, files: dict, computed: dict) -> str:
                 f"<span class=\"display\" id=\"f_{fid}\">{esc(shown)}</span>{unit}</div>")
     if kind == "grid":
         return render_grid(field, values, computed)
-    if kind in ("text", "number"):
+    # 文字数の上限（持続化の欄だけが持つ。省力化の欄には付けない）。maxlength と、入力済みの字数を出す
+    limit = field.get("limit")
+    limit_attr = f" maxlength=\"{limit}\" data-limit=\"{limit}\"" if limit else ""
+    count = (f"<span class=\"count\" id=\"count_{fid}\">入力済：{len(str(value or ''))} ／ 最大：{limit:,}</span>"
+             if limit else "")
+    if kind in ("text", "number", "date"):
         extra = " inputmode=\"numeric\"" if kind == "number" else ""
         if field.get("placeholder"):
             extra += f" placeholder=\"{esc(field['placeholder'])}\""
+        input_type = "date" if kind == "date" else "text"
         return (f"<div class=\"row\"><label><span class=\"name\">{esc(label)}</span>"
-                f"<input type=\"text\" name=\"{fid}\" id=\"f_{fid}\" value=\"{esc(value)}\"{extra}></label>"
-                f"{unit}{required_mark(field)}</div>")
+                f"<input type=\"{input_type}\" name=\"{fid}\" id=\"f_{fid}\" value=\"{esc(value)}\"{extra}{limit_attr}>"
+                f"</label>{unit}{required_mark(field)}{count}</div>")
     if kind == "textarea":
         ph = f" placeholder=\"{esc(field['placeholder'])}\"" if field.get("placeholder") else ""
         return (f"<div class=\"row\"><label><span class=\"name\">{esc(label)}</span>"
-                f"<textarea name=\"{fid}\" id=\"f_{fid}\"{ph}>{esc(value)}</textarea></label>{required_mark(field)}</div>")
+                f"<textarea name=\"{fid}\" id=\"f_{fid}\"{ph}{limit_attr}>{esc(value)}</textarea></label>"
+                f"{required_mark(field)}{count}</div>")
     if kind == "select":
         options = ["<option value=\"\">--選択してください--</option>"]
         for opt in field["options"]:
@@ -461,10 +520,13 @@ def render_field(field: dict, values: dict, files: dict, computed: dict) -> str:
         attached = files.get(fid)
         shown = (f"<div class=\"attached\" id=\"attached_{fid}\">添付済み：{esc(attached['filename'])}"
                  f"（{attached['size']:,}バイト）</div>") if attached else ""
+        # 持続化の欄は、手引きが決めているファイルの名前を持つ（「貸借対照表（事業者名）」など）
+        rule = (f"<div class=\"fmt filename\">ファイルの名前：{esc(field['filename'])}</div>"
+                if field.get("filename") else "")
         return (f"<div class=\"row\"><label><span class=\"name\">{esc(label)}</span>"
                 f"<input type=\"file\" name=\"{fid}\" id=\"f_{fid}\" accept=\"{esc(field['accept'])}\"></label>"
-                f"<span class=\"fmt\">対応形式：{esc(screen.ACCEPT_NAMES[field['accept']])}</span>{required_mark(field)}"
-                f"<span class=\"picked\" id=\"picked_{fid}\"></span>{shown}</div>")
+                f"<span class=\"fmt\">対応形式：{esc(accept_name(field))}</span>{required_mark(field)}"
+                f"<span class=\"picked\" id=\"picked_{fid}\"></span>{rule}{shown}</div>")
     raise ValueError(f"知らない種類の欄です：{kind}")
 
 
@@ -641,6 +703,8 @@ def render_submitted(state: dict, back: str = "/shinsei") -> bytes:
 
 class Handler(BaseHTTPRequestHandler):
     store: Store = None
+    # 画面の定義（省力化は screen。持続化は server_jizokuka.JizokukaHandler が screen_jizokuka にする）
+    defs = screen
     # ログインの印 → 次に出す画面への知らせ（12画面版で、ボタンの後に画面を移るときに使う）
     sessions: dict = {}
     # ログインの後に入る画面（既定は D11a の1画面版。--screens なら12画面版の ❶）
@@ -683,7 +747,7 @@ class Handler(BaseHTTPRequestHandler):
         """12画面版の URL なら画面の番号（1〜12）、そうでなければ 0。"""
         match = SCREEN_PATH.match(path)
         n = int(match.group(1)) if match else 0
-        return n if 1 <= n <= screen.SCREEN_COUNT else 0
+        return n if 1 <= n <= self.defs.SCREEN_COUNT else 0
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -759,6 +823,10 @@ class Handler(BaseHTTPRequestHandler):
         self.sessions[token] = {"message": result["message"], "errors": result["errors"]}
         self.redirect(screen.screen_url(target))
 
+    def extra_field(self, name: str) -> dict:
+        """申請の画面とログインのほかにある欄（持続化の遵守事項の欄など）。省力化にはない。"""
+        return {}
+
     def log_client_event(self, body: bytes) -> None:
         """画面の中の欄の変更とクリックを記録する。パスワードの値は残さない。"""
         try:
@@ -776,7 +844,8 @@ class Handler(BaseHTTPRequestHandler):
             entry["button_label"] = str(data.get("label", ""))[:50]
         else:
             name, kind = str(data.get("name", ""))[:100], str(data.get("type", ""))[:20]
-            field = screen.field_map().get(name) or {f["id"]: f for f in screen.LOGIN_FIELDS}.get(name, {})
+            field = (self.defs.field_map().get(name) or {f["id"]: f for f in self.defs.LOGIN_FIELDS}.get(name)
+                     or self.extra_field(name))
             entry.update({"field": name, "label": field.get("label", ""), "type": kind})
             if kind == "password" or name == "password":
                 entry["entered"] = bool(data.get("entered"))
@@ -790,10 +859,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(port: int, record_dir: Path, reset: bool = False, host: str = "127.0.0.1",
-                screens: bool = False) -> ThreadingHTTPServer:
-    """screens が真なら、ログインの後に12画面版の ❶ へ入る（偽なら D11a の1画面版）。"""
+                screens: bool = False, subsidy: str = "shoryokuka") -> ThreadingHTTPServer:
+    """screens が真なら、ログインの後に12画面版の ❶ へ入る（偽なら D11a の1画面版）。
+
+    subsidy が "jizokuka" なら、持続化の模擬画面（D11c）を出す（screens は使わない）。
+    """
     if host not in LOCAL_HOSTS:
         raise ValueError("模擬画面は、このパソコンの中（127.0.0.1）だけで出します")
+    if subsidy == "jizokuka":
+        import server_jizokuka  # 持続化の動きは別のファイルに置く（server_jizokuka が server を読むので、ここで読む）
+        return server_jizokuka.make_server(port, record_dir, reset, host)
+    if subsidy != "shoryokuka":
+        raise ValueError(f"知らない補助金です：{subsidy}（shoryokuka か jizokuka）")
     start_url = screen.screen_url(1) if screens else "/shinsei"
     handler = type("MockHandler", (Handler,), {"store": Store(record_dir, reset, start_url), "sessions": {},
                                                "start_url": start_url})
@@ -801,22 +878,32 @@ def make_server(port: int, record_dir: Path, reset: bool = False, host: str = "1
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="模擬の申請画面（省力化・一般型 第8回、D11a・D11b）を手元で出す")
+    parser = argparse.ArgumentParser(
+        description="模擬の申請画面（省力化・一般型 第8回 D11a・D11b、持続化〈一般型 通常枠〉 D11c）を手元で出す")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"ポート（既定 {DEFAULT_PORT}）")
     parser.add_argument("--host", default="127.0.0.1", help="受ける所（127.0.0.1・localhost・::1 だけ）")
-    parser.add_argument("--record-dir", type=Path, default=DEFAULT_RECORD_DIR, help="記録のフォルダ（既定 mock/記録）")
+    parser.add_argument("--record-dir", type=Path, default=None,
+                        help="記録のフォルダ（既定は、省力化 mock/記録、持続化 mock/記録_持続化）")
     parser.add_argument("--reset", action="store_true", help="始める前に記録のフォルダを空にする")
     parser.add_argument("--screens", action="store_true",
-                        help="ログインの後に12画面版（/shinsei/1）へ入る（既定は D11a の1画面版 /shinsei）")
+                        help="省力化で、ログインの後に12画面版（/shinsei/1）へ入る（既定は D11a の1画面版 /shinsei）")
+    parser.add_argument("--subsidy", choices=("shoryokuka", "jizokuka"), default="shoryokuka",
+                        help="出す模擬画面（既定は省力化。jizokuka は持続化の13画面）")
     args = parser.parse_args(argv)
+    if args.record_dir is None:
+        args.record_dir = (DEFAULT_RECORD_DIR.parent / "記録_持続化") if args.subsidy == "jizokuka" else DEFAULT_RECORD_DIR
     try:
-        server = make_server(args.port, args.record_dir, args.reset, args.host, args.screens)
+        server = make_server(args.port, args.record_dir, args.reset, args.host, args.screens, args.subsidy)
     except (OSError, ValueError) as err:
         sys.stderr.write(f"模擬画面のサーバーを始められません：{err}\n")
         return 1
     print(f"模擬の申請画面： http://{args.host}:{args.port}/", flush=True)
-    print(f"ログインの後に入る画面： http://{args.host}:{args.port}{'/shinsei/1' if args.screens else '/shinsei'}"
-          "（1画面版は /shinsei、12画面版は /shinsei/1〜/shinsei/12）", flush=True)
+    if args.subsidy == "jizokuka":
+        print(f"持続化の模擬画面です。ログインの後は遵守事項（/junshu）→ マイページ（/mypage）→ 画面1〜13"
+              f"（/shinsei/1〜/shinsei/{server.RequestHandlerClass.defs.SCREEN_COUNT}）", flush=True)
+    else:
+        print(f"ログインの後に入る画面： http://{args.host}:{args.port}{'/shinsei/1' if args.screens else '/shinsei'}"
+              "（1画面版は /shinsei、12画面版は /shinsei/1〜/shinsei/12）", flush=True)
     print(f"記録のフォルダ： {args.record_dir}", flush=True)
     try:
         server.serve_forever()
