@@ -98,7 +98,7 @@ DESIGN の冒頭にあるとおり、SPEC の範囲は削りません。時間�
 
 | ID | すること | 触るファイル | 終わりの確かめ | 先に済ませるタスク | 予定の日 | 状態 |
 |---|---|---|---|---|---|---|
-| E4 | 実験 E4（作者と一緒に）。ログを書くだけの hook（SessionStart・UserPromptSubmit・PreToolUse・Stop）を持つ試しのプラグインを作り、作者がデスクトップアプリに「＋」→ Add plugins で入れる。hook が動くか、PreToolUse で拒めるか、開いたときの情報が渡るかを見る | experiments/E4/、experiments/結果.md | 項目ごとに、できた・できないとその証拠（hook が書いたログの中身）、13.2 の手を取るかを会話に示し、experiments/結果.md に書く | — | 11/3 | まだ |
+| E4 | 実験 E4（作者と一緒に）。ログを書くだけの hook（SessionStart・UserPromptSubmit・PreToolUse・Stop）を持つ試しのプラグインを作り、作者がデスクトップアプリに「＋」→ Add plugins で入れる。hook が動くか、PreToolUse で拒めるか、開いたときの情報が渡るかを見る | experiments/E4/、experiments/結果.md | 項目ごとに、できた・できないとその証拠（hook が書いたログの中身）、13.2 の手を取るかを会話に示し、experiments/結果.md に書く | — | 11/3 | 済み |
 | E6 | 実験 E6（作者と一緒に）。試しの会社のフォルダに `.claude/settings.json`（block の2つ、Edit の deny、allow）を作り、Code タブで次を見る。ファイルの道具が外を読み書きできないか。作ったその場で効くか。skill の allowed-tools でスクリプトが確認なしに動くか（社長が伝えた場所を渡す取り込みも）。原本をその場のコードで書き換えたとき、Stop hook が見つけて戻すか | experiments/E6/、experiments/結果.md | 項目ごとに、できた・できないとその証拠（外を読ませたときの拒否のメッセージなど）、13.2 の手を取るかを会話に示し、experiments/結果.md に書く | E4 | 11/3 | まだ |
 | E3a | 実験 E3 の前半。試しのプラグインに eval のケースを1つ作り、次を見る。scaffold で会社のフォルダを戻せるか。scaffold が downloads/ の公式資料を写せるか。eval の中で hook・スクリプトが動くか。`--keep-temp` で何が残るか。1ケースの費用。`--ablation with-without` の結果 | experiments/E3/、experiments/結果.md | 試しのケースを流した eval の出力（合否と費用）と、項目ごとの結果、13.2 の手を取るかを会話に示し、experiments/結果.md に書く | E4 | 11/3 | まだ |
 | E3b | 実験 E3 の後半。SubagentStop hook で、審査役に見立てた subagent の最後の報告を取り出せるか。headless で AskUserQuestion がどう動くか | experiments/E3/、experiments/結果.md | 取り出した報告の中身と AskUserQuestion の結果、13.2 の手を取るかを会話に示し、experiments/結果.md に書く | E3a | 11/3 | まだ |
