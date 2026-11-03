@@ -2,34 +2,56 @@
 
 - プラグインの lib/ と skills/ を一時フォルダに写して動かす（__pycache__ などが書かれないかも見るため）。
 - 道具は、社長の Mac と同じ /usr/bin/python3（3.9）で動かす。PATH には python3 と sh だけを置く（git も uv もない）。
-- 補助プログラムの venv は、テストの間で使い回す（pytest の控えの場所に作る。2回目からは作り直さない）。
-  空の置き場から pip で入れる試しは、slow を付けたテストで行う。
-- 履歴の中身は、その venv の python と dulwich で読む（テストの Python には dulwich がないため）。
+- 版の履歴に使う dulwich はプラグインに同梱している（lib/vendor/）。準備も通信も要らない。
+  通信を切って動かすときは、macOS の sandbox-exec で包む（offline=True）。
+- 履歴の中身も、同じ /usr/bin/python3 と同梱の dulwich で読む。テストの Python（pytest の中）では読み込まない
+  （同梱の typing_extensions が sys.path の先頭に入り、開発用の環境と混ざらないように）。
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import hook_runner as hr
 import pytest
 
-from lib import runtime
-
 REPO_ROOT = hr.REPO_ROOT
 SCRIPT = Path("skills") / "kiroku" / "scripts" / "init_company.py"
 
+# 通信をすべて断つ（名前の解決も含む）。ほかは変えない
+NO_NETWORK_PROFILE = "(version 1)(allow default)(deny network*)"
 
-@pytest.fixture(scope="session")
-def plugin_data(request, tmp_path_factory) -> Path:
-    """補助プログラムを入れたデータの置き場（使い回す）。"""
-    cache = request.config.cache
-    data = Path(cache.mkdir("hojokin-plugin-data")) if cache is not None else tmp_path_factory.mktemp("plugin-data")
-    runtime.ensure(data, base_python=hr.real_python())
-    return data
+
+@functools.lru_cache(maxsize=None)
+def _sandbox_exec() -> str:
+    """通信を断って動かせる sandbox-exec の場所。使えなければ空。"""
+    path = shutil.which("sandbox-exec") or "/usr/bin/sandbox-exec"
+    if not Path(path).exists():
+        return ""
+    try:
+        r = subprocess.run([path, "-p", NO_NETWORK_PROFILE, "/usr/bin/true"], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return path if r.returncode == 0 and r.stderr == b"" else ""
+
+
+def offline_prefix() -> list:
+    """コマンドの前に付けると、通信を断って動かす。
+
+    Mac（社長のパソコンと開発の環境）では sandbox-exec が必ずあるので、使えなければ落とす
+    （飛ばすと、通信を断った確かめをしないまま「すべて通った」に見えるため）。Mac でなければ飛ばす。
+    """
+    path = _sandbox_exec()
+    if not path:
+        if sys.platform == "darwin":
+            pytest.fail("sandbox-exec で通信を断てません（sandbox の中から流したときなど）。外から流してください")
+        pytest.skip("sandbox-exec のない環境です")
+    return [path, "-p", NO_NETWORK_PROFILE]
 
 
 def copy_plugin(dest: Path) -> Path:
@@ -42,7 +64,7 @@ def copy_plugin(dest: Path) -> Path:
 class Env:
     """1つのテストで使う、プラグインの写し・HOME・PATH など。"""
 
-    def __init__(self, tmp_path: Path, data: Path) -> None:
+    def __init__(self, tmp_path: Path) -> None:
         self.root = tmp_path
         self.plugin = copy_plugin(tmp_path / "plugin")
         self.home = tmp_path / "home"
@@ -51,24 +73,22 @@ class Env:
         for d in (self.home, self.tmp, self.cwd):
             d.mkdir()
         self.path = hr.make_bin(tmp_path / "bin", "本物", tmp_path / "python-ran")
-        self.data = data
 
     def folder(self, name: str = "山田 製作所") -> Path:
         path = self.root / name
         path.mkdir()
         return path
 
-    def run(self, folder: Path = None, *, data: Path = None, extra_env: dict = None, args: list = None,
-            cwd: Path = None, timeout: int = 120) -> subprocess.CompletedProcess:
+    def run(self, folder: Path = None, *, extra_env: dict = None, args: list = None, cwd: Path = None,
+            offline: bool = False, timeout: int = 120) -> subprocess.CompletedProcess:
         """Claude が Bash で動かすのと同じく、環境変数に CLAUDE_* を入れずに、引数で渡す。"""
         if args is None:
-            args = ["--data-dir", str(data or self.data)]
-            if folder is not None:
-                args += ["--folder", str(folder)]
+            args = ["--folder", str(folder)] if folder is not None else []
         env = {"PATH": self.path, "HOME": str(self.home), "TMPDIR": str(self.tmp)}
         env.update(extra_env or {})
+        prefix = offline_prefix() if offline else []
         return subprocess.run(
-            [hr.real_python(), "-B", str(self.plugin / SCRIPT), *args],
+            [*prefix, hr.real_python(), "-B", str(self.plugin / SCRIPT), *args],
             env=env,
             cwd=cwd or self.cwd,
             capture_output=True,
@@ -87,11 +107,12 @@ def ok(r: subprocess.CompletedProcess) -> str:
     return out
 
 
-def venv_json(data: Path, code: str, *args: str) -> object:
-    """venv の python（dulwich あり）で code を動かし、標準出力の JSON を返す。code の中では lib を import できる。"""
-    prelude = f"import json, sys\nsys.path.insert(0, {str(REPO_ROOT)!r})\n"
+def py_json(code: str, *args: str) -> object:
+    """/usr/bin/python3 と同梱の dulwich で code を動かし、標準出力の JSON を返す。code の中では lib を import できる。"""
+    # lib.history を先に読み込むと、同梱の dulwich が sys.path に入る
+    prelude = f"import json, sys\nsys.path.insert(0, {str(REPO_ROOT)!r})\nfrom lib import history\n"
     r = subprocess.run(
-        [str(runtime.venv_python(data)), "-B", "-c", prelude + code, *args],
+        [hr.real_python(), "-I", "-B", "-c", prelude + code, *args],
         capture_output=True,
         timeout=60,
     )
@@ -112,13 +133,13 @@ print(json.dumps(rows, ensure_ascii=False))
 """
 
 
-def git_log(data: Path, folder: Path) -> list:
+def git_log(folder: Path) -> list:
     """新しい順の版の一覧（作者、メッセージ、変わったファイル）。"""
-    return venv_json(data, LOG_CODE, str(folder))
+    return py_json(LOG_CODE, str(folder))
 
 
-def changed(data: Path, folder: Path) -> list:
+def changed(folder: Path) -> list:
     """最後の版から変わったファイル（.gitignore にあるものは除く）。"""
-    return venv_json(data, "from lib import history\nfrom pathlib import Path\n"
-                           "print(json.dumps(history.changed_paths(Path(sys.argv[1])), ensure_ascii=False))",
-                     str(folder))
+    return py_json("from pathlib import Path\n"
+                   "print(json.dumps(history.changed_paths(Path(sys.argv[1])), ensure_ascii=False))",
+                   str(folder))

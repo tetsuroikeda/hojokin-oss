@@ -8,8 +8,9 @@ SPEC：会社のフォルダの Git の設定を見る。合格ライン：送�
 - git のコマンド（あれば）
 送り先そのもの（[remote "…"]、remote.pushDefault）と、送り先を指す項目（branch.<名前>.remote など、
 名前に remote を含む項目）が0件であることを確かめる。もう一度動かした後も、前からあったファイルを残した後も同じ。
+通信を断って作ったとき（eval の中や、通信できないパソコンで初めて使うとき）も同じ。
 すでに送り先のある .git があるフォルダは、会社のフォルダにしない（そのまま使うと、送り先が残るため）。
-DESIGN 5章「版の操作はスクリプトで行い、送る機能を持たせない」も、コードを読んで確かめる。
+DESIGN 5章「版の操作はスクリプトで行い、送る機能を持たせない」も、コードを読んで確かめる（同梱の dulwich の中は除く）。
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import subprocess
 import company_tool as ct
 import hook_runner as hr
 import pytest
-from company_tool import plugin_data  # noqa: F401（fixture）
+import test_vendor as tv
 
 SECTION = re.compile(r'^\s*\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]')
 KEY = re.compile(r"^\s*([A-Za-z][A-Za-z0-9-]*)\s*(?:=|$)")
@@ -73,7 +74,7 @@ print(json.dumps({"remotes": history.remotes(repo), "sections": sections}, ensur
 """
 
 
-def assert_no_remote(folder, data) -> None:
+def assert_no_remote(folder) -> None:
     config = folder / ".git" / "config"
     assert config.is_file()
     # 1. 文字のまま。git が今も送り先として読む古い形のファイル（.git/remotes/・.git/branches/）もない
@@ -82,7 +83,7 @@ def assert_no_remote(folder, data) -> None:
         d = folder / ".git" / old
         assert not d.exists() or [p for p in d.iterdir()] == [], old
     # 2. dulwich
-    seen = ct.venv_json(data, REMOTES_CODE, str(folder))
+    seen = ct.py_json(REMOTES_CODE, str(folder))
     assert seen["remotes"] == []
     assert all(s[0].lower() != "remote" for s in seen["sections"]), seen["sections"]
     # 3. git のコマンド（あれば）。利用者の設定を混ぜず、このフォルダの設定だけを見る
@@ -96,24 +97,37 @@ def assert_no_remote(folder, data) -> None:
         assert [line for line in r.stdout.decode("utf-8").splitlines() if "remote" in line.lower()] == []
 
 
-def test_no_remote_in_new_company_folder(tmp_path, plugin_data) -> None:  # noqa: F811
-    env = ct.Env(tmp_path, plugin_data)
+def test_no_remote_in_new_company_folder(tmp_path) -> None:
+    env = ct.Env(tmp_path)
     folder = env.folder()
     (folder / "決算書_2025年度.pdf").write_bytes(b"%PDF-1.4 dummy")
     ct.ok(env.run(folder))
-    assert_no_remote(folder, plugin_data)
+    assert_no_remote(folder)
     # 前からあったファイルの版（社長）と、用意したものの版（ツール）
-    assert len(ct.git_log(plugin_data, folder)) == 2
+    assert len(ct.git_log(folder)) == 2
 
 
-def test_no_remote_after_running_again(tmp_path, plugin_data) -> None:  # noqa: F811
-    env = ct.Env(tmp_path, plugin_data)
+def test_no_remote_when_made_offline(tmp_path) -> None:
+    """通信を断って作っても（eval の中や、通信できないパソコンで初めて使うとき）、同じく送り先0件の履歴ができる。"""
+    env = ct.Env(tmp_path)
+    folder = env.folder()
+    (folder / "決算書_2025年度.pdf").write_bytes(b"%PDF-1.4 dummy")
+    ct.ok(env.run(folder, offline=True))
+    assert_no_remote(folder)
+    assert len(ct.git_log(folder)) == 2
+    # もう一度動かしても（通信を断ったまま）、送り先は増えない
+    assert "すでに会社のフォルダです" in ct.ok(env.run(folder, offline=True))
+    assert_no_remote(folder)
+
+
+def test_no_remote_after_running_again(tmp_path) -> None:
+    env = ct.Env(tmp_path)
     folder = env.folder()
     ct.ok(env.run(folder))
     (folder / "入れ口").rmdir()
     out = ct.ok(env.run(folder))
     assert "すでに会社のフォルダです" in out
-    assert_no_remote(folder, plugin_data)
+    assert_no_remote(folder)
 
 
 SET_REMOTE_CODE = """
@@ -142,12 +156,12 @@ print("{}")
 
 
 @pytest.mark.parametrize("kind", ["remote", "pushDefault", "branch", "include", "remotes", "branches"])
-def test_existing_git_with_remote_is_refused(tmp_path, plugin_data, kind) -> None:  # noqa: F811
+def test_existing_git_with_remote_is_refused(tmp_path, kind) -> None:
     """送り先のある .git があるフォルダは、会社のフォルダにしない。何も書かない。"""
-    env = ct.Env(tmp_path, plugin_data)
+    env = ct.Env(tmp_path)
     folder = env.folder()
     (folder / "メモ.txt").write_text("前からあるファイル", encoding="utf-8")
-    ct.venv_json(plugin_data, SET_REMOTE_CODE, str(folder), kind)
+    ct.py_json(SET_REMOTE_CODE, str(folder), kind)
     before = hr.snapshot(folder)
     outside = env.outside()
 
@@ -165,8 +179,10 @@ def test_existing_git_with_remote_is_refused(tmp_path, plugin_data, kind) -> Non
 SENDING = r"(push|pull|fetch|clone|ls_remote|remote_add|submodule_add|get_transport_and_path)"
 SEND_CALLS = re.compile(
     rf"porcelain\.{SENDING}\b"
-    r"|dulwich\.client"
-    rf"|from\s+dulwich(\.porcelain)?\s+import\s+[^\n]*\b(client|{SENDING[1:-1]})\b"
+    # dulwich の通信の部分と、コマンドの入口（cli.py・__main__.py。git と同じく push などができる）
+    r"|dulwich\.(client|cli)\b"
+    rf"|from\s+dulwich(\.porcelain)?\s+import\s+[^\n]*\b(client|cli|{SENDING[1:-1]})\b"
+    r"""|-m["',\s]+dulwich\b"""
     r"""|\bgit["',\s]+(push|pull|fetch|clone|remote)\b"""
 )
 
@@ -174,22 +190,41 @@ SEND_CALLS = re.compile(
 def test_send_pattern_catches_calls() -> None:
     """探し方そのものの確かめ。"""
     for line in ('porcelain.push(repo, "origin")', "from dulwich.client import get_transport_and_path",
-                 'subprocess.run(["git", "push"])', "os.system('git remote add origin x')"):
+                 'subprocess.run(["git", "push"])', "os.system('git remote add origin x')",
+                 "from dulwich import cli", "dulwich.cli.main(['push'])",
+                 'subprocess.run([sys.executable, "-m", "dulwich", "push"])', "python3 -m dulwich push"):
         assert SEND_CALLS.search(line), line
     for line in ("def fetch(url):", "公式資料を fetch_official(url) で取る", "# git のコマンドは使わない"):
         assert not SEND_CALLS.search(line), line
 
 
 def test_history_code_has_no_sending() -> None:
+    """このプラグインのコードが、送る機能を呼ばない。
+
+    同梱したライブラリ（lib/vendor/。dulwich そのもの）は見ない。dulwich は送る機能も持つが、それを呼ぶのは
+    このプラグインのコードだけで、そこを見れば足りる（venv に入れていたときも、dulwich の中は見ていなかった）。
+    lib/vendor/ に自前のコードが紛れていないこと（wheel のままであること）は、下の test_bundled_code_is_the_wheel で見る。
+    """
+    vendor = hr.REPO_ROOT / "lib" / "vendor"
     files = sorted(
-        set(hr.REPO_ROOT.glob("lib/**/*.py"))
+        p
+        for p in set(hr.REPO_ROOT.glob("lib/**/*.py"))
         | set(hr.REPO_ROOT.glob("skills/*/scripts/**/*.py"))
         | set(hr.REPO_ROOT.glob("hooks/**/*.py"))
+        if vendor not in p.parents
     )
     assert any(p.name == "history.py" for p in files)
+    assert any(p.name == "init_company.py" for p in files)
     hits = []
     for path in files:
         for no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if SEND_CALLS.search(line):
                 hits.append(f"{path.relative_to(hr.REPO_ROOT)}:{no}: {line.strip()}")
     assert hits == []
+
+
+def test_bundled_code_is_the_wheel() -> None:
+    """上の検査から lib/vendor/ を外せるのは、中身が PyPI の wheel のままだから（詳しい確かめは test_vendor.py）。"""
+    for name in tv.PACKAGES:
+        tv.test_files_match_wheel_record(name)
+    tv.test_nothing_else_is_added()

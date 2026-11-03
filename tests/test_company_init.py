@@ -6,6 +6,7 @@
 - もう一度動かしたときは、足りないものだけを補う。すでにある設定は残して足す
 - だめなときは何も書かない。途中で失敗したら、書いたものを戻す
 - 会社のフォルダの外（プラグインの場所、HOME など）を変えない
+- 通信を断っても、準備なしに用意する（dulwich はプラグインに同梱している）
 送り先（リモート）の設定0件は test_T0_8.py で確かめる。
 """
 
@@ -14,14 +15,15 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
+import socket
 import subprocess
 
 import company_tool as ct
 import hook_runner as hr
 import pytest
-from company_tool import plugin_data  # noqa: F401（fixture）
 
-from lib import common_rules, company_init, runtime
+from lib import common_rules, company_init
 
 # DESIGN 4.5 の会社のフォルダの形（ここでは、道具の定数を使わずに書き写す）
 EXPECTED_FOLDERS = [
@@ -53,8 +55,8 @@ def settings_of(folder) -> dict:
 # ---- 一度に用意するもの ----
 
 
-def test_creates_everything_at_once(tmp_path, plugin_data) -> None:  # noqa: F811
-    env = ct.Env(tmp_path, plugin_data)
+def test_creates_everything_at_once(tmp_path) -> None:
+    env = ct.Env(tmp_path)
     folder = env.folder()
     out = ct.ok(env.run(folder))
 
@@ -73,14 +75,14 @@ def test_creates_everything_at_once(tmp_path, plugin_data) -> None:  # noqa: F81
     assert (folder / ".claude" / "settings.json").is_file()
     assert (folder / ".gitignore").is_file()
     # 用意した後は、履歴に残していない変更がない
-    assert ct.changed(plugin_data, folder) == []
+    assert ct.changed(folder) == []
 
 
-def test_marker_is_recognized_by_lib(tmp_path, plugin_data) -> None:  # noqa: F811
+def test_marker_is_recognized_by_lib(tmp_path) -> None:
     """hooks とスクリプトが使う目印の確かめ（lib/company.py）が、作ったフォルダを会社のフォルダとみなす。"""
     from lib import company, dates
 
-    env = ct.Env(tmp_path, plugin_data)
+    env = ct.Env(tmp_path)
     folder = env.folder()
     assert company.company_folder(folder) is None
     ct.ok(env.run(folder))
@@ -145,8 +147,8 @@ ALLOWED_PATHS = [
 ]
 
 
-def test_settings_follow_design_4_7(tmp_path, plugin_data) -> None:  # noqa: F811
-    env = ct.Env(tmp_path, plugin_data)
+def test_settings_follow_design_4_7(tmp_path) -> None:
+    env = ct.Env(tmp_path)
     folder = env.folder()
     ct.ok(env.run(folder))
     permissions = settings_of(folder)["permissions"]
@@ -178,9 +180,9 @@ def test_rule_regex_reads_patterns_like_gitignore() -> None:
     assert not rule_regex("/原本/**").match("/原本その2/a.pdf")
 
 
-def test_existing_settings_are_kept_in_company_folder(tmp_path, plugin_data) -> None:  # noqa: F811
+def test_existing_settings_are_kept_in_company_folder(tmp_path) -> None:
     """目印があるフォルダで足りないものを補うときは、すでにある設定を残して、決まりの分を足す。"""
-    env = ct.Env(tmp_path, plugin_data)
+    env = ct.Env(tmp_path)
     folder = env.folder()
     (folder / ".hojokin").mkdir()
     (folder / ".claude").mkdir()
@@ -232,8 +234,8 @@ TRACKED = [
 ]
 
 
-def test_gitignore_keeps_temporary_files_out_of_history(tmp_path, plugin_data) -> None:  # noqa: F811
-    env = ct.Env(tmp_path, plugin_data)
+def test_gitignore_keeps_temporary_files_out_of_history(tmp_path) -> None:
+    env = ct.Env(tmp_path)
     folder = env.folder()
     ct.ok(env.run(folder))
     for rel in IGNORED + TRACKED:
@@ -241,7 +243,7 @@ def test_gitignore_keeps_temporary_files_out_of_history(tmp_path, plugin_data) -
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
             path.write_text("試し", encoding="utf-8")
-    seen = ct.changed(plugin_data, folder)
+    seen = ct.changed(folder)
     for rel in IGNORED:
         assert rel not in seen, rel
     # 設定.json は最初の版に入っていて変わっていない。ほかは増えたものとして見える
@@ -250,9 +252,9 @@ def test_gitignore_keeps_temporary_files_out_of_history(tmp_path, plugin_data) -
         assert rel in seen, rel
 
 
-def test_first_versions_name_who(tmp_path, plugin_data) -> None:  # noqa: F811
+def test_first_versions_name_who(tmp_path) -> None:
     """前からあったファイルは「社長」、用意したものは「ツール」の版にする。作者と記録者は利用者の設定を使わない。"""
-    env = ct.Env(tmp_path, plugin_data)
+    env = ct.Env(tmp_path)
     folder = env.folder()
     (folder / "原本").mkdir()
     (folder / "原本" / "見積書.pdf").write_bytes(b"%PDF-1.4 mitsumori")
@@ -260,7 +262,7 @@ def test_first_versions_name_who(tmp_path, plugin_data) -> None:  # noqa: F811
     (folder / ".DS_Store").write_bytes(b"\0")
     ct.ok(env.run(folder))
 
-    log = ct.git_log(plugin_data, folder)
+    log = ct.git_log(folder)
     assert len(log) == 2
     tool, owner = log
     assert owner["author"] == owner["committer"] == "社長 <owner@hojokin.invalid>"
@@ -271,19 +273,19 @@ def test_first_versions_name_who(tmp_path, plugin_data) -> None:  # noqa: F811
     assert tool["message"].startswith("会社のフォルダを用意した")
 
 
-def test_empty_folder_has_one_version(tmp_path, plugin_data) -> None:  # noqa: F811
-    env = ct.Env(tmp_path, plugin_data)
+def test_empty_folder_has_one_version(tmp_path) -> None:
+    env = ct.Env(tmp_path)
     folder = env.folder()
     ct.ok(env.run(folder))
-    log = ct.git_log(plugin_data, folder)
+    log = ct.git_log(folder)
     assert [row["author"] for row in log] == ["ツール <tool@hojokin.invalid>"]
 
 
 # ---- もう一度動かしたとき ----
 
 
-def test_running_again_changes_nothing(tmp_path, plugin_data) -> None:  # noqa: F811
-    env = ct.Env(tmp_path, plugin_data)
+def test_running_again_changes_nothing(tmp_path) -> None:
+    env = ct.Env(tmp_path)
     folder = env.folder()
     ct.ok(env.run(folder))
     before = contents(folder)
@@ -293,11 +295,11 @@ def test_running_again_changes_nothing(tmp_path, plugin_data) -> None:  # noqa: 
     assert common_rules.TEXT in out
     # 名前と中身は同じ（.git/index は、dulwich が中身を変えずに書き直すので、更新時刻は見ない）
     assert contents(folder) == before
-    assert len(ct.git_log(plugin_data, folder)) == 1
+    assert len(ct.git_log(folder)) == 1
 
 
-def test_running_again_fills_what_is_missing(tmp_path, plugin_data) -> None:  # noqa: F811
-    env = ct.Env(tmp_path, plugin_data)
+def test_running_again_fills_what_is_missing(tmp_path) -> None:
+    env = ct.Env(tmp_path)
     folder = env.folder()
     ct.ok(env.run(folder))
     (folder / "入れ口").rmdir()
@@ -311,15 +313,15 @@ def test_running_again_fills_what_is_missing(tmp_path, plugin_data) -> None:  # 
     assert "足りなかったものを補いました" in out
     assert (folder / "入れ口").is_dir()
     assert "Edit(/原本/**)" in settings_of(folder)["permissions"]["deny"]
-    log = ct.git_log(plugin_data, folder)
+    log = ct.git_log(folder)
     assert len(log) == 2
     assert log[0]["author"].startswith("ツール") and log[0]["files"] == [".claude/settings.json"]
-    assert ct.changed(plugin_data, folder) == ["記録/社長のメモ.txt"]
+    assert ct.changed(folder) == ["記録/社長のメモ.txt"]
 
 
-def test_marker_without_the_rest_is_completed(tmp_path, plugin_data) -> None:  # noqa: F811
+def test_marker_without_the_rest_is_completed(tmp_path) -> None:
     """目印だけがある（手で作ったなど）フォルダでも、足りないものを用意する。"""
-    env = ct.Env(tmp_path, plugin_data)
+    env = ct.Env(tmp_path)
     folder = env.folder()
     (folder / ".hojokin").mkdir()
     out = ct.ok(env.run(folder))
@@ -341,7 +343,7 @@ LOCAL_WEAKENING = {
 }
 
 
-def _prepare(folder, case: str, data) -> None:
+def _prepare(folder, case: str) -> None:
     if case == "目印と同じ名前のファイル":
         (folder / ".hojokin").write_text("", encoding="utf-8")
     elif case == "原本という名前のファイル":
@@ -350,7 +352,7 @@ def _prepare(folder, case: str, data) -> None:
         (folder / ".gitignore").write_text("*.pdf\n", encoding="utf-8")
     elif case == "前からある.git":
         # 送り先のない .git（送り先のあるものは test_T0_8.py）
-        ct.venv_json(data, "from dulwich import porcelain\nporcelain.init(sys.argv[1])\nprint(1)", str(folder))
+        ct.py_json("from dulwich import porcelain\nporcelain.init(sys.argv[1])\nprint(1)", str(folder))
     elif case == "前からある設定":
         (folder / ".claude").mkdir()
         (folder / ".claude" / "settings.json").write_text('{"disableAllHooks": true}', encoding="utf-8")
@@ -376,13 +378,13 @@ def _prepare(folder, case: str, data) -> None:
     + list(LOCAL_WEAKENING)
     + ["読めない設定", "形の違う設定", "読めない.gitignore"],
 )
-def test_refuses_without_writing(tmp_path, plugin_data, case) -> None:  # noqa: F811
+def test_refuses_without_writing(tmp_path, case) -> None:
     """目印のないフォルダに、前からある .git・.gitignore・設定があるとき（決まりが気づかないうちに外れないよう）や、
     すでにあるものを読めないときは、何も書かずに断る。"""
-    env = ct.Env(tmp_path, plugin_data)
+    env = ct.Env(tmp_path)
     folder = env.folder()
     (folder / "メモ.txt").write_text("前からある", encoding="utf-8")
-    _prepare(folder, case, plugin_data)
+    _prepare(folder, case)
     before = hr.snapshot(folder)
     outside = env.outside()
 
@@ -394,9 +396,9 @@ def test_refuses_without_writing(tmp_path, plugin_data, case) -> None:  # noqa: 
     assert env.outside() == outside
 
 
-def test_local_settings_with_only_permissions_are_accepted(tmp_path, plugin_data) -> None:  # noqa: F811
+def test_local_settings_with_only_permissions_are_accepted(tmp_path) -> None:
     """「次から聞かない」で Claude Code が作る settings.local.json（許可の規則だけ）は、断らずに残す。"""
-    env = ct.Env(tmp_path, plugin_data)
+    env = ct.Env(tmp_path)
     folder = env.folder()
     (folder / ".claude").mkdir()
     local = '{"permissions": {"allow": ["WebFetch(domain:www.jgrants-portal.go.jp)"]}}'
@@ -404,7 +406,7 @@ def test_local_settings_with_only_permissions_are_accepted(tmp_path, plugin_data
     ct.ok(env.run(folder))
     assert (folder / ".claude" / "settings.local.json").read_text(encoding="utf-8") == local
     # 社長ごとの設定なので、版の履歴には入れない
-    assert all(".claude/settings.local.json" not in row["files"] for row in ct.git_log(plugin_data, folder))
+    assert all(".claude/settings.local.json" not in row["files"] for row in ct.git_log(folder))
 
 
 ROLLBACK_CODE = """
@@ -428,16 +430,16 @@ else:
 """
 
 
-def test_failure_on_the_way_undoes_everything(tmp_path, plugin_data) -> None:  # noqa: F811
+def test_failure_on_the_way_undoes_everything(tmp_path) -> None:
     """最後の版を残すときに失敗したら、目印・設定・フォルダ・履歴を戻し、前からあったものは元のまま。"""
-    env = ct.Env(tmp_path, plugin_data)
+    env = ct.Env(tmp_path)
     folder = env.folder()
     (folder / "メモ.txt").write_text("前からある", encoding="utf-8")
     (folder / "原本").mkdir()
     (folder / "原本" / "見積書.pdf").write_bytes(b"%PDF")
     before = contents(folder)
 
-    assert ct.venv_json(plugin_data, ROLLBACK_CODE, str(folder)) == "失敗した"
+    assert ct.py_json(ROLLBACK_CODE, str(folder)) == "失敗した"
     assert contents(folder) == before
     assert not (folder / ".hojokin").exists()
 
@@ -445,9 +447,9 @@ def test_failure_on_the_way_undoes_everything(tmp_path, plugin_data) -> None:  #
 # ---- 結果の文 ----
 
 
-def test_output_returns_common_rules(tmp_path, plugin_data) -> None:  # noqa: F811
+def test_output_returns_common_rules(tmp_path) -> None:
     """初めて使うセッションに、どの段階にも共通の決まりの短い文（1,200字ほど）を返す。"""
-    env = ct.Env(tmp_path, plugin_data)
+    env = ct.Env(tmp_path)
     folder = env.folder()
     out = ct.ok(env.run(folder))
     assert common_rules.TEXT in out
@@ -466,77 +468,109 @@ def test_output_returns_common_rules(tmp_path, plugin_data) -> None:  # noqa: F8
 # ---- 会社のフォルダの外、引数と場所 ----
 
 
-def test_nothing_outside_changes(tmp_path, plugin_data) -> None:  # noqa: F811
-    """プラグインの写し（__pycache__ を書かない）、HOME、一時ファイルの置き場、今いるフォルダ、隣のフォルダは変わらない。"""
-    env = ct.Env(tmp_path, plugin_data)
+def test_nothing_outside_changes(tmp_path) -> None:
+    """プラグインの写し（同梱の dulwich にも __pycache__ を書かない）、HOME、一時ファイルの置き場、今いるフォルダ、
+    隣のフォルダは変わらない。"""
+    env = ct.Env(tmp_path)
     folder = env.folder()
     neighbor = env.folder("隣の会社")
     (neighbor / "書類.pdf").write_bytes(b"%PDF")
     before = env.outside()
     neighbor_before = hr.snapshot(neighbor)
-    stamp = (runtime.venv_dir(plugin_data) / runtime.STAMP_FILE).read_bytes()
     ct.ok(env.run(folder))
     assert env.outside() == before
     assert hr.snapshot(neighbor) == neighbor_before
-    assert (runtime.venv_dir(plugin_data) / runtime.STAMP_FILE).read_bytes() == stamp
+    assert not list(env.plugin.rglob("__pycache__"))
 
 
-def test_without_data_dir_writes_nothing(tmp_path, plugin_data) -> None:  # noqa: F811
-    env = ct.Env(tmp_path, plugin_data)
+def test_plugin_data_is_not_used(tmp_path) -> None:
+    """プラグインのデータの置き場は使わない。前の呼び方（--data-dir）で、まだない置き場を渡しても、作らずに用意する。"""
+    env = ct.Env(tmp_path)
     folder = env.folder()
-    r = env.run(args=["--folder", str(folder)])
-    out = r.stdout.decode("utf-8")
-    assert r.returncode == 1, out
-    assert "CLAUDE_PLUGIN_DATA" in out and "何も変えていません" in out
-    assert list(folder.iterdir()) == []
+    data = tmp_path / "まだないデータの置き場"
+    ct.ok(env.run(args=["--data-dir", str(data), "--folder", str(folder)]))
+    assert (folder / ".hojokin").is_dir()
+    assert not data.exists()
 
 
-def test_folder_defaults(tmp_path, plugin_data) -> None:  # noqa: F811
-    """--folder がなければ CLAUDE_PROJECT_DIR、それもなければ今いるフォルダ。データの置き場も環境変数で受け付ける。"""
-    env = ct.Env(tmp_path, plugin_data)
+def test_folder_defaults(tmp_path) -> None:
+    """--folder がなければ CLAUDE_PROJECT_DIR、それもなければ今いるフォルダ。"""
+    env = ct.Env(tmp_path)
     by_cwd = env.folder("今いるフォルダ")
-    ct.ok(env.run(args=["--data-dir", str(plugin_data)], cwd=by_cwd))
+    ct.ok(env.run(args=[], cwd=by_cwd))
     assert (by_cwd / ".hojokin").is_dir()
 
     by_env = env.folder("開いたフォルダ")
-    ct.ok(env.run(args=[], extra_env={"CLAUDE_PLUGIN_DATA": str(plugin_data), "CLAUDE_PROJECT_DIR": str(by_env)}))
+    ct.ok(env.run(args=[], extra_env={"CLAUDE_PROJECT_DIR": str(by_env)}))
     assert (by_env / ".hojokin").is_dir()
     assert not (env.cwd / ".hojokin").exists()
 
 
-# ---- 補助プログラムの準備（通信する。開発用の Stop hook では流さない） ----
+# ---- 補助プログラム（同梱の dulwich）と通信 ----
 
 
-@pytest.mark.slow
-def test_setup_failure_writes_nothing(tmp_path, plugin_data) -> None:  # noqa: F811
-    """ライブラリを入れられないとき（通信できないなど）は、分かる文で止まり、会社のフォルダに何も書かない。"""
-    env = ct.Env(tmp_path, plugin_data)
+def test_offline_prefix_blocks_network() -> None:
+    """通信の断ち方そのものの確かめ：断たなければつながる手元の口（127.0.0.1）にも、つながらない。"""
+    prefix = ct.offline_prefix()
+    code = "import socket, sys\nsocket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=5).close()"
+    with socket.socket() as server:
+        try:
+            server.bind(("127.0.0.1", 0))
+        except OSError:
+            pytest.skip("テストを流す所の通信が、すでに断たれています")
+        server.listen()
+        port = str(server.getsockname()[1])
+        r = subprocess.run([hr.real_python(), "-I", "-B", "-c", code, port], capture_output=True, timeout=30)
+        assert r.returncode == 0, r.stderr.decode("utf-8")
+        r = subprocess.run([*prefix, hr.real_python(), "-I", "-B", "-c", code, port], capture_output=True, timeout=30)
+        assert r.returncode != 0
+        assert b"Operation not permitted" in r.stderr
+
+
+def test_creates_everything_offline(tmp_path) -> None:
+    """通信を断っても（eval の中や、通信できないパソコンで初めて使うとき）、準備なしに一度に用意する。"""
+    env = ct.Env(tmp_path)
     folder = env.folder()
-    data = tmp_path / "空のデータの置き場"
-    r = env.run(folder, data=data, extra_env={"PIP_NO_INDEX": "1"}, timeout=300)
+    (folder / "決算書_2025年度.pdf").write_bytes(b"%PDF-1.4 dummy")
+    before = env.outside()
+    out = ct.ok(env.run(folder, offline=True))
+    assert "会社のフォルダを用意しました" in out
+    assert common_rules.TEXT in out
+    for name in EXPECTED_FOLDERS + [".hojokin", ".git", ".claude"]:
+        assert (folder / name).is_dir(), name
+    assert settings_of(folder)["permissions"]["blockReadsOutsideWorkingDirectories"] is True
+    log = ct.git_log(folder)
+    assert [row["author"] for row in log] == ["ツール <tool@hojokin.invalid>", "社長 <owner@hojokin.invalid>"]
+    assert ct.changed(folder) == []
+    assert env.outside() == before
+
+
+@pytest.mark.parametrize(
+    "missing, said",
+    [
+        # すべて欠けている：何か書く前に読み込めない
+        ("dulwich", "何も変えていません"),
+        # 版を残した後に初めて読み込むモジュール（worktree.py の commit の中）だけが欠けている：書きかけたものを戻す
+        ("dulwich/gc.py", "書きかけたものを元に戻しました"),
+    ],
+)
+def test_missing_bundled_library_leaves_nothing(tmp_path, missing, said) -> None:
+    """同梱の dulwich が欠けていたら（壊れたプラグインなど）、分かる文で止まり、会社のフォルダにも外にも何も残さない。"""
+    env = ct.Env(tmp_path)
+    target = env.plugin / "lib" / "vendor" / missing
+    if target.is_dir():
+        shutil.rmtree(target)
+    else:
+        target.unlink()
+    folder = env.folder()
+    (folder / "メモ.txt").write_text("前からある", encoding="utf-8")
+    before = hr.snapshot(folder)
+    outside = env.outside()
+    # 利用者の site-packages にある dulwich で動いてしまわないようにする
+    r = env.run(folder, extra_env={"PYTHONNOUSERSITE": "1"})
     out = r.stdout.decode("utf-8")
     assert r.returncode == 1, out
-    assert "インターネット" in out and "何も変えていません" in out
-    assert list(folder.iterdir()) == []
-    # 次に動いたときに入れ直せるよう、入れ終わった印は残さない
-    assert not (runtime.venv_dir(data) / runtime.STAMP_FILE).exists()
-
-
-@pytest.mark.slow
-def test_broken_venv_is_rebuilt(tmp_path, plugin_data) -> None:  # noqa: F811
-    """venv が動かなくなっていたら（開発ツールの更新など）、作り直してから会社のフォルダを用意する。uv も git も使わない。"""
-    env = ct.Env(tmp_path, plugin_data)
-    folder = env.folder()
-    data = tmp_path / "データの置き場"
-    broken = runtime.venv_python(data)
-    broken.parent.mkdir(parents=True)
-    broken.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    broken.chmod(0o755)
-
-    out = ct.ok(env.run(folder, data=data, timeout=600))
-    assert "会社のフォルダを用意しました" in out
-    assert (runtime.venv_dir(data) / runtime.STAMP_FILE).read_text(encoding="utf-8") == "\n".join(
-        runtime.REQUIREMENTS) + "\n"
-    code = "from importlib.metadata import version; print(version('dulwich'))"
-    r = subprocess.run([str(runtime.venv_python(data)), "-B", "-c", code], capture_output=True)
-    assert r.stdout.decode().strip() == "0.24.10"
+    assert r.stderr == b"", r.stderr.decode("utf-8")
+    assert said in out and "入れ直して" in out
+    assert hr.snapshot(folder) == before
+    assert env.outside() == outside

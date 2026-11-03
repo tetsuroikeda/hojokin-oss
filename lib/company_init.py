@@ -15,7 +15,7 @@
 書いている途中で失敗したら、書いたものを戻す（目印だけ・設定だけが残り、決まりが中途半端に効かないように）。
 もう一度動かしたとき（目印があるとき）は、足りないものだけを補う。すでにある設定は残し、決まりの分を足す。
 
-版の履歴は dulwich を使うので、init() は venv の python から動かす（lib/runtime.py）。
+版の履歴は、同梱の dulwich（lib/vendor/）を lib/history.py から使う。init() のときだけ読み込む。
 それ以外（定数、設定の組み立て、事前の確かめ）は、標準のライブラリだけで使える。
 """
 
@@ -192,7 +192,7 @@ def _weakening_local_settings(path: Path) -> List[str]:
 def check(folder: Path, remotes_of: Optional[Callable[[Path], List[str]]] = None) -> List[str]:
     """会社のフォルダにできない理由の一覧。空なら作ってよい。何も書かない。
 
-    remotes_of は、すでにある .git の送り先の設定を数える関数（venv の中では lib.history を使う）。
+    remotes_of は、すでにある .git の送り先の設定を数える関数（init() では lib.history を使う）。
     """
     reasons = []
     if not folder.is_dir():
@@ -243,7 +243,7 @@ def check(folder: Path, remotes_of: Optional[Callable[[Path], List[str]]] = None
     return reasons
 
 
-# ---- 用意する（venv の python から） ----
+# ---- 用意する（同梱の dulwich を使う） ----
 
 
 class _Undo:
@@ -296,7 +296,7 @@ def _write_text(path: Path, text: str, undo: _Undo, added: List[str], name: str)
 
 def init(folder: Path) -> InitResult:
     """会社のフォルダを用意する。できないときは Refused（何も書いていない）。"""
-    from lib import history  # dulwich は venv にだけある
+    from lib import history  # 同梱の dulwich を sys.path に入れるので、使うときだけ読み込む
 
     folder = folder.resolve()
     reasons = check(folder, remotes_of=_remotes_of)
