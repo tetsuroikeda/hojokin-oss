@@ -90,7 +90,8 @@ def _word_paragraph(p: ElementTree.Element) -> str:
 
     def walk(node: ElementTree.Element) -> None:
         for child in node:
-            if child.tag == MC_FALLBACK:
+            # ルビ（ふりがな、<w:ruby> の中の <w:rt>）は本文ではないので読まない。親の文字（<w:rubyBase>）は読む
+            if child.tag in (MC_FALLBACK, W_NS + "rt"):
                 continue
             if child.tag == W_NS + "t" and child.text:
                 parts.append(child.text)
@@ -135,6 +136,21 @@ def word_text(path: Path) -> str:
     return "\n".join(lines)
 
 
+def _excel_string(item: ElementTree.Element) -> str:
+    """共有の文字（<si>）か、セルの中の文字（<is>）の本文。
+
+    本文は、直下の <t> と、書式つきの部分（<r>）の <t> だけ。日本語の Excel では、本文の後に
+    フリガナ（<rPh> の中の <t>）が続くので、<rPh> は読まない（読むと「事業者名ジギョウシャメイ」になる）。
+    """
+    parts: List[str] = []
+    for child in item:
+        if child.tag == S_NS + "t":
+            parts.append(child.text or "")
+        elif child.tag == S_NS + "r":
+            parts.extend(t.text or "" for t in child.findall(S_NS + "t"))
+    return "".join(parts)
+
+
 def excel_sheets(path: Path) -> List[Tuple[str, str]]:
     """Excel のシートごとの（シートの名前、文字）。セルは、行ごとにタブでつなぐ。数式は、残っている値を使う。"""
     try:
@@ -143,7 +159,7 @@ def excel_sheets(path: Path) -> List[Tuple[str, str]]:
             shared: List[str] = []
             if "xl/sharedStrings.xml" in names:
                 for si in _xml(archive, "xl/sharedStrings.xml").findall(S_NS + "si"):
-                    shared.append("".join(t.text or "" for t in si.iter(S_NS + "t")))
+                    shared.append(_excel_string(si))
             rels = {}
             for rel in _xml(archive, "xl/_rels/workbook.xml.rels").findall(PKG_REL_NS + "Relationship"):
                 target = rel.get("Target", "")
@@ -160,7 +176,8 @@ def excel_sheets(path: Path) -> List[Tuple[str, str]]:
                     for c in row.findall(S_NS + "c"):
                         kind = c.get("t")
                         if kind == "inlineStr":
-                            cells.append("".join(t.text or "" for t in c.iter(S_NS + "t")))
+                            inline = c.find(S_NS + "is")
+                            cells.append(_excel_string(inline) if inline is not None else "")
                             continue
                         v = c.find(S_NS + "v")
                         if v is None or v.text is None:

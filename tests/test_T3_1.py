@@ -28,6 +28,8 @@ import mimetypes
 import subprocess
 import threading
 import warnings
+import zipfile
+from xml.etree import ElementTree
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -222,6 +224,43 @@ def check_text_dirs(company: Company, case: str, docs: list) -> None:
             assert sum(p["文字数"] for p in index["ページ"]) > 1000
 
 
+S_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+
+def phonetic_strings(xlsx: Path) -> list:
+    """Excel の共有の文字のうち、フリガナ（<rPh>）の付いたものの（本文、フリガナ）。道具とは別に、ここで読む。"""
+    with zipfile.ZipFile(xlsx) as archive:
+        root = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
+    found = []
+    for si in root.findall(S_NS + "si"):
+        reading = "".join(t.text or "" for ph in si.findall(S_NS + "rPh") for t in ph.findall(S_NS + "t"))
+        if not reading:
+            continue
+        base = "".join(t.text or "" for t in si.findall(S_NS + "t"))
+        base += "".join(t.text or "" for r in si.findall(S_NS + "r") for t in r.findall(S_NS + "t"))
+        found.append((base, reading))
+    return found
+
+
+def sheet_texts(company: Company, case: str, doc_id: str) -> list:
+    """Excel のシートごとの文字（見出しの行を含む）。"""
+    doc_dir = company.texts(case) / doc_id
+    index = load(doc_dir / "ページの対応.json")
+    assert index["種類"] == "Excel"
+    return [(doc_dir / p["ファイル"]).read_text(encoding="utf-8") for p in index["ページ"]]
+
+
+def check_no_phonetic(company: Company, case: str, doc_id: str, xlsx: Path) -> None:
+    """Excel の本文に、フリガナが混ざらない（根拠の文をそのページの文字と照らすため。DESIGN 9.2）。"""
+    pairs = phonetic_strings(xlsx)
+    assert len(pairs) >= 20, xlsx.name  # フリガナの付いた文字が多い資料で確かめる
+    text = "\n".join(sheet_texts(company, case, doc_id))
+    for base, reading in pairs:
+        if base.strip():
+            assert base in text, base  # 本文は残る
+        assert base + reading not in text, (base, reading)  # 本文の後ろにフリガナがつながらない
+
+
 # ---- 手元の写しで確かめる（決まった中身） ----
 
 
@@ -291,6 +330,14 @@ def test_documents_and_case_folder_latest_round(tmp_path, site) -> None:
     assert "補助上限額" in page9 and "1,500 万円" in page9  # 要領8 p.9（SPEC 5.1）
     excel = load(company.texts(SHORYOKUKA_CASE) / "Excelその3" / "ページの対応.json")
     assert excel["種類"] == "Excel" and excel["ページ数"] >= 4  # 別紙1〜4 を含むシートごと
+    # Excel の本文にフリガナが混ざらない（「事業者名ジギョウシャメイ」にならない）。数字と単位もそのまま
+    plan3 = DOWNLOADS / "shoryokuka_ippan" / "yoshiki_business_plan_part3_ippan_08.xlsx"
+    check_no_phonetic(company, SHORYOKUKA_CASE, "Excelその3", plan3)
+    sheets = sheet_texts(company, SHORYOKUKA_CASE, "Excelその3")
+    assert "\n事業者名\n" in sheets[0] and "ジギョウシャメイ" not in sheets[0]
+    plan3_text = "\n".join(sheets)
+    assert "\n5\t 年\n" in plan3_text and "年ネン" not in plan3_text
+    assert "\n業務に要していた時間\t" in plan3_text and "時間セツビ" not in plan3_text
     schedule = (company.texts(SHORYOKUKA_CASE) / "スケジュール" / "本文.txt").read_text(encoding="utf-8")
     assert "第8回" in schedule and "2026年10月16日" in schedule
 
@@ -319,6 +366,7 @@ def test_same_round_and_printed_page_offsets(tmp_path, site) -> None:
     for doc_id, offset in JIZOKUKA_OFFSETS.items():
         assert offsets[doc_id] == offset, doc_id
     check_text_dirs(company, JIZOKUKA_CASE, data["資料"])
+    check_no_phonetic(company, JIZOKUKA_CASE, "判定シート20", DOWNLOADS / "jizokuka_20" / "r6_chantei_ip20.xlsx")
     # 印刷された番号で引くと、そのページの中身がある
     assert "事業概要" in page_file(company, JIZOKUKA_CASE, "要領20", 3)  # PDF の4ページ目
     assert "Q3-16" in page_file(company, JIZOKUKA_CASE, "Q&A20", 6)  # PDF の11ページ目
@@ -338,6 +386,66 @@ def test_rerun_keeps_documents(tmp_path, site) -> None:
     assert "前と同じ" in out(r)
     assert hr.snapshot(company.case(SHORYOKUKA_CASE)) == first
     assert {e["取得日"] for e in company.doc_list(SHORYOKUKA_CASE)["資料"]} == {TODAY}
+
+
+def set_today(company: Company, day: str) -> None:
+    settings = company.folder / ".hojokin" / "設定.json"
+    data = load(settings)
+    data["今日の日付"] = day
+    settings.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def test_rerun_next_year_keeps_case_folder(tmp_path, site) -> None:
+    """年が変わってから取り直しても（2027-01-10）、別の案件を作らず、前の案件のフォルダを使う。"""
+    company = Company(tmp_path)
+    data = local_list(site, SHORYOKUKA_LIST)
+    assert company.fetch(data, "--case-round", "第9回").returncode == 0
+    first = hr.snapshot(company.case(SHORYOKUKA_CASE))
+    set_today(company, "2027-01-10")
+
+    # 案件の名前を渡さなくても、同じ略称・枠・回のフォルダを使う
+    r = company.fetch(data, "--case-round", "第9回")
+    text = out(r)
+    assert r.returncode == 0, text
+    assert f"案件：{SHORYOKUKA_CASE}" in text and "前と同じ" in text
+    assert "2027_" not in text
+    assert sorted(p.name for p in (company.folder / "案件").iterdir()) == [SHORYOKUKA_CASE]
+    assert sorted(p.name for p in (company.folder / "記録" / "資料の本文").iterdir()) == [SHORYOKUKA_CASE]
+    assert hr.snapshot(company.case(SHORYOKUKA_CASE)) == first
+    assert {e["取得日"] for e in company.doc_list(SHORYOKUKA_CASE)["資料"]} == {TODAY}
+
+    # 前の資料の一覧の「案件」を渡しても同じ。改訂は、前のものと比べて知らせる
+    guideline = urlsplit(data["資料"][0]["URL"]).path
+    site.put(guideline, site.routes[guideline][0] + b"\n% revised\n", "application/pdf")
+    r = company.fetch(data, "--case-round", "第9回", "--case", company.doc_list(SHORYOKUKA_CASE)["案件"])
+    text = out(r)
+    assert r.returncode == 1, text
+    assert "前と中身が違う" in text and "改訂" in text
+    assert sorted(p.name for p in (company.folder / "案件").iterdir()) == [SHORYOKUKA_CASE]
+
+    # 別の回・別の枠は、別の案件
+    seido = dict(data["制度"], 公募回="第9回")
+    assert case_folder.existing_cases(company.folder, seido) == [SHORYOKUKA_CASE]
+    assert case_folder.existing_cases(company.folder, dict(seido, 公募回="第10回")) == []
+    assert case_folder.existing_cases(company.folder, dict(seido, 枠="デジタル枠")) == []
+
+
+def test_two_case_folders_need_case_name(tmp_path, site) -> None:
+    """同じ略称・枠・回の案件のフォルダが2つあれば、どちらか分からないので、案件の名前なしでは何もしない。"""
+    company = Company(tmp_path)
+    data = local_list(site, SHORYOKUKA_LIST)
+    assert company.fetch(data, "--case-round", "第9回").returncode == 0
+    other = "2027_省力化（一般型）第9回"
+    (company.folder / "案件" / other).mkdir()
+    before = hr.snapshot(company.folder)
+    r = company.fetch(data, "--case-round", "第9回")
+    text = out(r)
+    assert r.returncode == 2, text
+    assert "何も変えていません" in text and SHORYOKUKA_CASE in text and other in text
+    assert hr.snapshot(company.folder) == before
+    r = company.fetch(data, "--case-round", "第9回", "--case", SHORYOKUKA_CASE)
+    assert r.returncode == 0, out(r)
+    assert f"案件：{SHORYOKUKA_CASE}" in out(r)
 
 
 def test_changed_document_is_not_overwritten(tmp_path, site) -> None:

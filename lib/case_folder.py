@@ -37,16 +37,51 @@ def safe_name(text: str) -> str:
     return name
 
 
+def _case_label(seido: Dict) -> str:
+    """案件の名前の、年の後ろの部分（略称（枠）公募回）。"""
+    short = seido.get("略称") or seido.get("名前") or ""
+    frame = seido.get("枠") or ""
+    round_ = seido.get("公募回") or ""
+    label = f"{short}（{frame}）" if frame else short
+    return f"{label}{round_}"
+
+
 def case_name(seido: Dict, year: int) -> str:
     """案件のフォルダの名前（DESIGN 4.5 の形）。
 
     seido は「略称」（なければ「名前」）・「枠」・「公募回」を持つ辞書。例：2026_省力化（一般型）第9回
     """
-    short = seido.get("略称") or seido.get("名前") or ""
-    frame = seido.get("枠") or ""
-    round_ = seido.get("公募回") or ""
-    label = f"{short}（{frame}）" if frame else short
-    return safe_name(f"{year}_{label}{round_}")
+    return safe_name(f"{year}_{_case_label(seido)}")
+
+
+def existing_cases(company: Path, seido: Dict) -> List[str]:
+    """`案件/` の中で、同じ略称・枠・公募回の案件のフォルダ（年だけが違ってよい）の名前。
+
+    年は、案件を始めた年。年が変わってから取り直しても（採択後の手引きを取る、改訂を確かめる など）、
+    前のフォルダを使うために探す。
+    """
+    base = company / CASES_DIR
+    if not base.is_dir():
+        return []
+    pattern = re.compile(r"^[0-9]{4}_" + re.escape(safe_name(f"0000_{_case_label(seido)}")[5:]) + r"$")
+    names = (unicodedata.normalize("NFC", p.name) for p in base.iterdir() if p.is_dir())
+    return sorted(n for n in names if pattern.match(n))
+
+
+def find_or_name_case(company: Path, seido: Dict, year: int) -> str:
+    """案件のフォルダの名前を決める。同じ略称・枠・公募回のフォルダが1つあれば、それを使う。
+
+    なければ、今日の年で新しい名前を作る。2つ以上あれば、どれか分からないので CaseError
+    （呼ぶ側は「案件の名前」を渡し直す）。
+    """
+    found = existing_cases(company, seido)
+    if len(found) == 1:
+        return found[0]
+    if len(found) > 1:
+        raise CaseError(
+            "同じ制度・枠・回の案件のフォルダが2つ以上あります（" + "、".join(found) + "）。"
+            "どの案件のものか、案件の名前で指定してください")
+    return case_name(seido, year)
 
 
 def case_dir(company: Path, name: str) -> Path:

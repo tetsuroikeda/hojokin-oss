@@ -11,11 +11,14 @@
 - --case-round：申請する回（案件の回）。一覧の「制度」の「公募回」の代わりに使う。
   申請する回の資料がまだ公表されていないときは、直近回の資料の一覧に、申請する回をここで渡す。
   結果に「直近回である第◯回の資料に基づいています」と出る。
+- --case：案件の名前（`案件/` の下のフォルダの名前）。取り直すときは、前の 資料の一覧.json の「案件」を渡す。
+  渡さなければ、同じ略称・枠・回の案件のフォルダがあればそれを使い（年が変わってから取り直しても、別の案件を作らない）、
+  なければ「今日の年_略称（枠）回」で作る。同じ略称・枠・回のフォルダが2つ以上あれば、--case がないと何もしない。
 - Claude が Bash で動かすコマンドには、CLAUDE_PROJECT_DIR の環境変数が入らないので、--folder で渡す。
 - 通信は、標準のライブラリだけで行う。PDF を文字にする pypdf は、プラグインに同梱している（lib/vendor/）。
 - 終了コード：0 資料がすべてそろい、文字にできた。
   1 そろわなかった（取れなかった、前と中身が違う、文字にできなかった）か、補助プログラムが動かない。
-  2 動かさなかった（会社のフォルダでない、一覧の形が違う）。何も書いていない。
+  2 動かさなかった（会社のフォルダでない、一覧の形が違う、案件のフォルダを決められない）。何も書いていない。
 """
 
 import sys
@@ -36,6 +39,7 @@ def parse(argv):
     parser.add_argument("--folder", help="会社のフォルダ（${CLAUDE_PROJECT_DIR}）。なければ今いるフォルダ")
     parser.add_argument("--list", required=True, help="取る資料の一覧（JSON のファイル。- なら標準入力）")
     parser.add_argument("--case-round", help="申請する回（例：第9回）。一覧の制度の公募回の代わりに使う")
+    parser.add_argument("--case", help="案件の名前（例：2026_省力化（一般型）第9回）。一覧の「案件の名前」の代わりに使う")
     return parser.parse_args(argv)
 
 
@@ -66,6 +70,8 @@ def main(argv) -> int:
         data = read_list(args.list)
         if args.case_round and isinstance(data, dict) and isinstance(data.get("制度"), dict):
             data["制度"] = dict(data["制度"], 公募回=args.case_round)
+        if args.case is not None and isinstance(data, dict):
+            data["案件の名前"] = args.case
         official_docs.load_list(data)
     except (OSError, ValueError) as e:  # ListError と JSON の読み違いも ValueError
         print(f"公式資料を取りませんでした。何も変えていません。\n\n取る資料の一覧を読めませんでした（{e}）。")
@@ -73,6 +79,9 @@ def main(argv) -> int:
 
     try:
         result = official_docs.fetch_all(folder, data)
+    except official_docs.case_folder.CaseError as e:  # 案件のフォルダを決められない（何か書く前に止まる）
+        print(f"公式資料を取りませんでした。何も変えていません。\n\n案件のフォルダを決められませんでした（{e}）。")
+        return 2
     except Exception as e:  # 書けない場所、思わぬ形の資料など
         print(f"公式資料を取る途中で止まりました（{type(e).__name__}: {e}）。"
               "置き終えた資料はそのまま残っています。もう一度動かすと、足りない分だけ取ります。")

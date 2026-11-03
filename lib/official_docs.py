@@ -117,7 +117,8 @@ def load_list(data: object) -> Dict:
 
     {
       "制度": {"名前": "中小企業省力化投資補助金", "略称": "省力化", "枠": "一般型", "種類": "補助金", "公募回": "第9回"},
-      "案件の名前": "2026_省力化（一般型）第9回",   ← なくてよい（年_略称（枠）公募回 で作る）
+      "案件の名前": "2026_省力化（一般型）第9回",   ← なくてよい（同じ略称（枠）公募回のフォルダがあればそれ、
+                                                     なければ 今日の年_略称（枠）公募回 で作る）
       "資料": [{"id": "要領8", "名前": "公募要領", "公募回": "第8回", "URL": "https://…", "版": "…", "注記": "…"}, …]
     }
     制度の「公募回」は、申請する回（案件の回）。資料の「公募回」は、その資料そのものの回。
@@ -389,7 +390,11 @@ def fetch_all(company: Path, data: Dict, downloader: Callable[[str, Path], str] 
     data = load_list(data)
     seido = data["制度"]
     today = dates.today(company)
-    case = case_folder.safe_name(data.get("案件の名前") or case_folder.case_name(seido, today.year))
+    # 案件の名前がなければ、同じ制度・枠・回の案件のフォルダを使う（年が変わってから取り直しても、別の案件を作らない）
+    if data.get("案件の名前"):
+        case = case_folder.safe_name(data["案件の名前"])
+    else:
+        case = case_folder.find_or_name_case(company, seido, today.year)
     result = FetchResult(case=case, seido=seido)
     result.made = case_folder.ensure_case(company, case)
     official = case_folder.official_dir(company, case)
