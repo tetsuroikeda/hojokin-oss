@@ -1,0 +1,14 @@
+{
+  "name": "hojokin-e4",
+  "description": "実験 E4 の試しのマーケットプレイス（hook がデスクトップアプリで動くかを見る）",
+  "owner": {
+    "name": "hojokin-oss"
+  },
+  "plugins": [
+    {
+      "name": "e4-probe",
+      "source": "./e4-probe",
+      "description": "4つの場面の hook がログを書くだけの試しのプラグイン"
+    }
+  ]
+}

@@ -26,6 +26,19 @@
       "Bash(gh pr merge:*)"
     ]
   },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/tests/dev_stop_hook.py\"",
+            "timeout": 660
+          }
+        ]
+      }
+    ]
+  },
   "worktree": {
     "baseRef": "head"
   }

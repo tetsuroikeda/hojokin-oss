@@ -1,0 +1,8 @@
+{
+  "name": "e6-probe",
+  "version": "0.1.0",
+  "description": "実験 E6 の試しのプラグイン。会社のフォルダの設定、skill の allowed-tools、原本を戻す Stop hook を見る",
+  "author": {
+    "name": "hojokin-oss"
+  }
+}

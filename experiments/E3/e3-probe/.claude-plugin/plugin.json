@@ -1,0 +1,9 @@
+{
+  "name": "e3-probe",
+  "version": "0.0.1",
+  "description": "実験 E3 の試しのプラグイン。plugin eval の中で scaffold・hook・スクリプト・subagent・AskUserQuestion がどう動くかを記録する",
+  "author": {
+    "name": "hojokin-oss"
+  },
+  "license": "MIT"
+}

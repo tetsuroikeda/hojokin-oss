@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "会社の記録",
+  "description": "その会社について覚えたこと（DESIGN 10章）。置き場所は 記録/会社の記録.json。どの項目も id・覚えた日・出典を必ず持つ。変更の履歴は Git に持ち、ここには持たない。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["スキーマの版", "項目"],
+  "properties": {
+    "スキーマの版": { "const": 1 },
+    "項目": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/事実" },
+          { "$ref": "#/$defs/書き方の決まり" },
+          { "$ref": "#/$defs/不備と差し戻し" },
+          { "$ref": "#/$defs/申請と採否" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "識別子": { "type": "string", "pattern": "^[^\\s]+$" },
+    "日付": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "文": { "type": "string", "minLength": 1 },
+    "出典": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["種類"],
+      "properties": {
+        "種類": { "enum": ["原本", "質問", "社長の手直し", "社長の発言"] },
+        "ファイル": { "$ref": "#/$defs/文", "description": "会社のフォルダの中の場所" },
+        "ページ": { "type": "integer", "minimum": 1 },
+        "質問": { "$ref": "#/$defs/文" },
+        "答えた日": { "$ref": "#/$defs/日付" },
+        "発言": { "$ref": "#/$defs/文" },
+        "日付": { "$ref": "#/$defs/日付" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "種類": { "const": "原本" } } },
+          "then": { "required": ["ファイル"] }
+        },
+        {
+          "if": { "properties": { "種類": { "const": "質問" } } },
+          "then": { "required": ["質問", "答えた日"] }
+        },
+        {
+          "if": { "properties": { "種類": { "const": "社長の手直し" } } },
+          "then": { "required": ["ファイル", "日付"] }
+        },
+        {
+          "if": { "properties": { "種類": { "const": "社長の発言" } } },
+          "then": { "required": ["発言", "日付"] }
+        }
+      ]
+    },
+    "事実": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "種類", "名前", "値", "変わりうる", "出典", "覚えた日", "最後に確かめた日", "状態"],
+      "properties": {
+        "id": { "$ref": "#/$defs/識別子" },
+        "種類": { "const": "事実" },
+        "名前": { "$ref": "#/$defs/文" },
+        "値": {},
+        "変わりうる": { "type": "boolean", "description": "従業員数・売上など、変わりうる情報か" },
+        "出典": { "$ref": "#/$defs/出典" },
+        "覚えた日": { "$ref": "#/$defs/日付" },
+        "最後に確かめた日": { "$ref": "#/$defs/日付" },
+        "状態": { "enum": ["有効", "食い違いあり"] }
+      }
+    },
+    "書き方の決まり": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "種類", "区分", "内容", "きっかけ", "出典", "覚えた日"],
+      "properties": {
+        "id": { "$ref": "#/$defs/識別子" },
+        "種類": { "const": "書き方の決まり" },
+        "区分": { "enum": ["直した表現", "好む言い方", "避けたい言い方", "書き方の方針", "構成"] },
+        "内容": { "$ref": "#/$defs/文" },
+        "きっかけ": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["発言や手直し", "日付"],
+          "properties": {
+            "案件": { "$ref": "#/$defs/文" },
+            "発言や手直し": { "$ref": "#/$defs/文" },
+            "日付": { "$ref": "#/$defs/日付" }
+          }
+        },
+        "出典": { "$ref": "#/$defs/出典" },
+        "覚えた日": { "$ref": "#/$defs/日付" }
+      }
+    },
+    "不備と差し戻し": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "種類", "案件", "手続きの段階", "内容", "原因", "次に注意する書類", "照合の決まり", "出典", "受け取った日", "覚えた日"],
+      "properties": {
+        "id": { "$ref": "#/$defs/識別子" },
+        "種類": { "const": "不備と差し戻し" },
+        "案件": { "$ref": "#/$defs/文" },
+        "手続きの段階": { "$ref": "#/$defs/文" },
+        "内容": { "$ref": "#/$defs/文" },
+        "原因": { "$ref": "#/$defs/文" },
+        "次に注意する書類": { "type": "array", "items": { "$ref": "#/$defs/文" } },
+        "照合の決まり": { "$ref": "#/$defs/文" },
+        "出典": { "$ref": "#/$defs/出典", "description": "差し戻しの文面や写真の原本" },
+        "受け取った日": { "$ref": "#/$defs/日付" },
+        "覚えた日": { "$ref": "#/$defs/日付" }
+      }
+    },
+    "申請と採否": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "種類", "案件", "結果", "指摘された審査項目", "出典", "通知の日", "覚えた日"],
+      "properties": {
+        "id": { "$ref": "#/$defs/識別子" },
+        "種類": { "const": "申請と採否" },
+        "案件": { "$ref": "#/$defs/文" },
+        "結果": { "enum": ["採択", "不採択"] },
+        "審査コメント": { "type": "string" },
+        "指摘された審査項目": { "type": "array", "items": { "$ref": "#/$defs/文" } },
+        "出典": { "$ref": "#/$defs/出典", "description": "採否の通知の原本" },
+        "通知の日": { "$ref": "#/$defs/日付" },
+        "覚えた日": { "$ref": "#/$defs/日付" }
+      }
+    }
+  }
+}

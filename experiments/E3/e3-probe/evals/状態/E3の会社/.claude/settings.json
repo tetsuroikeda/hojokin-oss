@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./記録/秘密.txt)",
+      "Read(記録/秘密.txt)"
+    ]
+  }
+}
