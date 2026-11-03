@@ -5,17 +5,24 @@
   ここにも、ほかのどこにも作らない（DESIGN 5章「履歴を外に送らない」）。
 - だれが変えたかは、作者の名前（ツール・社長）で残す。利用者の Git の設定（名前、署名など）は使わない。
 
-dulwich は venv（lib/runtime.py）にだけ入っているので、このモジュールは venv の python から使う。
+dulwich はプラグインに同梱している（lib/vendor/。Python だけの形）。通信も venv の準備もなしに、
+/usr/bin/python3（3.9）で動く。プラグインの場所に __pycache__ を書かないよう、python3 は -B で動かす。
 """
 
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import List, Optional, Sequence
 
-from dulwich import porcelain
-from dulwich.repo import Repo
+# 同梱の dulwich を読み込む。社長のパソコンに別の版が入っていても同梱の版を使うよう、先頭に入れる
+VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
+if str(VENDOR_DIR) not in sys.path:
+    sys.path.insert(0, str(VENDOR_DIR))
+
+from dulwich import porcelain  # noqa: E402
+from dulwich.repo import Repo  # noqa: E402
 
 TOOL = "ツール"
 OWNER = "社長"
