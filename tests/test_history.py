@@ -506,8 +506,8 @@ def test_leftover_locks_of_a_stopped_hook_are_cleared(company) -> None:
 
 def test_record_recovers_after_the_watch_kills_it(company) -> None:
     """見張りが本当に止めても（kill -9）、次の場面で錠を片付け、残っていたものをすべて残す。"""
-    for i in range(6000):
-        company.write(f"記録/資料の本文/{vt.CASE}/要領8/p{i:04d}.txt", f"ページ {i}\n" * 20)
+    for i in range(12000):
+        company.write(f"記録/資料の本文/{vt.CASE}/要領8/p{i:05d}.txt", f"ページ {i}\n" * 20)
     context = vt.start_context(company.start(env={"HOJOKIN_WATCH_SECONDS": "1"}))
     assert "補助プログラム（Python）が時間内に終わらなかった" in context, context
     assert company.pending() != []
@@ -516,7 +516,7 @@ def test_record_recovers_after_the_watch_kills_it(company) -> None:
     assert time.monotonic() - start < 20
     assert company.pending() == []
     assert vt.git_leftovers(company.folder) == []
-    assert len([r for r in company.log() if r["書類"].startswith("記録/資料の本文/")]) == 6000
+    assert len([r for r in company.log() if r["書類"].startswith("記録/資料の本文/")]) == 12000
     assert company.start() is None
     fsck(company)
 
