@@ -103,7 +103,8 @@ def test_claude_matches_follows_claude_code_rules() -> None:
 
 
 def test_company_folder_with_python_runs_python_hooks(tmp_path) -> None:
-    """Python が動けば Python の hook に任せる。外を読む道具だけを拒み、Bash を含めほかは通し、何も書かない。"""
+    """Python が動けば Python の hook に任せる。外を読む道具と、画面入力の守りに当たるブラウザの道具
+    （控えのないクリック・入力、computer use。tests/test_browser_guard.py）を拒み、Bash を含めほかは通す。"""
     plugin = hr.copy_plugin(tmp_path / "plugin")
     results = run_all(tmp_path, "本物", plugin)
     assert results
@@ -117,9 +118,15 @@ def test_company_folder_with_python_runs_python_hooks(tmp_path) -> None:
             assert hso["permissionDecision"] == "deny", (tool, hso)
             assert "会社のフォルダの外は読めません" in hso["permissionDecisionReason"]
             denied.add(tool)
+        elif event == "PreToolUse" and ("Claude_Browser" in tool or "claude-in-chrome" in tool or "computer-use" in tool):
+            hso = json.loads(r.stdout.decode("utf-8"))["hookSpecificOutput"]
+            assert hso["permissionDecision"] == "deny", (tool, hso)
+            assert "hojokin プラグインの決まり" in hso["permissionDecisionReason"]
+            denied.add(tool)
         else:
             assert r.stdout == b"", (event, tool, r.stdout.decode("utf-8"))
-    assert denied == {"Read", "Grep", "Glob"}
+    assert denied == {"Read", "Grep", "Glob", "mcp__Claude_Browser__computer",
+                      "mcp__claude-in-chrome__form_input", "mcp__computer-use__left_click"}
     assert (tmp_path / "python-ran").exists()
     # -B で動かすので、プラグインのフォルダに __pycache__ を書かない
     assert not list(plugin.rglob("__pycache__"))

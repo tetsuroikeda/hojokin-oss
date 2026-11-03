@@ -1,0 +1,129 @@
+# 模擬の申請画面（mock/。D11a）を、デスクトップアプリの内蔵ブラウザの read_page（filter は all）で読んだ結果（2026-11-04）。
+# 長いので、選択欄の選択肢と、同じ形の行の一部を抜いた。番号と形は、読んだときのまま。「#」で始まる行は読み飛ばされる。
+note "模擬画面（実在のシステムではありません）。架空の練習用の画面で、入れた内容はこのパソコンの中にだけ記録されます。" [ref_1]
+main [ref_2]
+ heading "省力化投資補助金（一般型）第8回 応募申請の模擬画面（D11a・1画面版）" [ref_3]
+ generic "進み具合（模擬・1画面版）：❶ 宣誓・手引き → ❷ 基本情報 → ❸ 要件 → ❹ 加点項目 → ❺ 事業計画名及び作成者情報 → ❻ 最低賃金及び特例希望 → ❼ 事業計画数値 → ❽ 経費明細｜" [ref_4]
+ form [ref_5]
+  button "戻る" [ref_6] type="submit"
+  button "一時保存" [ref_7] type="submit"
+  button "次へ" [ref_8] type="submit"
+  region [ref_9]
+   heading "❶ 宣誓・手引き" [ref_10]
+   heading "1-2. 宣誓事項" [ref_14]
+   generic "模擬の宣誓事項です（本物の文ではありません）。担当者が自分で読んでチェックを入れる欄です。" [ref_15]
+   label [ref_16]
+    checkbox "on" [ref_17] type="checkbox"
+    generic "宣誓事項1：公募要領を理解し、申請者自身が計画を作って申請することに同意する" [ref_18]
+   label [ref_19]
+    checkbox "on" [ref_20] type="checkbox"
+    generic "宣誓事項2：補助の対象となる事業者と事業に当たることを確認した" [ref_21]
+   label [ref_22]
+    checkbox "on" [ref_23] type="checkbox"
+    generic "宣誓事項3：不正があったときは、交付の取消しや公表などの措置に従うことを誓約する" [ref_24]
+   label [ref_25]
+    checkbox "on" [ref_26] type="checkbox"
+    generic "宣誓事項4：計画の達成状況の報告と、求められた調査に協力することに同意する" [ref_27]
+   label [ref_28]
+    checkbox "on" [ref_29] type="checkbox"
+    generic "宣誓事項5：反社会的勢力に当たらないことを宣誓する" [ref_30]
+  region [ref_31]
+   heading "❷ 基本情報" [ref_32]
+   heading "2-1. 事業者情報" [ref_33]
+   generic "事業形態" [ref_34]
+   label [ref_35]
+    generic "組織形態" [ref_36]
+    combobox "--選択してください--" [ref_37]
+     option "--選択してください--" (selected)
+     option "1-1.中小企業者（組合関連以外）"
+     option "2-1.企業組合"
+     generic "--選択してください--" [ref_38]
+     generic "1-1.中小企業者（組合関連以外）" [ref_39]
+     generic "2-1.企業組合" [ref_40]
+   label [ref_53]
+    generic "法人番号" [ref_54]
+    textbox [ref_55] type="text"
+   label [ref_56]
+    generic "事業者名（法人名／屋号・商号）" [ref_57]
+    textbox [ref_58] type="text"
+   label [ref_89]
+    generic "創業・設立日（西暦）" [ref_90]
+    textbox "YYYY/MM/DD" [ref_91] type="text" placeholder="YYYY/MM/DD"
+   label [ref_147]
+    generic "市区町村" [ref_148]
+    textbox [ref_149] type="text"
+   label [ref_150]
+    textbox [ref_151] type="text"
+   heading "2-4. 担当者情報" [ref_164]
+   label [ref_181]
+    generic "担当者メールアドレス" [ref_182]
+    textbox [ref_183] type="text"
+   button "認証コード発行" [ref_187] type="submit"
+  region [ref_188]
+   heading "❸ 要件" [ref_189]
+   label [ref_191]
+    checkbox "on" [ref_192] type="checkbox"
+    generic "小規模企業者・小規模事業者：該当する" [ref_193]
+   heading "3-2. みなし同一法人でないことの確認" [ref_197]
+   label [ref_198]
+    checkbox "on" [ref_199] type="checkbox"
+    generic "みなし同一法人でないことの確認：みなし同一法人による申請でないことを宣誓する" [ref_200]
+   heading "3-6. 国の他の助成制度との重複確認" [ref_217]
+   generic "国の他の助成制度との重複" [ref_219]
+   label [ref_220]
+    radio "はい" [ref_221] type="radio"
+    generic "国の他の助成制度との重複：はい" [ref_222]
+   label [ref_223]
+    radio "いいえ" [ref_224] type="radio"
+    generic "国の他の助成制度との重複：いいえ" [ref_225]
+  region [ref_226]
+   heading "❹ 加点項目" [ref_227]
+   heading "①事業承継又はM&Aを実施した事業者" [ref_228]
+   label [ref_229]
+    checkbox "on" [ref_230] type="checkbox"
+    generic "事業承継又はM&A加点：過去3年以内に事業承継やM&Aで経営資源を引き継いだ" [ref_231]
+   label [ref_234]
+    checkbox "on" [ref_235] type="checkbox"
+    generic "事業継続力強化計画加点：有効な期間の認定を受けている" [ref_236]
+   label [ref_299]
+    checkbox "on" [ref_300] type="checkbox"
+    generic "省力化ナビ加点：省力化ナビで解決策のPDFを取得している" [ref_301]
+  region [ref_502]
+   heading "❼ 事業計画数値" [ref_503]
+   table [ref_518]
+    generic "売上高" [ref_525]
+    textbox "売上高（基準年度）" [ref_526] type="text"
+   button "計算" [ref_612] type="submit"
+  region [ref_689]
+   heading "❾ 書類添付" [ref_690]
+   label [ref_692]
+    generic "履歴事項全部証明書" [ref_693]
+    button [ref_694] type="file"
+   generic "対応形式：PDF" [ref_695]
+   label [ref_737]
+    generic "事業計画書（その1・その2）" [ref_738]
+    button [ref_739] type="file"
+   generic "対応形式：PDF" [ref_740]
+  region [ref_833]
+   heading "❿ アンケート" [ref_834]
+   label [ref_837]
+    checkbox "経営戦略・経営計画" [ref_838] type="checkbox"
+    generic "経営戦略・経営計画" [ref_839]
+  region [ref_899]
+   heading "⓫ メールアドレス認証" [ref_900]
+   link "❷ 基本情報へ戻る" [ref_906] href="#s2"
+  region [ref_907]
+   heading "⓬ 確認" [ref_908]
+   heading "❶ 宣誓・手引き 修正" [ref_910]
+    link "修正" [ref_911] href="#s1"
+   button "提出" [ref_954] type="submit"
+  button "戻る" [ref_955] type="submit"
+  button "一時保存" [ref_956] type="submit"
+  button "次へ" [ref_957] type="submit"
+
+Viewport: 1024x768
+
+Tab Context:
+- Executed on tabId: seed
+- Available tabs:
+  • tabId seed: "【模擬画面】申請の画面（省力化・一般型）" ("http://127.0.0.1:8791/shinsei")
