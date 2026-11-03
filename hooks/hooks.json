@@ -1,5 +1,5 @@
 {
-  "description": "hojokin の hooks。会社のフォルダの目印（.hojokin/）がなければ何もしない。Python が動かないときは、書き込みとブラウザの操作を拒む",
+  "description": "hojokin の hooks。会社のフォルダの目印（.hojokin/）がなければ何もしない。Python が動かないか時間内に終わらないときは、書き込み・Bash・ブラウザの道具を拒み、開いたときに準備の案内を渡す。会社のフォルダの外を読む道具も拒む",
   "hooks": {
     "SessionStart": [
       {
@@ -17,9 +17,15 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "^(Write|Edit|NotebookEdit)$|Claude_Browser|claude-in-chrome|computer-use",
+        "matcher": "^(Write|Edit|NotebookEdit|Bash)$|Claude_Browser|claude-in-chrome|computer-use",
         "hooks": [
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" PreToolUse guard", "timeout": 10 }
+        ]
+      },
+      {
+        "matcher": "Read|NotebookRead|Grep|Glob|LS",
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" PreToolUse", "timeout": 10 }
         ]
       }
     ],

@@ -1,7 +1,8 @@
 """PreToolUse（Claude が道具を使う前）。DESIGN 5章の止める決まりを、ここに置く。
 
-hooks.json の matcher で、書き込みの道具（Write・Edit・NotebookEdit）と、
-ブラウザの道具・画面を操作する機能だけを受け取る（Python が動かないときは run.sh が拒む）。
+hooks.json の matcher で、書き込みの道具（Write・Edit・NotebookEdit）、Bash、
+ブラウザの道具・画面を操作する機能を受け取る（Python が動かないときは run.sh が拒む）。
+別の matcher で、読む道具（Read・Grep・Glob など）も受け取り、会社のフォルダの外を読むことを拒む（outside_read.py）。
 版の名前のファイルを拒むこと、画面入力の守り（S4）を、後のタスクでここに足す。
 
 会社のフォルダの外への書き込みは、設定の blockWritesOutsideWorkingDirectories で止める決まりだが、
@@ -13,6 +14,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Optional
+
+import outside_read
 
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 
@@ -60,6 +63,9 @@ def _outside_write(data: dict, folder: Path) -> Optional[dict]:
 
 
 def handle(data: dict, folder: Path) -> Optional[dict]:
-    if data.get("tool_name") in WRITE_TOOLS:
+    tool = data.get("tool_name")
+    if tool in WRITE_TOOLS:
         return _outside_write(data, folder)
+    if tool in outside_read.READ_TOOLS:
+        return outside_read.check(data, folder)
     return None

@@ -63,7 +63,7 @@ def test_hooks_only_in_hooks_json() -> None:
         assert "hooks" not in keys, doc
 
 
-@pytest.mark.parametrize("python", ["本物", "なし", "壊れた"])
+@pytest.mark.parametrize("python", ["本物", "なし", "壊れた", "固まる"])
 @pytest.mark.parametrize("project_dir_env", [True, False], ids=["CLAUDE_PROJECT_DIRあり", "今いるフォルダだけ"])
 def test_hooks_do_nothing_outside_company_folder(tmp_path, python, project_dir_env) -> None:
     plugin = hr.copy_plugin(tmp_path / "plugin")
@@ -75,8 +75,10 @@ def test_hooks_do_nothing_outside_company_folder(tmp_path, python, project_dir_e
     before = hr.snapshot(tmp_path)
 
     count = 0
+    tools = set()
     for event, payload in hr.event_inputs(folder):
         for command in hr.hook_commands(event, payload.get("tool_name", "")):
+            tools.add(payload.get("tool_name", event))
             r = hr.run(command, payload, plugin=plugin, folder=folder, path=path, home=home, data=data,
                        project_dir_env=project_dir_env)
             assert r.returncode == 0, (event, payload.get("tool_name"), r)
@@ -84,8 +86,10 @@ def test_hooks_do_nothing_outside_company_folder(tmp_path, python, project_dir_e
             assert r.stderr == b"", (event, payload.get("tool_name"), r.stderr.decode("utf-8"))
             count += 1
 
-    # 5つの場面と、守る道具の PreToolUse をすべて動かした
+    # 5つの場面と、守る道具（書き込み・Bash・ブラウザ）と外を読む道具の PreToolUse をすべて動かした
     assert count >= len(hr.EVENTS) + 5
+    assert {"Write", "Edit", "NotebookEdit", "Bash", "Read", "Grep", "Glob",
+            "mcp__Claude_Browser__computer", "mcp__computer-use__left_click"} <= tools
     assert not ran.exists(), "目印のないフォルダで Python が動いた"
     assert hr.snapshot(tmp_path) == before
 
