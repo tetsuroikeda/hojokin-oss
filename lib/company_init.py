@@ -1,4 +1,4 @@
-"""会社のフォルダを作る（DESIGN 4.5・4.7、TASKS S5）。
+"""会社のフォルダを作る（DESIGN 4.5・4.7、TASKS S5・S5b）。
 
 社長の了承を得てから、道具（skills/kiroku/scripts/init_company.py）が呼ぶ。次を一度に用意する。
 1. フォルダの形（4.5）：入れ口・原本と6つの区分・案件・記録。
@@ -7,10 +7,15 @@
 3. 版の履歴（送り先のない Git）と .gitignore。前からあったファイルは「社長」、用意したものは「ツール」の版にする。
 4. 目印（`.hojokin/`）：最後に作る。目印の中の設定.json も履歴に入れ、履歴から戻しても目印が残るようにする。
 
-書く前に、読むだけで確かめる。だめなら何も書かない。
+書く前に、読むだけで確かめる。だめなら何も書かない。断るときは、新しいフォルダで始め、
+元の書類は場所を伝えてもらって取り込むよう案内する（DESIGN 4.7）。
+- ホームのフォルダ（とそれを含むフォルダ）とディスクの根は、目印があっても断る（lib/sync_folder.py）。
 - 目印のないフォルダに、前からある .git・.gitignore・.claude/settings.json があれば断る。
-  残すと、hooks を止める設定や、原本を履歴から外す行などが、気づかないうちに残るため（作者が決めるまでの仮の扱い）。
+  残すと、hooks を止める設定や、原本を履歴から外す行などが、気づかないうちに残るため。
   .claude/settings.local.json は、「次から聞かない」を選ぶと Claude Code が作るので、守りを弱める項目があるときだけ断る。
+- 同期されるフォルダ（Google ドライブ、iCloud Drive、Dropbox など）は、版の持ち方を経営者に選んでもらうために断る。
+  ここに Git の形で作ると、版の履歴ごとクラウドに上がる。同期されるフォルダの形（版をファイルで残す）は M0c で作る。
+  すでに Git の形の会社のフォルダ（目印と .git がある）なら、足りないものを補い、移すよう勧める注意を添える。
 - 送り先のある .git は、目印があっても断る（T0-8）。
 書いている途中で失敗したら、書いたものを戻す（目印だけ・設定だけが残り、決まりが中途半端に効かないように）。
 もう一度動かしたとき（目印があるとき）は、足りないものだけを補う。すでにある設定は残し、決まりの分を足す。
@@ -27,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from lib import common_rules, company
+from lib import common_rules, company, sync_folder
 
 INBOX_DIR = "入れ口"
 ORIGINALS_DIR = "原本"
@@ -86,11 +91,12 @@ EXISTING_MESSAGE = "会社のフォルダにする前からあったファイル
 
 
 class Refused(Exception):
-    """会社のフォルダにできない。何も書いていない。"""
+    """会社のフォルダにできない。何も書いていない。synced は、同期されるフォルダだったときのサービスと場所。"""
 
-    def __init__(self, reasons: List[str]) -> None:
+    def __init__(self, reasons: List[str], synced: Optional[sync_folder.Synced] = None) -> None:
         super().__init__("\n".join(reasons))
         self.reasons = reasons
+        self.synced = synced
 
 
 @dataclass
@@ -100,6 +106,7 @@ class InitResult:
     added: List[str] = field(default_factory=list)
     existing_files: int = 0
     commits: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
 
 
 # ---- 設定と .gitignore の組み立て（標準のライブラリだけ） ----
@@ -189,14 +196,30 @@ def _weakening_local_settings(path: Path) -> List[str]:
     return found
 
 
-def check(folder: Path, remotes_of: Optional[Callable[[Path], List[str]]] = None) -> List[str]:
+def synced_reason(synced: sync_folder.Synced) -> str:
+    return (
+        f"このフォルダは、{synced.service}で同期されています（同期される場所：{synced.root}）。"
+        f"ここに会社のフォルダを作ると、書類と版の履歴がすべて{synced.service}に上がるため、"
+        "版の持ち方を先に選んでもらいます。"
+    )
+
+
+def check(folder: Path, remotes_of: Optional[Callable[[Path], List[str]]] = None,
+          synced: Optional[sync_folder.Synced] = None) -> List[str]:
     """会社のフォルダにできない理由の一覧。空なら作ってよい。何も書かない。
 
     remotes_of は、すでにある .git の送り先の設定を数える関数（init() では lib.history を使う）。
+    synced は、フォルダが同期されるフォルダの中なら、そのサービスと場所（init() では lib.sync_folder で見分ける）。
     """
     reasons = []
     if not folder.is_dir():
         return [f"フォルダがありません：{folder}"]
+    not_allowed = sync_folder.not_allowed_reason(folder)
+    if not_allowed:
+        # ホームのフォルダやディスクの根は、ほかを見る前に断る（中の .git などを数えても意味がない）
+        return [not_allowed]
+    if synced is not None and not (company.is_company_folder(folder) and (folder / ".git").is_dir()):
+        reasons.append(synced_reason(synced))
     if not company.is_company_folder(folder):
         for name, what in ((".git", "版の履歴"), (GITIGNORE, "版の履歴に入れないものの一覧"), (CLAUDE_SETTINGS, "Claude Code の設定")):
             if (folder / name).exists():
@@ -299,11 +322,19 @@ def init(folder: Path) -> InitResult:
     from lib import history  # 同梱の dulwich を sys.path に入れるので、使うときだけ読み込む
 
     folder = folder.resolve()
-    reasons = check(folder, remotes_of=_remotes_of)
+    synced = sync_folder.synced(folder) if folder.is_dir() else None
+    reasons = check(folder, remotes_of=_remotes_of, synced=synced)
     if reasons:
-        raise Refused(reasons)
+        raise Refused(reasons, synced=synced)
 
     result = InitResult(folder=folder, already=company.is_company_folder(folder))
+    if synced is not None:
+        # すでに Git の形の会社のフォルダが、同期されるフォルダの中にある（後から移した、など）
+        result.warnings.append(
+            f"注意：このフォルダは、{synced.service}で同期されています（同期される場所：{synced.root}）。"
+            f"書類と版の履歴（.git）が{synced.service}に上がっています。同期されるフォルダ用の版の持ち方は、"
+            "まだ用意できていません。同期されない場所に新しいフォルダを作って移すよう、社長に勧めてください。"
+        )
     undo = _Undo()
     try:
         # .gitignore を先に書き、前からあったファイルを見分けるときに、履歴に入れないものを除く
@@ -379,6 +410,8 @@ SETTINGS_SUMMARY = (
 def report(result: InitResult) -> str:
     """道具の出力。作ったものと、どの段階にも共通の決まりの短い文（初めて使うセッションに渡す）。"""
     lines = []
+    if result.warnings:
+        lines += result.warnings + [""]
     if result.already:
         lines.append(f"このフォルダは、すでに会社のフォルダです（{result.folder}）。")
         if result.added:
@@ -409,8 +442,32 @@ def report(result: InitResult) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def refusal(folder: Path, reasons: List[str]) -> str:
+NEW_FOLDER_GUIDE = (
+    "会社のフォルダにする新しい空のフォルダを作り、そのフォルダで Claude を開き直してもらってください。",
+    "このフォルダにある書類は、新しいフォルダで Claude に場所を伝えてもらえば取り込みます"
+    "（写すだけで、元のファイルは動かしません）。",
+)
+
+
+def refusal(folder: Path, reasons: List[str], synced: Optional[sync_folder.Synced] = None) -> str:
+    """断ったときの道具の出力。理由と、社長への案内（新しいフォルダで始め、書類は取り込む）。
+
+    同期されるフォルダのときは、版の持ち方を経営者に選んでもらう問いを添える（DESIGN 4.7）。
+    """
     lines = [f"このフォルダ（{folder}）は、会社のフォルダにできませんでした。何も変えていません。", "", "理由："]
     lines += [f"- {r}" for r in reasons]
-    lines += ["", "社長に理由を伝え、会社のフォルダにする別の新しいフォルダで Claude を開き直すよう案内してください。"]
+    lines += [""]
+    if synced is None:
+        lines += ["社長に理由を伝え、次のように案内してください。"]
+        lines += [f"- {g}" for g in NEW_FOLDER_GUIDE]
+    else:
+        lines += [
+            "社長に理由を伝え、書類と版の履歴をどこに置くかを選んでもらってください（選択肢の画面で1問）。",
+            "1. パソコンの中だけに置く（勧める案）：同期されない場所に新しい空のフォルダを作り、"
+            "そのフォルダで Claude を開き直す。書類は、新しいフォルダで場所を伝えてもらえば取り込む"
+            "（写すだけで、元のファイルは動かさない）。版の履歴はインターネットに送らない。",
+            f"2. このまま{synced.service}に置く：書類と版の履歴が{synced.service}に上がり、"
+            "そのアカウントで見られる人やパソコンから読めるようになる。版は1つずつファイルとして残す形になるが、"
+            "この形はまだ用意できていないため、今は選べない。用意できるまでは 1 を勧める。",
+        ]
     return "\n".join(lines) + "\n"

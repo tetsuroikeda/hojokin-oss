@@ -3,7 +3,8 @@
 - Python だけで動く Git（dulwich）で、会社のフォルダの .git に残す。git のコマンドは使わない（実験 E5）。
 - 送り先（リモート）は持たせない。送る・取ってくる機能（push・fetch・pull・clone、送り先を足すこと）は、
   ここにも、ほかのどこにも作らない（DESIGN 5章「履歴を外に送らない」）。
-- だれが変えたかは、作者の名前（ツール・社長）で残す。利用者の Git の設定（名前、署名など）は使わない。
+- だれが変えたかは、作者の名前（ツール・社長）で残す。利用者の Git の設定（名前、署名、改行の扱いなど）と、
+  全体の除外の指定（~/.config/git/ignore、core.excludesFile）は読まない（DESIGN 10章。下の差し替え）。
 
 dulwich はプラグインに同梱している（lib/vendor/。Python だけの形）。通信も venv の準備もなしに、
 /usr/bin/python3（3.9）で動く。プラグインの場所に __pycache__ を書かないよう、python3 は -B で動かす。
@@ -22,7 +23,38 @@ if str(VENDOR_DIR) not in sys.path:
     sys.path.insert(0, str(VENDOR_DIR))
 
 from dulwich import porcelain  # noqa: E402
+from dulwich.config import StackedConfig  # noqa: E402
+from dulwich.ignore import IgnoreFilterManager  # noqa: E402
 from dulwich.repo import Repo  # noqa: E402
+
+DEFAULT_BRANCH = b"master"
+
+
+# ---- 利用者の Git の設定と、全体の除外の指定を読まない（DESIGN 10章） ----
+#
+# dulwich は、そのままでは次を読む。
+# - 利用者の Git の設定（~/.gitconfig、$XDG_CONFIG_HOME/git/config、GIT_CONFIG_GLOBAL、/etc/gitconfig）。
+#   core.autocrlf（改行を書き換えて残す）、core.excludesFile（全体の除外の指定の場所）などが、版の中身に効く。
+# - 全体の除外の指定（core.excludesFile、なければ ~/.config/git/ignore）と、.git/info/exclude。
+#   社長のパソコンに「*.pdf」のような行があると、書類が黙って履歴から抜ける。
+# 同梱の dulwich は書き換えない（wheel のまま。tests/test_vendor.py）ので、ここで振る舞いを差し替える。
+# このプラグインで dulwich を使うのは会社のフォルダの履歴だけなので、クラスごと差し替えてよい。
+
+
+def _local_config_stack(self: Repo) -> StackedConfig:
+    """会社のフォルダの .git/config だけを読む設定（利用者とパソコン全体の Git の設定は読まない）。"""
+    local = self.get_config()
+    return StackedConfig([local], writable=local)
+
+
+def _ignore_from_repo(cls, repo: Repo) -> IgnoreFilterManager:
+    """版の履歴に入れないものは、会社のフォルダの .gitignore だけで決める。"""
+    ignorecase = repo.get_config().get_boolean((b"core",), b"ignorecase", False)
+    return cls(repo.path, [], ignorecase)
+
+
+Repo.get_config_stack = _local_config_stack  # type: ignore[method-assign]
+IgnoreFilterManager.from_repo = classmethod(_ignore_from_repo)  # type: ignore[method-assign]
 
 TOOL = "ツール"
 OWNER = "社長"
@@ -40,7 +72,8 @@ def open_or_init(folder: Path) -> Repo:
     """会社のフォルダの履歴を開く。なければ作る（送り先は持たない）。"""
     if git_dir(folder).exists():
         return Repo(str(folder))
-    return porcelain.init(str(folder))
+    # ブランチの名前も、利用者の設定（init.defaultBranch）によらず決める
+    return Repo.init(str(folder), default_branch=DEFAULT_BRANCH)
 
 
 def remotes(repo: Repo) -> List[str]:

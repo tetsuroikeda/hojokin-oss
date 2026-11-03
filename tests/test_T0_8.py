@@ -10,6 +10,8 @@ SPEC：会社のフォルダの Git の設定を見る。合格ライン：送�
 名前に remote を含む項目）が0件であることを確かめる。もう一度動かした後も、前からあったファイルを残した後も同じ。
 通信を断って作ったとき（eval の中や、通信できないパソコンで初めて使うとき）も同じ。
 すでに送り先のある .git があるフォルダは、会社のフォルダにしない（そのまま使うと、送り先が残るため）。
+同期されるフォルダ（Google ドライブなど）には、経営者が版の持ち方を選ぶまで履歴を作らない（S5b）。
+①②③の段と同意の記録（②の期限の一覧、③の GitHub）は K4 で足す。
 DESIGN 5章「版の操作はスクリプトで行い、送る機能を持たせない」も、コードを読んで確かめる（同梱の dulwich の中は除く）。
 """
 
@@ -128,6 +130,27 @@ def test_no_remote_after_running_again(tmp_path) -> None:
     out = ct.ok(env.run(folder))
     assert "すでに会社のフォルダです" in out
     assert_no_remote(folder)
+
+
+@pytest.mark.parametrize("place", [
+    "Library/CloudStorage/GoogleDrive-taro@example.com/マイドライブ/山田製作所",
+    "Library/Mobile Documents/com~apple~CloudDocs/山田製作所",
+    "Dropbox/山田製作所",
+])
+def test_no_history_is_made_in_synced_folder(tmp_path, place) -> None:
+    """同期されるフォルダ（中身がクラウドに上がる）には、経営者が選ぶまで版の履歴を作らない（S5b）。
+    同期されるフォルダの形（版をファイルで残す）ができるまで、そこに Git の形の履歴を置いて上げてしまわない。"""
+    env = ct.Env(tmp_path)
+    folder = env.home / place
+    folder.mkdir(parents=True)
+    (folder / "決算書_2025年度.pdf").write_bytes(b"%PDF-1.4 dummy")
+    before = hr.snapshot(folder)
+    r = env.run(folder)
+    out = r.stdout.decode("utf-8")
+    assert r.returncode == 2, out
+    assert "同期されています" in out and "何も変えていません" in out
+    assert not (folder / ".git").exists()
+    assert hr.snapshot(folder) == before
 
 
 SET_REMOTE_CODE = """
