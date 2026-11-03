@@ -19,7 +19,9 @@
 2. 確かめる（check）
    - 形（スキーマ）が合うか。
    - 重要な項目（SPEC F3・DESIGN 9.2 の、締切・補助上限・補助率・数値の要件・必須書類・補助の対象にならない経費）が、
-     1件以上あり、どの値も「値」か「要確認」で埋まっているか（「読み取れない」や、値のない確認済みは、埋まっていない）。
+     1件以上あり、どの値も「値」か「要確認」で埋まっているか（「読み取れない」や、値が空の確認済み・資料で食い違いは、埋まっていない。
+     空は null・空白だけの文字・[]・{}・中の値がどれも空のもの。読み取り役が「読み取れない」にせず空の値を返したときに、
+     確認済みの空欄のまま社長に渡さないため）。
    - 出典のない値の数。読み取れないでない値のうち、出典か根拠の文がないもの、出典の資料が「資料」にないもの。
 3. 段階のフォルダを作る（make_stage_folders）
    - 制度データの「手続きの段階」のうち「フォルダ」のある段階から作る（DESIGN 4.5）。中は「申請書」と「添付する書類」。
@@ -392,12 +394,34 @@ def _important_values(data: Dict) -> Dict[str, Tuple[int, List[Tuple[str, Any]]]
     return out
 
 
+def _is_empty(value: Any) -> bool:
+    """値が空か：null、空白だけの文字、[]、{}、中の値がどれも空の [ ] や { }（{"日時": ""} など）。"""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, list):
+        return all(_is_empty(v) for v in value)
+    if isinstance(value, dict):
+        return all(_is_empty(v) for v in value.values())
+    return False
+
+
 def _filled(node: Any) -> bool:
+    """値で埋まっているか。確認済み・資料で食い違いは、値が空でないこと。要確認は、社長に確かめてもらう印なので埋まっているに数える。"""
     if not _is_sourced(node):
         return False
     if node["状態"] == CHECK:
         return True
-    return node["状態"] in (CONFIRMED, CONFLICT) and node.get("値") is not None
+    return node["状態"] in (CONFIRMED, CONFLICT) and not _is_empty(node.get("値"))
+
+
+def _unfilled_reason(node: Any) -> str:
+    if not _is_sourced(node):
+        return "値がない"
+    if node["状態"] in (CONFIRMED, CONFLICT):
+        return "値が空"  # 「読み取れない」にせず、空の値を確認済みで返した（読み取り直すか、読み取れないにする）
+    return str(node["状態"])
 
 
 def _source_problems(item: Dict, doc_ids: set) -> List[str]:
@@ -467,8 +491,7 @@ def check(data: Any) -> CheckResult:
             if _filled(node):
                 item.filled += 1
             else:
-                state = node.get("状態") if isinstance(node, dict) else None
-                item.unfilled.append(f"{place}（{state or '値がない'}）")
+                item.unfilled.append(f"{place}（{_unfilled_reason(node)}）")
         result.important.append(item)
     return result
 

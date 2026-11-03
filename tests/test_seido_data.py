@@ -14,6 +14,7 @@
 - 確かめる（--check。--merge の後にも出す）
   - 重要な項目（締切・補助上限・補助率・数値の要件・必須書類・補助の対象にならない経費）が、1件以上あり、
     どの値も「値」か「要確認」で埋まっているか。読み取れない値、1件もない項目は、足りないとして終了コード 1
+  - 確認済み（資料で食い違いも）なのに値が空のもの（""・空白だけ・[]・{}・中がどれも空）も、埋まっていないとして終了コード 1
   - 出典のない値の数（出典がない、根拠の文がない、出典の資料が「資料」にない）。1つでもあれば終了コード 1
   - 確かめるだけでは、制度データを書き換えない
 - 段階のフォルダ（DESIGN 4.5）
@@ -328,6 +329,53 @@ def test_unreadable_important_value_is_not_filled(company) -> None:
     assert (company.folder / DATA_REL).is_file()  # 制度データは置いた
     assert any(u["項目"] == "書類「登記簿の写し」の内容" and u["理由"] == "資料のこのページが読めない"
                for u in company.data()["読み取れなかった項目"])
+
+
+def test_empty_confirmed_important_value_is_not_filled(company) -> None:
+    """読み取り役が「読み取れない」にせず空の文字を確認済みで返しても、埋まっているに数えない（差し戻し1回目）。"""
+    a = chapter_a()
+    a["制度データ"]["数値の要件"][0]["基準"]["値"] = ""
+    b = chapter_b()
+    b["制度データ"]["書類"][1]["内容"]["値"] = ""
+    # 裏取りの道具は今、空の文字を照らさずに通す（確認済みのまま。M2b への申し送り）。
+    # 道具が要確認にするよう直したら、ここで終了コード 1 になるので、この確かめも見直す
+    company.read(a, code=0)
+    company.read(b, code=0)
+    company.read(chapter_c())
+    out = check_code(company.tool("--merge"), 1)
+    data = company.data()
+    assert data["書類"][1]["内容"]["状態"] == "確認済み" and data["書類"][1]["内容"]["値"] == ""
+    assert important_row(out, "必須書類") == [2, 4, 3, 1]
+    assert important_row(out, "数値の要件") == [1, 2, 1, 1]   # 基準と、元の数字の決め方
+    assert "必須書類の埋まっていない値：書類「登記簿の写し」の内容（値が空）" in out
+    assert "数値の要件の埋まっていない値：数値の要件「労働時間あたりの出来高」の基準（値が空）" in out
+    assert "まだ足りないところがあります" in out
+    assert "重要な項目はすべて値か「要確認」で埋まり" not in out
+    assert (company.folder / DATA_REL).is_file()  # 制度データは置いた（足りないところを読み直して、まとめ直す）
+
+
+@pytest.mark.parametrize("empty", ["", "　 \n", [], {}, {"日時": ""}, [""]])
+def test_check_counts_every_empty_form_as_unfilled(company, empty) -> None:
+    """空は null・空白だけの文字・[]・{}・中の値がどれも空のもの。確かめるだけ（--check）でも埋まっていないに数え、書き換えない。"""
+    read_all(company)
+    check_code(company.tool("--merge"), 0)
+    data = company.data()
+    data["書類"][1]["内容"]["値"] = copy.deepcopy(empty)
+    data["決まった期日"][0]["日時"]["値"] = copy.deepcopy(empty)
+    data["補助の対象にならない経費"][0]["内容"]["状態"] = "資料で食い違い"
+    data["補助の対象にならない経費"][0]["内容"]["値"] = copy.deepcopy(empty)
+    path = company.folder / DATA_REL
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    before = path.read_bytes()
+    out = check_code(company.tool("--check"), 1)
+    assert important_row(out, "必須書類") == [2, 4, 3, 1]
+    assert important_row(out, "締切") == [1, 1, 0, 1]
+    assert important_row(out, "補助の対象にならない経費") == [2, 3, 2, 1]
+    assert "必須書類の埋まっていない値：書類「登記簿の写し」の内容（値が空）" in out
+    assert "締切の埋まっていない値：決まった期日「申請の締切」の日時（値が空）" in out
+    assert "補助の対象にならない経費の埋まっていない値：補助の対象にならない経費「中古の機械の購入費」の内容（値が空）" in out
+    assert "まだ足りないところがあります" in out
+    assert path.read_bytes() == before
 
 
 def test_missing_important_item_is_reported(company) -> None:
