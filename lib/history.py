@@ -508,6 +508,8 @@ class _WalkIgnore(IgnoreFilterManager):
     （dulwich は、ない以外の失敗をそのまま上げるため、そのままでは1つのフォルダで場面ごと止まる）。"""
 
     def _load_path(self, path: str):
+        if path and os.path.islink(os.path.join(self._top_path, path.rstrip("/"))):
+            return None  # 別名は1つのファイルとして扱うので、指す先の .gitignore は読まない
         try:
             return super()._load_path(path)
         except OSError as error:

@@ -12,6 +12,10 @@
   残しきれない分は次の場面に回し、回した場面のだれ・理由で残す。大きすぎるファイルは残さず、開いたときに伝える。
 - 見張りに止められて .git に錠が残っても、次の場面で片付けて残す。版を残す処理が落ちても hook は落とさず、
   「Python が動かない」の案内ではなく、版の記録が止まったことを開いたときに伝える。
+- 読めないファイル・フォルダ（権限がない、読む途中で失敗した）と、比べた後に消えたファイルは、そのファイルだけを
+  飛ばし、ほかは残す（版の名前の確かめも続ける）。読めないものは消したことにせず、開いたときに伝え、読めるように
+  なったら、最初に見つけた場面のだれ・理由で残す。
+- Stop で続けさせている間に社長が止めて次を送っても、続きの中でツールが変えた分は「ツール」として残す。
 
 hook は hooks.json のコマンドから、Claude Code と同じ入力で動かす（tests/version_tool.py）。
 """
@@ -836,6 +840,21 @@ def test_folder_that_cannot_be_read_is_skipped_and_told(company, mode) -> None:
     assert company.say("直した") is None
     assert len(company.versions()) == count
     assert company.pending() == []
+
+
+def test_link_to_a_folder_that_cannot_be_read_is_recorded_as_a_link(company) -> None:
+    """読めないフォルダを指す別名（シンボリックリンク）は、Git と同じく別名そのものとして残す（指す先は読まない）。"""
+    company.write("入れ口/鍵付き/見積書.pdf", b"%PDF-1.4")
+    (company.folder / "記録" / "見積書の場所").symlink_to("../入れ口/鍵付き")
+    locked = company.folder / "入れ口" / "鍵付き"
+    locked.chmod(0)
+    try:
+        assert company.say("入れた") is None
+        assert "記録/見積書の場所" in company.tracked()
+        assert "入れ口/鍵付き/見積書.pdf" not in company.tracked()
+        assert "入れ口/鍵付き/" in vt.start_context(company.start())
+    finally:
+        locked.chmod(0o755)
 
 
 def test_files_that_vanish_while_recording_are_skipped(company) -> None:
