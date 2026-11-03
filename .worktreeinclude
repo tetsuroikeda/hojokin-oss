@@ -1,0 +1,3 @@
+# worktree を作るときに写す、Git の外のファイル（.gitignore と同じ書き方）
+# 公式サイトから取った公募要領や様式
+downloads/
