@@ -17,7 +17,9 @@
       "mcp__terminal__read_terminal",
       "mcp__ccd_pr__get_status",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(claude plugin validate:*)"
     ],
     "ask": [
       "Bash(git push:*)",
