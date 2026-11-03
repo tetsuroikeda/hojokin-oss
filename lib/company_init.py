@@ -4,13 +4,16 @@
 1. フォルダの形（4.5）：入れ口・原本と6つの区分・案件・記録。
    段階のフォルダは、案件を作るときに制度データの手続きの段階から作る（M2a）。
 2. `.claude/settings.json`（4.7）：外を読み書きさせない設定、書き換えを止める規則（deny）、道具の許可（allow）。
-   すでにあれば、ほかの設定を残したまま足す。
 3. 版の履歴（送り先のない Git）と .gitignore。前からあったファイルは「社長」、用意したものは「ツール」の版にする。
 4. 目印（`.hojokin/`）：最後に作る。目印の中の設定.json も履歴に入れ、履歴から戻しても目印が残るようにする。
 
-書く前に、読むだけで確かめる（送り先のある .git、読めない設定など）。だめなら何も書かない。
+書く前に、読むだけで確かめる。だめなら何も書かない。
+- 目印のないフォルダに、前からある .git・.gitignore・.claude/settings.json があれば断る。
+  残すと、hooks を止める設定や、原本を履歴から外す行などが、気づかないうちに残るため（作者が決めるまでの仮の扱い）。
+  .claude/settings.local.json は、「次から聞かない」を選ぶと Claude Code が作るので、守りを弱める項目があるときだけ断る。
+- 送り先のある .git は、目印があっても断る（T0-8）。
 書いている途中で失敗したら、書いたものを戻す（目印だけ・設定だけが残り、決まりが中途半端に効かないように）。
-もう一度動かしたときは、足りないものだけを補う。
+もう一度動かしたとき（目印があるとき）は、足りないものだけを補う。すでにある設定は残し、決まりの分を足す。
 
 版の履歴は dulwich を使うので、init() は venv の python から動かす（lib/runtime.py）。
 それ以外（定数、設定の組み立て、事前の確かめ）は、標準のライブラリだけで使える。
@@ -35,6 +38,7 @@ VIEW_DIR = "見るだけ"
 FOLDERS = (INBOX_DIR, ORIGINALS_DIR) + tuple(f"{ORIGINALS_DIR}/{k}" for k in ORIGINAL_KINDS) + (CASES_DIR, RECORDS_DIR)
 
 CLAUDE_SETTINGS = ".claude/settings.json"
+CLAUDE_LOCAL_SETTINGS = ".claude/settings.local.json"
 GITIGNORE = ".gitignore"
 MARKER_SETTINGS = f"{company.MARKER_DIR}/{company.SETTINGS_FILE}"
 
@@ -154,6 +158,37 @@ def _read_settings(path: Path) -> Optional[dict]:
 # ---- 書く前の確かめ（読むだけ） ----
 
 
+def _weakening_local_settings(path: Path) -> List[str]:
+    """`.claude/settings.local.json` のうち、会社のフォルダの決まりを弱める項目。
+
+    この設定は settings.json より優先される。allow の規則は deny を越えないので数えない。
+    読めないときは、中身を確かめられないので、弱める項目があるものとして扱う。
+    """
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return ["読めない中身"]
+    if not isinstance(data, dict):
+        return ["読めない中身"]
+    found = []
+    if data.get("disableAllHooks"):
+        found.append("disableAllHooks")
+    permissions = data.get("permissions")
+    if permissions is not None and not isinstance(permissions, dict):
+        return found + ["読めない permissions"]
+    permissions = permissions or {}
+    for key in BLOCK_KEYS:
+        if key in permissions and permissions[key] is not True:
+            found.append(f"permissions.{key}")
+    if permissions.get("additionalDirectories"):
+        found.append("permissions.additionalDirectories")
+    if permissions.get("defaultMode") == "bypassPermissions":
+        found.append("permissions.defaultMode")
+    return found
+
+
 def check(folder: Path, remotes_of: Optional[Callable[[Path], List[str]]] = None) -> List[str]:
     """会社のフォルダにできない理由の一覧。空なら作ってよい。何も書かない。
 
@@ -162,6 +197,19 @@ def check(folder: Path, remotes_of: Optional[Callable[[Path], List[str]]] = None
     reasons = []
     if not folder.is_dir():
         return [f"フォルダがありません：{folder}"]
+    if not company.is_company_folder(folder):
+        for name, what in ((".git", "版の履歴"), (GITIGNORE, "版の履歴に入れないものの一覧"), (CLAUDE_SETTINGS, "Claude Code の設定")):
+            if (folder / name).exists():
+                reasons.append(
+                    f"このフォルダには、前からある{what}（{name}）があります。"
+                    "会社のフォルダの決まりが気づかないうちに外れないよう、新しいフォルダで作ります。"
+                )
+        weakening = _weakening_local_settings(folder / CLAUDE_LOCAL_SETTINGS)
+        if weakening:
+            reasons.append(
+                f"このフォルダの {CLAUDE_LOCAL_SETTINGS} に、会社のフォルダの決まりを弱める設定があります："
+                + "、".join(weakening)
+            )
     for name in (company.MARKER_DIR, ".claude", ".git") + FOLDERS:
         path = folder / name
         if path.exists() and not path.is_dir():

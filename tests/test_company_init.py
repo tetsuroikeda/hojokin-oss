@@ -178,9 +178,11 @@ def test_rule_regex_reads_patterns_like_gitignore() -> None:
     assert not rule_regex("/原本/**").match("/原本その2/a.pdf")
 
 
-def test_existing_settings_are_kept(tmp_path, plugin_data) -> None:  # noqa: F811
+def test_existing_settings_are_kept_in_company_folder(tmp_path, plugin_data) -> None:  # noqa: F811
+    """目印があるフォルダで足りないものを補うときは、すでにある設定を残して、決まりの分を足す。"""
     env = ct.Env(tmp_path, plugin_data)
     folder = env.folder()
+    (folder / ".hojokin").mkdir()
     (folder / ".claude").mkdir()
     mine = {
         "env": {"EXAMPLE": "1"},
@@ -330,24 +332,57 @@ def test_marker_without_the_rest_is_completed(tmp_path, plugin_data) -> None:  #
 # ---- だめなとき・失敗したとき ----
 
 
-@pytest.mark.parametrize(
-    "case",
-    ["目印と同じ名前のファイル", "読めない設定", "形の違う設定", "原本という名前のファイル", "読めない.gitignore"],
-)
-def test_refuses_without_writing(tmp_path, plugin_data, case) -> None:  # noqa: F811
-    env = ct.Env(tmp_path, plugin_data)
-    folder = env.folder()
-    (folder / "メモ.txt").write_text("前からある", encoding="utf-8")
+LOCAL_WEAKENING = {
+    "フックを止める": {"disableAllHooks": True},
+    "外を読む": {"permissions": {"blockReadsOutsideWorkingDirectories": False}},
+    "外に書く": {"permissions": {"blockWritesOutsideWorkingDirectories": False}},
+    "作業フォルダを足す": {"permissions": {"additionalDirectories": ["~/"]}},
+    "確認をすべて外す": {"permissions": {"defaultMode": "bypassPermissions"}},
+}
+
+
+def _prepare(folder, case: str, data) -> None:
     if case == "目印と同じ名前のファイル":
         (folder / ".hojokin").write_text("", encoding="utf-8")
     elif case == "原本という名前のファイル":
         (folder / "原本").write_text("", encoding="utf-8")
-    elif case == "読めない.gitignore":
-        (folder / ".gitignore").write_bytes("見るだけ/\n".encode("shift_jis"))
-    else:
+    elif case == "前からある.gitignore":
+        (folder / ".gitignore").write_text("*.pdf\n", encoding="utf-8")
+    elif case == "前からある.git":
+        # 送り先のない .git（送り先のあるものは test_T0_8.py）
+        ct.venv_json(data, "from dulwich import porcelain\nporcelain.init(sys.argv[1])\nprint(1)", str(folder))
+    elif case == "前からある設定":
         (folder / ".claude").mkdir()
-        text = "{ 書きかけ" if case == "読めない設定" else '{"permissions": {"deny": "Edit(/a)"}}'
-        (folder / ".claude" / "settings.json").write_text(text, encoding="utf-8")
+        (folder / ".claude" / "settings.json").write_text('{"disableAllHooks": true}', encoding="utf-8")
+    elif case in LOCAL_WEAKENING:
+        (folder / ".claude").mkdir()
+        (folder / ".claude" / "settings.local.json").write_text(json.dumps(LOCAL_WEAKENING[case]), encoding="utf-8")
+    elif case in ("読めない設定", "形の違う設定", "読めない.gitignore"):
+        # 目印があるフォルダで補うときに、すでにあるものを読めない
+        (folder / ".hojokin").mkdir()
+        if case == "読めない.gitignore":
+            (folder / ".gitignore").write_bytes("見るだけ/\n".encode("shift_jis"))
+        else:
+            (folder / ".claude").mkdir()
+            text = "{ 書きかけ" if case == "読めない設定" else '{"permissions": {"deny": "Edit(/a)"}}'
+            (folder / ".claude" / "settings.json").write_text(text, encoding="utf-8")
+    else:
+        raise AssertionError(case)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["目印と同じ名前のファイル", "原本という名前のファイル", "前からある.gitignore", "前からある.git", "前からある設定"]
+    + list(LOCAL_WEAKENING)
+    + ["読めない設定", "形の違う設定", "読めない.gitignore"],
+)
+def test_refuses_without_writing(tmp_path, plugin_data, case) -> None:  # noqa: F811
+    """目印のないフォルダに、前からある .git・.gitignore・設定があるとき（決まりが気づかないうちに外れないよう）や、
+    すでにあるものを読めないときは、何も書かずに断る。"""
+    env = ct.Env(tmp_path, plugin_data)
+    folder = env.folder()
+    (folder / "メモ.txt").write_text("前からある", encoding="utf-8")
+    _prepare(folder, case, plugin_data)
     before = hr.snapshot(folder)
     outside = env.outside()
 
@@ -357,6 +392,19 @@ def test_refuses_without_writing(tmp_path, plugin_data, case) -> None:  # noqa: 
     assert "会社のフォルダにできませんでした。何も変えていません。" in out
     assert hr.snapshot(folder) == before
     assert env.outside() == outside
+
+
+def test_local_settings_with_only_permissions_are_accepted(tmp_path, plugin_data) -> None:  # noqa: F811
+    """「次から聞かない」で Claude Code が作る settings.local.json（許可の規則だけ）は、断らずに残す。"""
+    env = ct.Env(tmp_path, plugin_data)
+    folder = env.folder()
+    (folder / ".claude").mkdir()
+    local = '{"permissions": {"allow": ["WebFetch(domain:www.jgrants-portal.go.jp)"]}}'
+    (folder / ".claude" / "settings.local.json").write_text(local, encoding="utf-8")
+    ct.ok(env.run(folder))
+    assert (folder / ".claude" / "settings.local.json").read_text(encoding="utf-8") == local
+    # 社長ごとの設定なので、版の履歴には入れない
+    assert all(".claude/settings.local.json" not in row["files"] for row in ct.git_log(plugin_data, folder))
 
 
 ROLLBACK_CODE = """
@@ -385,8 +433,8 @@ def test_failure_on_the_way_undoes_everything(tmp_path, plugin_data) -> None:  #
     env = ct.Env(tmp_path, plugin_data)
     folder = env.folder()
     (folder / "メモ.txt").write_text("前からある", encoding="utf-8")
-    (folder / ".claude").mkdir()
-    (folder / ".claude" / "settings.json").write_text('{"env": {"A": "1"}}', encoding="utf-8")
+    (folder / "原本").mkdir()
+    (folder / "原本" / "見積書.pdf").write_bytes(b"%PDF")
     before = contents(folder)
 
     assert ct.venv_json(plugin_data, ROLLBACK_CODE, str(folder)) == "失敗した"
