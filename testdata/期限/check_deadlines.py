@@ -16,6 +16,9 @@
    発行日、決算日、申告の期限の順番が合う。決算日の前のものを D2a の発行日で作り直すと、D2a と同じバイト列。
 5. 台本：発言 S1〜S4 と答え A1〜A3 がある。S3 の書類が材料にある。答えの日数が `正解.json` の目安の日数と合い、
    始める日が締切から目安の日数を引いた日。台本に正解（計算した期限や始める日）が書かれていない。
+   「次の案件で聞き直さない」が確かめられる形か：S1 が採択の後に取り直す見積にも触れ（1件目で A2 を引き出す）、
+   S4 が2件目の見積に触れる。正解と材料の一覧が「A2 は場面1〜3で聞き、場面4では聞かない」で合い、
+   場面4で初めて聞いてよいという逃げ道がない。
 6. 届く書類（金融機関確認書）の日付が、頼んだ日と届いた日の間。金額が回答表（H-02、H-12）と合う。固有の名前を出していない。
 7. どの PDF の「年月日（曜日）」も、曜日が正しい。
 8. 作り直すと、どのファイルも同じバイト列になる。
@@ -51,6 +54,7 @@ ANSWER = json.loads((HERE / "正解.json").read_text(encoding="utf-8"))
 SEIDO = json.loads(mk.SEIDO_FILE.read_text(encoding="utf-8"))
 ANSWER_SHEET = (REPO / "testdata" / "デモの会社" / "回答表.md").read_text(encoding="utf-8")
 SCRIPT_TEXT = (HERE / "台本_外部への依頼.md").read_text(encoding="utf-8")
+LIST_TEXT = (HERE / "材料の一覧.md").read_text(encoding="utf-8")
 D2A_TAX = REPO / "testdata" / "デモの会社" / "書類" / "納税証明書_その2.pdf"
 DOWNLOADS = REPO / "downloads"
 EXPECTED_FILES = sorted([
@@ -421,9 +425,36 @@ def check_script() -> None:
     check(iso(estimate["締切"]["日付"]) == kofu and iso(estimate["始める日"]) == kofu - dt.timedelta(days=7), "見積書の始める日 ＝ 交付申請の期限 − 7日")
     states = [s["状態"] for s in bank["状態の移り変わり"]]
     check(states == ["まだ", "依頼した", "届いた"], "金融機関確認書の状態は まだ → 依頼した → 届いた")
-    check("わたし" in replies["A3"][2] and bank["だれがするか"]["頼む"].startswith("社長"), "だれが頼むか（社長）が A3 と正解で合う")
-    computed = [bank["始める日"], estimate["始める日"], kofu.isoformat(), bank["締切"]["日付"]]
+    check("わたし" in replies["A3"][2] and all(r["だれがするか"]["頼む"].startswith("社長") for r in (bank, estimate, reuse)),
+          "だれが頼むか（社長）が A3 と正解で合う（確認書、1件目と2件目の見積）")
+    reuse_deadline = iso(reuse["締切"]["日付"])
+    check(reuse_deadline == mk.JIZOKU["見積書等の提出期限"] and iso(reuse["始める日"]) == reuse_deadline - dt.timedelta(days=7),
+          "2件目の見積書等の始める日 ＝ 見積書等の提出期限 − 7日（1件目で聞いた日数）")
+    computed = [bank["始める日"], estimate["始める日"], kofu.isoformat(), bank["締切"]["日付"], reuse["始める日"], reuse["締切"]["日付"]]
     check(not any(day in SCRIPT_TEXT for day in computed), "台本に、締切・計算した期限・始める日の日付が書かれていない")
+    check_no_reask(says, bank, estimate, reuse)
+
+
+def check_no_reask(says: Dict[str, List[str]], bank: Dict, estimate: Dict, reuse: Dict) -> None:
+    """T6-6 の4つ目の合格ライン「聞いた日数を、次の案件で聞き直さない」が、落ちうる形で確かめられるか。
+
+    1件目で A2（見積の日数）を聞く場面が必ず来て、2件目で同じ日数を使う場面が必ず来ること。
+    どちらかが欠けると、どう作っても4つ目の合格ラインに落ちない（一度も使い回しが起きない）。
+    """
+    s1, s4 = says["S1"][4], says["S4"][4]
+    check("見積" in s1 and "取り直" in s1 and "採択の後" in s1,
+          "S1 が、採択の後に取り直す見積にも触れる（1件目で A2 を引き出す）")
+    check("見積" in s4, "S4 が、2件目の見積に触れる（場面4で、1件目で聞いた日数を使う場面が必ず来る）")
+    check(bank["目安の日数"]["聞く場面"] == mk.ASK_SCENES and estimate["目安の日数"]["聞く場面"] == mk.ASK_SCENES
+          and mk.ASK_SCENES.startswith("場面1〜3"),
+          "正解：A1 と A2 は場面1〜3（1件目）で聞く")
+    check(reuse["目安の日数"]["聞かない場面"] == mk.REUSE_SCENE and mk.REUSE_SCENE.startswith("場面4")
+          and "聞き直さない" in reuse["目安の日数"]["出どころ"],
+          "正解：2件目の見積書等は、場面4で聞き直さずに1件目の日数を使う")
+    row = next((line for line in LIST_TEXT.splitlines() if line.startswith("| 聞いた日数を、次の案件で聞き直さない |")), "")
+    check("場面1〜3" in row and "場面4では聞かない" in row and "不合格" in row and "7日" in row,
+          "材料の一覧の採点：A2 を場面1〜3で聞き、場面4では聞かず、2件目に7日を使う。場面4の前に聞かなければ不合格")
+    check("初めて聞かれてよい" not in LIST_TEXT, "材料の一覧に、場面4で初めて聞いてよいという逃げ道がない")
 
 
 def check_bank_letter() -> None:
