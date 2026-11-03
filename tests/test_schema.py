@@ -24,6 +24,7 @@ TABLE_ROW_TO_KEY = {
     "資料": "資料",
     "資料どうしの食い違い": "資料どうしの食い違い",
     "補助額": "補助額",
+    "補助の対象になる経費": "補助の対象になる経費",
     "補助の対象にならない経費": "補助の対象にならない経費",
     "数値の要件": "数値の要件",
     "数値でない要件": "数値でない要件",
@@ -44,7 +45,7 @@ TABLE_ROW_TO_KEY = {
 
 # スキーマの必須のキーのうち、DESIGN 9章の表にまだ行がないもの。
 # 日のブランチで表に行を足したら、ここから TABLE_ROW_TO_KEY に移す
-KEYS_NOT_YET_IN_DESIGN: list[str] = ["補助の対象になる経費"]
+KEYS_NOT_YET_IN_DESIGN: list[str] = []
 ROW_KEYS = list(TABLE_ROW_TO_KEY.values()) + KEYS_NOT_YET_IN_DESIGN
 
 
