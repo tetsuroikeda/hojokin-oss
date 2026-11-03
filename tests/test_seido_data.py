@@ -20,6 +20,7 @@
 - 段階のフォルダ（DESIGN 4.5）
   - まとめたときは、いちばん前の段階（1_申請）だけを作る。中は「申請書」と「添付する書類」
   - --stage-folders --stage で、手続きの段階にある名前の段階を作る。ない名前なら何も作らない
+  - 段階のフォルダの名前が、段階の順に 1 から数えた「1_申請」「2_交付申請」…でなければ（申請の段階が抜けた読み取りなど）、どれも作らない（仮）
 - 道具の動き：会社のフォルダでなければ何もしない。読み取りの結果がなければ何もしない。__pycache__ を書かない
 
 テストの公募要領は、テストのためだけに作った架空の文（公式の公募要領の文は使わない）。制度データの正解（testdata/正解/）は読まない。
@@ -444,6 +445,25 @@ def test_refuses_without_company_folder_or_readings(company, tmp_path) -> None:
     out = check_code(company.tool("--check"), 2)
     assert "制度データ（記録/制度データ/テスト補助金_第3回.json）がありません" in out
     check_code(company.tool("--stage-folders"), 2)
+    assert hr.snapshot(company.folder) == before
+
+
+def test_stage_folders_need_numbering_from_one(company) -> None:
+    """申請の段階が抜けて、いちばん前のフォルダが「2_交付申請」になった制度データでは、段階のフォルダを作らない（DESIGN 4.5）。"""
+    c = chapter_c()
+    c["制度データ"]["手続きの段階"] = c["制度データ"]["手続きの段階"][1:]  # 申請の段階を落とした読み取り
+    company.read(chapter_a())
+    company.read(chapter_b())
+    company.read(c)
+    out = check_code(company.tool("--merge"), 1)
+    assert "段階のフォルダを作れませんでした" in out
+    assert "1つ目の段階のフォルダが「2_交付申請」です" in out and "2つ目の段階のフォルダが「3_実績報告」です" in out
+    assert "重要な項目はすべて値か「要確認」で埋まり" in out  # 確かめた結果はよい。段階のフォルダだけ作れない
+    assert sorted(p.name for p in company.case_dir().iterdir()) == ["公式資料"]
+    assert (company.folder / DATA_REL).is_file()
+    before = hr.snapshot(company.folder)
+    out = check_code(company.tool("--stage-folders", "--stage", "2_交付申請"), 2)
+    assert "「1_申請」「2_交付申請」…の形になっていません" in out
     assert hr.snapshot(company.folder) == before
 
 

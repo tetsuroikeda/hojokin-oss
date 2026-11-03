@@ -26,6 +26,8 @@
 3. 段階のフォルダを作る（make_stage_folders）
    - 制度データの「手続きの段階」のうち「フォルダ」のある段階から作る（DESIGN 4.5）。中は「申請書」と「添付する書類」。
    - はじめは、いちばん前の段階（申請）だけを作る。採択後に次の段階へ進むときは、その段階の名前を渡して作る（M10）（仮）。
+   - 段階のフォルダの名前が、段階の順に 1 から数えた「1_申請」「2_交付申請」…でなければ、どのフォルダも作らない（仮）。
+     読み取り役が申請の段階を落とすと、いちばん前のフォルダが「2_採択発表」のようになるため。
 """
 
 from __future__ import annotations
@@ -509,6 +511,20 @@ def load_data(company: Path, case: str) -> Tuple[Path, Any]:
 # ---- 段階のフォルダ ----
 
 
+def numbering_problems(folders: List[str]) -> List[str]:
+    """段階のフォルダの名前（段階の順）が、1 から順に数えた「<番号>_<名前>」か（DESIGN 4.5：1_申請・2_交付申請・3_実績報告…）。
+
+    読み取り役が、申請の段階を落としたり、書類を出さない段階にもフォルダを付けたりすると、
+    いちばん前の段階のフォルダが「2_採択発表」のようになり、社長に見えるフォルダが崩れる（仮の決まり。M2c の差し戻し1回目）。
+    """
+    problems = []
+    for i, name in enumerate(folders, start=1):
+        head = name.split("_", 1)[0]
+        if not head.isdigit() or int(head) != i:
+            problems.append(f"{i}つ目の段階のフォルダが「{name}」です")
+    return problems
+
+
 def make_stage_folders(company: Path, case: str, data: Dict, only: Optional[List[str]] = None) -> Tuple[List[str], List[str]]:
     """制度データの手続きの段階から、段階のフォルダを作る。返すのは（作ったフォルダ、対象にした段階のフォルダの名前）。
 
@@ -517,6 +533,10 @@ def make_stage_folders(company: Path, case: str, data: Dict, only: Optional[List
     folders = case_folder.stage_folders([s for s in data.get("手続きの段階") or [] if isinstance(s, dict)])
     if not folders:
         raise case_folder.CaseError("制度データの手続きの段階に、フォルダの名前（1_申請 など）のある段階がありません")
+    numbering = numbering_problems(folders)
+    if numbering:
+        raise case_folder.CaseError("段階のフォルダの名前が、書類を出す段階を順に数えた「1_申請」「2_交付申請」…の形になっていません"
+                                    f"（{'。'.join(numbering)}）。手続きの段階を読み取り役に読ませ直してください")
     wanted = list(only) if only else [folders[0]]
     unknown = [w for w in wanted if w not in folders]
     if unknown:
