@@ -118,12 +118,12 @@ S3〜S5 は、関わる実験の結果（`experiments/結果.md`）に従って�
 | ID | すること | 触るファイル | 終わりの確かめ | 先に済ませるタスク | 予定の日 | 状態 |
 |---|---|---|---|---|---|---|
 | S0 | 実験の結果を DESIGN に反映する。13.2 の「うまくいかないときの手」を取った所と、14章の関わる行を直す。直す前に作者の了承を得る | docs/DESIGN.md | 直した箇所の一覧と、直す前と後の文字数を会話に示し、作者の了承を得る（直す所がなければ、そのことを示す） | E4、E6、E3a、E3b、E2a、E2b、E1a、E1b、E5 | 11/3 | まだ |
-| S1 | プラグインの骨組みを作る。`.claude-plugin/plugin.json`、6つの skill の SKILL.md（名前、説明の案、最初に目印を確かめる決まり。kaku には `model: opus` と `effort: high`）、2つの subagent（審査役と読み取り役。使える道具とモデル） | .claude-plugin/、skills/*/SKILL.md、agents/ | `claude plugin validate . --strict` を流し、終了コード0の出力を会話に示す（T0-3） | — | 11/3 | まだ |
-| S2 | 開発の確かめの仕組みを作る（DESIGN 12章）。pyproject.toml（uv）、tests/ のひな形、公式ファイルがリポにないことのテスト、開発用の Stop hook（構成の検査と速いテスト。落ちたら8回まで続けさせる）、開発用の subagent spec-check | pyproject.toml、tests/、.claude/settings.json、.claude/agents/spec-check.md | `uv run pytest tests/test_T0_4.py` を流してすべて通り、開発用の Stop hook が動いた出力も会話に示す（T0-4） | S1 | 11/3 | まだ |
+| S1 | プラグインの骨組みを作る。`.claude-plugin/plugin.json`、6つの skill の SKILL.md（名前、説明の案、最初に目印を確かめる決まり。kaku には `model: opus` と `effort: high`）、2つの subagent（審査役と読み取り役。使える道具とモデル） | .claude-plugin/、skills/*/SKILL.md、agents/ | `claude plugin validate . --strict` を流し、終了コード0の出力を会話に示す（T0-3） | — | 11/3 | 済み |
+| S2 | 開発の確かめの仕組みを作る（DESIGN 12章）。pyproject.toml（uv）、tests/ のひな形、公式ファイルがリポにないことのテスト、開発用の Stop hook（構成の検査と速いテスト。落ちたら8回まで続けさせる）、開発用の subagent spec-check | pyproject.toml、tests/、.claude/settings.json、.claude/agents/spec-check.md | `uv run pytest tests/test_T0_4.py` を流してすべて通り、開発用の Stop hook が動いた出力も会話に示す（T0-4） | S1 | 11/3 | 済み |
 | S3 | 共通のコード lib/ と hooks の骨組みを作る。会社のフォルダの目印の確かめ、今日の日付の差し替え、日本時間の表示、hooks.json と起動用の run.sh、5つの場面の hook（目印がなければ何もしない。Python が動かないときは書き込みとブラウザの操作を拒む） | lib/、hooks/、tests/ | `uv run pytest tests/test_T0_13.py tests/test_today.py` を流し、すべて通った出力を会話に示す（T0-13 の hooks の部分。道具の部分は R2 で足し、Z1 で全体を確かめる） | S2、E4 | 11/3 | まだ |
 | S4 | 画面入力の守りの hook の骨組みを作る（DESIGN 5章）。PostToolUse で、ページを読んだ結果から部品の対応を控える。PreToolUse で、通してよいクリック・入力・添付だけを通す。押さないボタンの語（「提出」「送信」など）はコードに固定する。画面入力の許可がないと、クリック・入力・添付を拒む | hooks/、lib/、tests/ | `uv run pytest tests/test_browser_guard.py`（記録したブラウザの道具の呼び出しと結果を渡す）を流してすべて通り、`claude plugin validate . --strict` も終了コード0になった出力を会話に示す | S3、E1a、E1b | 11/3 | まだ |
 | S5 | 会社のフォルダを作る道具を作る。社長の了承を得て、目印、フォルダの形（DESIGN 4.5）、版の履歴（送り先のない Git。作り方は E5 の結果に従う）、`.claude/settings.json`（DESIGN 4.7）を一度に用意する。初めて使うセッションでは、どの段階にも共通の決まりの短い文を、この道具が結果として返す（DESIGN 4.7） | lib/、skills/*/scripts/、tests/ | `uv run pytest tests/test_T0_8.py tests/test_company_init.py` を流し、すべて通った出力を会話に示す（T0-8） | S3、E5、E6 | 11/3 | まだ |
-| S6 | 制度データと会社の記録の JSON Schema を作る。DESIGN 9章の表にある両制度の値を例にして、1つの形で両方を表せることを確かめる | schema/、tests/ | `uv run pytest tests/test_schema.py` を流し、すべて通った出力を会話に示す | S2 | 11/3 | まだ |
+| S6 | 制度データと会社の記録の JSON Schema を作る。DESIGN 9章の表にある両制度の値を例にして、1つの形で両方を表せることを確かめる | schema/、tests/ | `uv run pytest tests/test_schema.py` を流し、すべて通った出力を会話に示す | S2 | 11/3 | 済み |
 
 ---
 
@@ -216,7 +216,7 @@ SPEC F14 の材料を、使うタスクに間に合う順に並べています�
 
 | ID | すること | 触るファイル | 終わりの確かめ | 先に済ませるタスク | 予定の日 | 状態 |
 |---|---|---|---|---|---|---|
-| D1 | デモの会社の設定と回答表を作る。社名と同じ会社がないことを、国税庁の法人番号公表サイトで確かめる | testdata/デモの会社/ | 回答表の項目の一覧と、法人番号公表サイトで調べた結果を会話に示す | — | 11/3 | まだ |
+| D1 | デモの会社の設定と回答表を作る。社名と同じ会社がないことを、国税庁の法人番号公表サイトで確かめる | testdata/デモの会社/ | 回答表の項目の一覧と、法人番号公表サイトで調べた結果を会話に示す | — | 11/3 | 済み |
 | D2a | デモの会社の書類の前半を作る。決算書、履歴事項全部証明書、納税証明書、法人事業概況説明書 | testdata/デモの会社/書類/ | 作った書類の一覧（種類・形式・ページ数）と、決算書の数字が回答表と合うことを確かめた出力を会話に示す | D1 | 11/3 | まだ |
 | D2b | デモの会社の書類の後半を作る。見積書、カタログ、役員名簿、株主名簿、労働者名簿 | testdata/デモの会社/書類/ | 作った書類の一覧と、見積書の「数量 × 単価 ＝ 金額」と合計が合うことを確かめた出力を会話に示す | D1 | 11/4 | まだ |
 | D3 | 回答表の変種を作る。所在地だけを変えた3つ、従業員25人、賃上げの計画が立たない、情報を一部抜いたもの。回答表にも記録にもない事柄と、公募要領にない事柄を含む設定 | testdata/回答表/ | 作った回答表の一覧と、デモの会社の回答表との違いを会話に示す | D1、A6 | 11/4 | まだ |
