@@ -107,14 +107,18 @@ def ok(r: subprocess.CompletedProcess) -> str:
     return out
 
 
-def py_json(code: str, *args: str) -> object:
-    """/usr/bin/python3 と同梱の dulwich で code を動かし、標準出力の JSON を返す。code の中では lib を import できる。"""
+def py_json(code: str, *args: str, env: dict = None) -> object:
+    """/usr/bin/python3 と同梱の dulwich で code を動かし、標準出力の JSON を返す。code の中では lib を import できる。
+
+    env を渡すと、その環境変数だけで動かす（HOME を差し替えて、利用者の Git の設定を置くテストなど）。
+    """
     # lib.history を先に読み込むと、同梱の dulwich が sys.path に入る
     prelude = f"import json, sys\nsys.path.insert(0, {str(REPO_ROOT)!r})\nfrom lib import history\n"
     r = subprocess.run(
         [hr.real_python(), "-I", "-B", "-c", prelude + code, *args],
         capture_output=True,
         timeout=60,
+        env=env,
     )
     assert r.returncode == 0, r.stderr.decode("utf-8")
     return json.loads(r.stdout.decode("utf-8"))

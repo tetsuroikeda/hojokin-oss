@@ -4,6 +4,7 @@
 - Python だけの wheel で、C の拡張がない
 - ライセンスの全文がある
 - 社長の Mac と同じ /usr/bin/python3 で、通信のための urllib3 なしに、同梱の dulwich を読み込める
+- 同じく /usr/bin/python3 で、同梱の pypdf（公式資料をページごとの文字にする。TASKS M2a）を読み込める
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import hook_runner as hr
 import pytest
 
 VENDOR = hr.REPO_ROOT / "lib" / "vendor"
-PACKAGES = {"dulwich": "0.24.10", "typing_extensions": "4.16.0"}
+PACKAGES = {"dulwich": "0.24.10", "typing_extensions": "4.16.0", "pypdf": "6.21.4"}
 # dist-info のうち置くもの（コマンドの入口・entry_points.txt・top_level.txt は置かない）
 KEPT_INFO = ("METADATA", "RECORD", "WHEEL", "licenses/")
 README = "README.md"
@@ -95,6 +96,10 @@ def test_license_texts_are_bundled() -> None:
     te = dist_info("typing_extensions")
     assert "PYTHON SOFTWARE FOUNDATION LICENSE" in (te / "licenses" / "LICENSE").read_text(encoding="utf-8")
     assert "License-Expression: PSF-2.0" in (te / "METADATA").read_text(encoding="utf-8")
+    pdf = dist_info("pypdf")
+    assert "Redistribution and use in source and binary forms" in (pdf / "licenses" / "LICENSE").read_text(
+        encoding="utf-8")
+    assert "License-Expression: BSD-3-Clause" in (pdf / "METADATA").read_text(encoding="utf-8")
     readme = (VENDOR / README).read_text(encoding="utf-8")
     for name, version in PACKAGES.items():
         assert name in readme and version in readme
@@ -135,4 +140,37 @@ def test_history_loads_bundled_dulwich_on_system_python(tmp_path) -> None:
     assert seen["urllib3"] is False
     assert seen["compiled"] == []
     # プラグインの場所に __pycache__ を書かない
+    assert not list(plugin.rglob("__pycache__"))
+
+
+PYPDF_LOAD_CODE = """
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from lib import doc_text
+import pypdf
+print(json.dumps({
+    "pypdf": pypdf.__file__,
+    "version": pypdf.__version__,
+    "typing_extensions": sys.modules["typing_extensions"].__file__ if "typing_extensions" in sys.modules else None,
+}))
+"""
+
+
+def test_doc_text_loads_bundled_pypdf_on_system_python(tmp_path) -> None:
+    """lib/doc_text.py は、利用者の site-packages を読まない /usr/bin/python3 でも、同梱の pypdf で動く。"""
+    plugin = tmp_path / "plugin"
+    hr.copy_plugin(plugin)
+    r = subprocess.run(
+        [hr.real_python(), "-I", "-B", "-c", PYPDF_LOAD_CODE, str(plugin)],
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+        capture_output=True,
+        timeout=60,
+    )
+    assert r.returncode == 0, r.stderr.decode("utf-8")
+    seen = json.loads(r.stdout.decode("utf-8"))
+    vendor = plugin / "lib" / "vendor"
+    assert seen["pypdf"] == str(vendor / "pypdf" / "__init__.py")
+    assert seen["version"] == PACKAGES["pypdf"]
+    if seen["typing_extensions"] is not None:
+        assert seen["typing_extensions"] == str(vendor / "typing_extensions.py")
     assert not list(plugin.rglob("__pycache__"))

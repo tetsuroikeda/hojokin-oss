@@ -1,0 +1,21 @@
+# 模擬の申請画面（mock/。D11a）のログインのページを、内蔵ブラウザの read_page（filter は all）で読んだ結果（2026-11-04）。
+note "模擬画面（実在のシステムではありません）。架空の練習用の画面で、入れた内容はこのパソコンの中にだけ記録されます。" [ref_1]
+main [ref_2]
+ heading "ログイン（模擬）" [ref_3]
+ generic "本物のログインではありません。模擬なので、どの値でも（空でも）ログインできます。ログインは担当者が自分で行います。パスワードの値は記録しません。" [ref_4]
+ form [ref_5]
+  region [ref_6]
+   label [ref_7]
+    generic "アカウントID（メールアドレス）" [ref_8]
+    textbox [ref_9] type="text"
+   label [ref_10]
+    generic "パスワード" [ref_11]
+    textbox [ref_12] type="password"
+   button "ログイン" [ref_13] type="submit"
+
+Viewport: 0x0
+
+Tab Context:
+- Executed on tabId: seed
+- Available tabs:
+  • tabId seed: "【模擬画面】ログイン" ("http://127.0.0.1:8791/login")
