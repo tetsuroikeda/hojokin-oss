@@ -10,13 +10,20 @@
 
 記録の仕方（Git の形。同期されるフォルダの形は M0c で、同じ入口から動かす）：
 1. 最後の版から変わったものを、先に版に残す（「ツール」。理由は社長の発言）。提出するものに残しきれないものが
-   あれば、提出版を記録しない（取り出しても同じ中身にならないため）。
-2. そのときの版の印（40桁）と、提出するファイルごとの場所・大きさ・中身の印（sha256）を、
+   あれば、提出版を記録しない（取り出しても同じ中身にならないため）。残しきれないものは、版に残す処理の結果
+   （読めないファイル・中を読めないフォルダ・大きすぎるもの・次に回したもの）と、残した後もまだ変わっているもので見る。
+2. 段階のフォルダを .gitignore を使わずにたどり、そのときの版にないファイルがあれば、提出版を記録しない
+   （.gitignore に当たる写しや、読めないフォルダの中の写しが、黙って提出版から抜けないように）。ただし、
+   Word・Excel が開いている間だけ作るファイルと、パソコンが自動で作るファイル（プラグインが .gitignore に書くもの。
+   lib/company_init.py）は、書類でないので見逃す。財務モデル.xlsx も同じく確かめる。
+3. そのときの版の印（40桁）と、提出するファイルごとの場所・大きさ・中身の印（sha256）を、
    `記録/提出版.json`（版の一覧）に足し、その変更も版に残す。
-3. Git の印（`refs/tags/提出版/<案件>/<段階>/<番号>`）を、提出したときの版に付ける。名前に使えない文字があれば、
+4. Git の印（`refs/tags/提出版/<案件>/<段階>/<番号>`）を、提出したときの版に付ける。名前に使えない文字があれば、
    案件と段階の印（sha256 の先頭）で名前を作る。印を付けられなくても、版の一覧の記録は残す。
 
 同じ案件・段階を出し直したとき（差し戻しの後など）は、番号を1つ増やして足す。前の提出版も残る。
+`記録/提出版.json` は、前の版に戻す道具でも戻さない（記録した提出版が消えないように。壊れたか消えたときだけ、
+直すために戻せる。lib/past_versions.py）。
 取り出すときは、版の一覧にある版から中身を出し、sha256 が記録と同じことを確かめてから、`見るだけ/` に出す
 （lib/view_only.py）。作業のファイルは変えない。
 """
@@ -26,18 +33,32 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat as stat_mode
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
-from lib import case_folder, dates, history, view_only
+from lib import case_folder, company_init, dates, history, view_only
 
 RECORD_FILE = "記録/提出版.json"
 FINANCIAL_MODEL = "財務モデル.xlsx"
 TAG_PREFIX = "refs/tags/提出版/"
 DEFAULT_REASON = "「提出した」と伝えられた"
 LIST_KEY = "提出版"
+
+# 版の履歴になくても、提出版から抜けてよいもの（書類でないもの）。プラグインが会社のフォルダの .gitignore に書く行
+# （Word・Excel が開いている間だけ作るファイル、パソコンが自動で作るファイルなど）だけにする。
+# 社長や Claude が後から .gitignore に足した行は、ここに入らない（当たる写しは、提出版を記録せずに知らせる）。
+TEMPORARY_PATTERNS = tuple(line for line in company_init.GITIGNORE_LINES if line and not line.startswith("#"))
+
+# 版の履歴に残せなかったわけ（社長への説明に使う）
+UNREADABLE = "読めない"
+UNREADABLE_DIR = "中を読めないフォルダ"
+TOO_LARGE = "大きすぎる"
+DEFERRED = "残しきる前に時間が切れた"
+STILL_CHANGING = "版に残す間に変わった"
+NOT_IN_HISTORY = "版の履歴に入っていない（.gitignore で除かれているなど）"
 
 
 class SubmissionError(Exception):
@@ -167,6 +188,105 @@ def _tag_name(case: str, stage: str, number: int) -> bytes:
     return f"{TAG_PREFIX}{key}/{number}".encode("utf-8")
 
 
+def _related_dir(directory: str, base: str) -> bool:
+    """中を読めないフォルダが、段階のフォルダ（base）の中か、段階のフォルダそのもの・その上か。"""
+    return directory == base or directory.startswith(base + "/") or base.startswith(directory + "/")
+
+
+def _left_by_scene(folder: Path, result: history.Result, case: str, stage: str) -> Dict[str, str]:
+    """版に残す処理（record_scene）で、提出するもののうち残せなかったもの（場所 → わけ）。"""
+    base = stage_dir(case, stage)
+    left: Dict[str, str] = {}
+    for directory in result.unreadable_dirs:
+        if _related_dir(directory, base):
+            left.setdefault(directory + "/", UNREADABLE_DIR)
+    for items, why in ((result.unreadable, UNREADABLE), (result.too_large, TOO_LARGE),
+                       (result.deferred, DEFERRED)):
+        for ch in items:
+            if in_submission(ch.path, case, stage):
+                left.setdefault(ch.path, why)
+    # 残した後も、まだ変わっているもの（読めない・残す間に書き換えられたなど）
+    for ch in history.pending_changes(folder):
+        if in_submission(ch.path, case, stage):
+            left.setdefault(ch.path, UNREADABLE if ch.unreadable else STILL_CHANGING)
+    return left
+
+
+def _actual(folder: Path, rel: str) -> Optional[str]:
+    """会社のフォルダからの場所（NFC）の、実際の場所（名前が NFD のこともある）。なければ None。"""
+    current = str(folder)
+    for part in rel.split("/"):
+        try:
+            names = os.listdir(current)
+        except OSError:
+            return None
+        match = next((n for n in names if nfc(n) == part), None)
+        if match is None:
+            return None
+        current = os.path.join(current, match)
+    return current
+
+
+def _outside_history(folder: Path, case: str, stage: str, recorded: Set[str]) -> Dict[str, str]:
+    """段階のフォルダ（と 財務モデル.xlsx）にあって、そのときの版にないもの（場所 → わけ）。
+    .gitignore は使わずにたどる。書類でないもの（TEMPORARY_PATTERNS に当たるもの）と、.git のフォルダは見逃す。
+    別名（シンボリックリンク）は、版の履歴と同じく1つのファイルとして扱い、先はたどらない。"""
+    from dulwich.ignore import IgnoreFilter
+
+    temporary = IgnoreFilter(p.encode("utf-8") for p in TEMPORARY_PATTERNS)
+    root = str(folder)
+    found: Dict[str, str] = {}
+
+    def rel_of(path: str) -> str:
+        return nfc(os.path.relpath(path, root)).replace(os.sep, "/")
+
+    def check(full: str, rel: str) -> None:
+        if rel in recorded or temporary.is_ignored(rel):
+            return
+        try:
+            st = os.lstat(full)
+        except FileNotFoundError:
+            return  # たどる間に消えた
+        except OSError:
+            found[rel] = UNREADABLE
+            return
+        if stat_mode.S_ISREG(st.st_mode) or stat_mode.S_ISLNK(st.st_mode):
+            found[rel] = NOT_IN_HISTORY
+
+    def walk_error(error: OSError) -> None:
+        where = error.filename if isinstance(error.filename, str) else ""
+        if where and not isinstance(error, (FileNotFoundError, NotADirectoryError)):
+            found[rel_of(where) + "/"] = UNREADABLE_DIR
+
+    start = _actual(folder, stage_dir(case, stage))
+    if start is not None:
+        for dirpath, dirnames, filenames in os.walk(start, onerror=walk_error):
+            keep = []
+            for name in sorted(dirnames):
+                full = os.path.join(dirpath, name)
+                rel = rel_of(full)
+                if os.path.islink(full):
+                    check(full, rel)
+                elif nfc(name) != ".git" and not temporary.is_ignored(rel + "/"):
+                    keep.append(name)
+            dirnames[:] = keep
+            for name in filenames:
+                full = os.path.join(dirpath, name)
+                check(full, rel_of(full))
+    model = _actual(folder, FINANCIAL_MODEL)
+    if model is not None and (os.path.islink(model) or not os.path.isdir(model)):
+        check(model, FINANCIAL_MODEL)
+    return found
+
+
+def _refuse_left(left: Dict[str, str]) -> SubmissionError:
+    lines = "\n".join(f"- {path}（{why}）" for path, why in sorted(left.items()))
+    return SubmissionError(
+        "次のものを版の履歴に残せなかったため、提出版を記録していません（取り出しても、提出したときと同じ中身に"
+        "ならないため）。読めるようにする、.gitignore から外すなどしてから、もう一度記録してください：\n" + lines
+    )
+
+
 def record(folder: Path, case: str, stage: str, reason: Optional[str] = None,
            when: Optional[datetime] = None) -> dict:
     """「提出した」と伝えられたときに、提出版を記録する。記録した1件を返す。"""
@@ -183,14 +303,10 @@ def record(folder: Path, case: str, stage: str, reason: Optional[str] = None,
     words = history.one_line(reason, history.REASON_MAX_CHARS) if reason and reason.strip() else DEFAULT_REASON
     entries = load(folder)  # 読めなければ、何も残さずに断る
 
-    # 1. 変わったものを先に残す（提出したときの中身を版に入れる）
-    history.record_scene(folder, history.TOOL, words, when=moment)
-    left = sorted(c.path for c in history.pending_changes(folder) if in_submission(c.path, case, stage))
+    # 1. 変わったものを先に残す（提出したときの中身を版に入れる）。残せなかったものがあれば断る
+    left = _left_by_scene(folder, history.record_scene(folder, history.TOOL, words, when=moment), case, stage)
     if left:
-        raise SubmissionError(
-            "次のファイルを版の履歴に残せなかったため、提出版を記録していません（読めない、大きすぎるなど）："
-            + "、".join(left)
-        )
+        raise _refuse_left(left)
 
     # 2. そのときの版から、提出するファイルの一覧と中身の印を作る
     with history.locked(folder):
@@ -209,6 +325,10 @@ def record(folder: Path, case: str, stage: str, reason: Optional[str] = None,
                     continue
                 data = blob.data
                 files.append({"書類": path, "大きさ": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+            # 段階のフォルダにあって、版にないもの（.gitignore に当たる写しなど）があれば断る
+            outside = _outside_history(folder, case, stage, {f["書類"] for f in files})
+            if outside:
+                raise _refuse_left(outside)
             if not any(f["書類"].startswith(base + "/") for f in files):
                 raise SubmissionError(f"{base}/ に書類がないため、提出版を記録していません")
             files.sort(key=lambda f: f["書類"])

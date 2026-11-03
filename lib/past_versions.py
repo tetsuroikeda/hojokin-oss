@@ -4,8 +4,9 @@
 - 見る：前の版の中身を `見るだけ/` に読み取り専用で出す（lib/view_only.py）。作業のファイルは変えない。
   名前は「その1（2026年11月4日 15時30分の版）.docx」の形。
 - 戻す：前の版の中身を、作業のファイルに書き戻し、戻したこと自体を新しい版として残す（「ツール」。理由に
-  「…の版に戻した」と書く）。履歴は書き換えない。原本・公式資料・審査役の結果・プラグインの設定は戻さない
-  （原本と公式資料は入れたときの1版だけで、変わっていれば開いたときと応答の終わりに戻される。DESIGN 5章）。
+  「…の版に戻した」と書く）。履歴は書き換えない。原本・公式資料・審査役の結果・提出版の記録・プラグインの設定は
+  戻さない（原本と公式資料は入れたときの1版だけで、変わっていれば開いたときと応答の終わりに戻される。DESIGN 5章。
+  提出版の記録は、戻すと記録した提出版が消えるため。壊れたか消えたときだけ、直すために戻せる）。
 - 書類は、会社のフォルダからの場所で指す。場所でなく名前（「その1.docx」「その1」）だけでも、
   版の履歴の中で1つに決まれば、それにする。
 
@@ -24,8 +25,10 @@ from typing import List, Optional, Tuple
 
 from lib import case_folder, dates, history, view_only
 
-# 戻さない場所（会社のフォルダからの場所の始まり）
-PROTECTED_TOP = ("原本", ".hojokin", ".claude", ".git", "見るだけ", "記録/審査役の結果")
+# 戻さない場所（会社のフォルダからの場所の始まり）。提出版の記録は、戻すと記録した提出版が消えるので戻さない
+# （壊れたか消えたときだけ、直すために戻せる。revert）
+SUBMISSION_RECORD = "記録/提出版.json"
+PROTECTED_TOP = ("原本", ".hojokin", ".claude", ".git", "見るだけ", "記録/審査役の結果", SUBMISSION_RECORD)
 PENDING_REASON = "前の版に戻す前の変更"
 VERSION_PREFIX = re.compile(r"^[0-9a-f]{7,40}$")
 CANDIDATES_MAX = 10
@@ -165,6 +168,19 @@ def protected(document: str) -> bool:
     return len(parts) >= 3 and parts[0] == case_folder.CASES_DIR and parts[2] == case_folder.OFFICIAL_DIR
 
 
+def _record_usable(folder: Path) -> bool:
+    """提出版の記録が、今あって読めるか（読めれば戻さない。消えたか壊れたときだけ、直すために戻せる）。"""
+    from lib import submission
+
+    if not (Path(folder) / SUBMISSION_RECORD).exists():
+        return False
+    try:
+        submission.load(folder)
+    except submission.SubmissionError:
+        return False
+    return True
+
+
 def _actual_path(folder: Path, document: str) -> Path:
     """作業のファイルの実際の場所（名前が NFD のこともある）。なければ NFC の名前の場所。"""
     current = Path(folder)
@@ -206,7 +222,11 @@ def revert(folder: Path, document: str, version: Optional[str] = None, back: Opt
     if not history.enabled(folder):
         raise VersionError("この会社のフォルダには版の履歴（Git の形）がないため、戻せません")
     doc = resolve_document(folder, document)
-    if protected(doc):
+    if doc == SUBMISSION_RECORD:
+        if _record_usable(folder):
+            raise VersionError(f"{doc} は戻せません（提出版の記録は、戻すと記録した提出版が消えるため、戻しません。"
+                               "提出版を見るときは show-submitted を使ってください）")
+    elif protected(doc):
         raise VersionError(f"{doc} は戻せません（原本・公式資料・審査役の結果・設定は、ツールが入れたときの形を守ります）")
     record = pick(records(folder, doc), version, back)
     data = _content(folder, record)

@@ -319,6 +319,101 @@ def test_submit_refuses_without_documents_or_with_unknown_case(company) -> None:
     assert "提出版がありません" in out
 
 
+# ---- 版の履歴に残せないものがあるときは、提出版を記録しない ----
+
+EXTRA_DIR = f"{STAGE_DIR}/添付する書類/追加の写し"
+EXTRA_COPY = f"{EXTRA_DIR}/納税証明書_写し.pdf"
+needs_permissions = pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                                       reason="管理者では、権限を外しても読めてしまう")
+
+
+def submit_refused(company: vt.Company, words: str = SUBMIT_WORDS) -> str:
+    return refused(run_tool(company, "submit", "--case", vt.CASE, "--stage", vt.STAGE, "--reason", words))
+
+
+def assert_not_recorded(company: vt.Company, out: str, where: str, why: str) -> None:
+    """断った出力に場所とわけが出て、提出版の記録も Git の印も残っていない。"""
+    assert "提出版を記録していません" in out, out
+    assert f"- {where}（{why}）" in out, out
+    assert not (company.folder / RECORD).exists()
+    assert tags(company) == {}
+    out = refused(run_tool(company, "show-submitted"))
+    assert "提出版がありません" in out
+
+
+@needs_permissions
+def test_submit_refuses_when_a_folder_in_the_stage_cannot_be_read(company) -> None:
+    """段階のフォルダの中に読めないフォルダがあれば、中の写しが黙って抜けないように、提出版を記録しない。
+    読めるようにしてから記録し直すと、その写しも入り、取り出すと提出時と同じ中身になる。"""
+    edit_three_times(company)
+    company.say(SUBMIT_WORDS)
+    company.write(EXTRA_COPY, blob("pdf", 7))
+    locked_dir = company.folder / EXTRA_DIR
+    os.chmod(str(locked_dir), 0)
+    try:
+        out = submit_refused(company)
+    finally:
+        os.chmod(str(locked_dir), 0o755)
+    assert_not_recorded(company, out, EXTRA_DIR + "/", "中を読めないフォルダ")
+
+    at_submit = submission_set(company.folder)
+    assert set(at_submit) == {SONO1, INPUT, COPY, FINANCE, EXTRA_COPY}
+    out = submit(company, "読めるようにしたので、もう一度記録して")
+    assert f"- {EXTRA_COPY}" in out and "（5件。" in out
+    (entry,) = submissions(company)
+    assert {f["書類"]: f["sha256"] for f in entry["ファイル"]} == {
+        p: hashlib.sha256(data).hexdigest() for p, data in at_submit.items()
+    }
+    ct.ok(run_tool(company, "show-submitted"))
+    assert from_view(view_files(company.folder)) == at_submit
+
+
+@needs_permissions
+def test_submit_refuses_when_a_copy_cannot_be_read(company) -> None:
+    """読めない写しがあれば、提出版を記録しない。"""
+    edit_three_times(company)
+    company.say(SUBMIT_WORDS)
+    path = company.write(EXTRA_COPY, blob("pdf", 7))
+    os.chmod(str(path), 0)
+    try:
+        out = submit_refused(company)
+    finally:
+        os.chmod(str(path), 0o644)
+    assert_not_recorded(company, out, EXTRA_COPY, "読めない")
+
+
+def test_submit_refuses_when_a_copy_is_left_out_by_gitignore(company) -> None:
+    """.gitignore に当たる写し・財務モデルは版の履歴に入らないので、黙って抜けないように、提出版を記録しない。"""
+    company.say("申請書を作り、写しも用意して")
+    company.write(SONO1, blob("docx", 1))
+    company.write(COPY, blob("pdf", 1))
+    gitignore = company.folder / ".gitignore"
+    gitignore.write_text(gitignore.read_text(encoding="utf-8") + "納税証明書*\n/財務モデル.xlsx\n", encoding="utf-8")
+    company.write(EXTRA_COPY, blob("pdf", 7))
+    company.write(FINANCE, blob("xlsx", 101))
+    assert company.stop() is None
+    assert EXTRA_COPY not in company.tracked() and FINANCE not in company.tracked()
+    out = submit_refused(company)
+    assert_not_recorded(company, out, EXTRA_COPY, "版の履歴に入っていない（.gitignore で除かれているなど）")
+    assert f"- {FINANCE}（版の履歴に入っていない" in out
+
+
+def test_temporary_files_do_not_block_submission(company) -> None:
+    """Word・Excel が開いている間だけ作るファイルや .DS_Store は、書類でないので、残っていても断らない。
+    提出版にも入れない。"""
+    edit_three_times(company)
+    at_submit = submission_set(company.folder)
+    company.write(f"{vt.APPLICATION}/~$その1.docx", b"\x00lock")
+    company.write(f"{vt.APPLICATION}/.~lock.入力シート.xlsx#", "lock")
+    company.write(f"{STAGE_DIR}/添付する書類/.DS_Store", b"\x00\x00\x00\x01Bud1")
+    out = submit(company)
+    assert "（4件。" in out
+    (entry,) = submissions(company)
+    assert {f["書類"] for f in entry["ファイル"]} == set(at_submit)
+    ct.ok(run_tool(company, "show-submitted"))
+    assert from_view(view_files(company.folder)) == at_submit
+
+
 def test_tool_does_nothing_outside_company_folder(company) -> None:
     """会社のフォルダでないフォルダでは、どの道具も何もしない（T0-13 の道具の部分）。"""
     plain = company.env.folder("ふつうのフォルダ")

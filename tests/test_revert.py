@@ -15,7 +15,8 @@ import hashlib
 import company_tool as ct
 import pytest
 import version_tool as vt
-from test_T0_6 import SONO1, blob, edit_three_times, refused, run_tool, working_files
+from test_T0_6 import (COPY, RECORD, SONO1, blob, edit_three_times, refused, run_tool, submissions, submit,
+                       working_files)
 
 
 @pytest.fixture
@@ -104,3 +105,37 @@ def test_originals_and_settings_are_not_reverted(company) -> None:
         out = refused(run_tool(company, "revert", "--document", document, "--back", "1"))
         assert "戻せません" in out, document
     assert (company.folder / original).read_bytes() == blob("pdf", 1)
+
+
+def test_submission_record_is_not_reverted(company) -> None:
+    """提出版の記録（記録/提出版.json）は戻さない。戻すと、記録した提出版が消えるため。
+    壊れたときだけ、直すために戻せる。"""
+    edit_three_times(company)
+    submit(company)
+    company.say("差し戻しに合わせて、写しを作り直して")
+    company.write(COPY, blob("pdf", 9))
+    assert company.stop() is None
+    submit(company, "直して出し直しました")
+    count = len(company.versions())
+    # 提出の直後に「1つ前に戻して」と言われ、提出版の記録の版を戻そうとしても、戻さない
+    company.say("1つ前に戻して")
+    for args in (("--document", "提出版.json", "--back", "1"), ("--document", RECORD, "--back", "2")):
+        out = refused(run_tool(company, "revert", *args, "--reason", "1つ前に戻して"))
+        assert "戻せません" in out and "show-submitted" in out
+    assert company.stop() is None
+    assert len(company.versions()) == count
+    assert [e["番号"] for e in submissions(company)] == [1, 2]
+    ct.ok(run_tool(company, "show-submitted", "--number", "2"))
+
+    # 手で書き換えて壊れたときは、直すために前の版に戻せる
+    record = company.folder / RECORD
+    good = record.read_bytes()
+    company.write(RECORD, "{ 壊れた")
+    company.say("提出版の一覧を手で直そうとしたら壊れました")
+    assert company.log(RECORD)[0]["だれ"] == "社長"
+    out = refused(run_tool(company, "show-submitted"))
+    assert "JSON として読めません" in out
+    ct.ok(run_tool(company, "revert", "--document", RECORD, "--back", "1", "--reason", "壊れる前に戻して"))
+    assert record.read_bytes() == good
+    assert [e["番号"] for e in submissions(company)] == [1, 2]
+    ct.ok(run_tool(company, "show-submitted", "--number", "2"))
