@@ -15,7 +15,8 @@
   .claude/settings.local.json は、「次から聞かない」を選ぶと Claude Code が作るので、守りを弱める項目があるときだけ断る。
 - 同期されるフォルダ（Google ドライブ、iCloud Drive、Dropbox など）は、版の持ち方を経営者に選んでもらうために断る。
   ここに Git の形で作ると、版の履歴ごとクラウドに上がる。同期されるフォルダの形（版をファイルで残す）は M0c で作る。
-  すでに Git の形の会社のフォルダ（目印と .git がある）なら、足りないものを補い、移すよう勧める注意を添える。
+  すでに Git の形の会社のフォルダ（目印と .git がある）が後から移されていたときも、何も書き足さずに断り、
+  同期されない場所へフォルダごと移すよう案内する（経営者が同期の形を選んでいないため。扱いは作者の決定待ち）。
 - 送り先のある .git は、目印があっても断る（T0-8）。
 書いている途中で失敗したら、書いたものを戻す（目印だけ・設定だけが残り、決まりが中途半端に効かないように）。
 もう一度動かしたとき（目印があるとき）は、足りないものだけを補う。すでにある設定は残し、決まりの分を足す。
@@ -106,7 +107,6 @@ class InitResult:
     added: List[str] = field(default_factory=list)
     existing_files: int = 0
     commits: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
 
 
 # ---- 設定と .gitignore の組み立て（標準のライブラリだけ） ----
@@ -218,8 +218,16 @@ def check(folder: Path, remotes_of: Optional[Callable[[Path], List[str]]] = None
     if not_allowed:
         # ホームのフォルダやディスクの根は、ほかを見る前に断る（中の .git などを数えても意味がない）
         return [not_allowed]
-    if synced is not None and not (company.is_company_folder(folder) and (folder / ".git").is_dir()):
+    if synced is not None:
         reasons.append(synced_reason(synced))
+        if company.is_company_folder(folder) and (folder / ".git").is_dir():
+            # Git の形の会社のフォルダを、後から同期されるフォルダに移したとき。経営者が選んでいないので、
+            # 何も書き足さない（作者の決定待ち。補って注意を添える形・注意だけの形も案にある）
+            reasons.append(
+                f"このフォルダは、すでに版の履歴（.git）を持つ会社のフォルダで、書類と版の履歴が{synced.service}に"
+                "上がっています。同期されるフォルダに置くことは選ばれていないので、何も書き足しません。"
+                "同期されない場所へフォルダごと移せば、そのまま会社のフォルダとして使えます。"
+            )
     if not company.is_company_folder(folder):
         for name, what in ((".git", "版の履歴"), (GITIGNORE, "版の履歴に入れないものの一覧"), (CLAUDE_SETTINGS, "Claude Code の設定")):
             if (folder / name).exists():
@@ -328,13 +336,6 @@ def init(folder: Path) -> InitResult:
         raise Refused(reasons, synced=synced)
 
     result = InitResult(folder=folder, already=company.is_company_folder(folder))
-    if synced is not None:
-        # すでに Git の形の会社のフォルダが、同期されるフォルダの中にある（後から移した、など）
-        result.warnings.append(
-            f"注意：このフォルダは、{synced.service}で同期されています（同期される場所：{synced.root}）。"
-            f"書類と版の履歴（.git）が{synced.service}に上がっています。同期されるフォルダ用の版の持ち方は、"
-            "まだ用意できていません。同期されない場所に新しいフォルダを作って移すよう、社長に勧めてください。"
-        )
     undo = _Undo()
     try:
         # .gitignore を先に書き、前からあったファイルを見分けるときに、履歴に入れないものを除く
@@ -410,8 +411,6 @@ SETTINGS_SUMMARY = (
 def report(result: InitResult) -> str:
     """道具の出力。作ったものと、どの段階にも共通の決まりの短い文（初めて使うセッションに渡す）。"""
     lines = []
-    if result.warnings:
-        lines += result.warnings + [""]
     if result.already:
         lines.append(f"このフォルダは、すでに会社のフォルダです（{result.folder}）。")
         if result.added:

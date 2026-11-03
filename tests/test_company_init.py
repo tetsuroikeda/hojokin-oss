@@ -698,15 +698,111 @@ def test_synced_folder_is_refused_with_choice(tmp_path, place, service) -> None:
         assert not (folder / name).exists(), name
 
 
-def test_synced_folder_found_by_root_marker(tmp_path) -> None:
-    """場所を変えた Dropbox（根に .dropbox がある）も、同期されるフォルダとして見分ける。"""
+@pytest.mark.parametrize("marker, is_dir", [(".dropbox", False), (".dropbox.cache", True)])
+def test_synced_folder_found_by_root_marker(tmp_path, marker, is_dir) -> None:
+    """場所を変えた Dropbox（根に .dropbox のファイルか、.dropbox.cache のフォルダがある）も、
+    同期されるフォルダとして見分ける。"""
     env = ct.Env(tmp_path)
     root = tmp_path / "外付けのディスク" / "共有の箱"
     folder = root / "山田製作所"
     folder.mkdir(parents=True)
-    (root / ".dropbox").write_text("{}", encoding="utf-8")
+    if is_dir:
+        (root / marker).mkdir()
+    else:
+        (root / marker).write_text("{}", encoding="utf-8")
     out = assert_refused(env, folder, said="Dropboxで同期されています")
     assert_sync_choice(out, "Dropbox")
+
+
+@pytest.mark.parametrize("layout", ["settings_folder", "file_and_cache"])
+def test_dropbox_settings_in_home_do_not_make_home_synced(tmp_path, monkeypatch, layout) -> None:
+    """Dropbox のアプリは、自分の設定を ~/.dropbox/（フォルダ）に置く。これがあっても、ホームの下の
+    ふつうのフォルダは同期されるフォルダとみなさず、会社のフォルダを用意する。
+    目印はホームより下だけで探すので、ホームに .dropbox のファイルや .dropbox.cache があっても同じ。"""
+    from lib import sync_folder
+
+    env = ct.Env(tmp_path)
+    if layout == "settings_folder":
+        (env.home / ".dropbox").mkdir()
+        (env.home / ".dropbox" / "info.json").write_text('{"personal": {"path": "/somewhere/Dropbox"}}',
+                                                         encoding="utf-8")
+    else:
+        (env.home / ".dropbox").write_text("{}", encoding="utf-8")
+        (env.home / ".dropbox.cache").mkdir()
+    folder = env.home / "書類" / "山田製作所"
+    folder.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(env.home))
+    assert sync_folder.synced(folder, icloud_desktop=set) is None
+    assert sync_folder.synced(env.home / "書類", icloud_desktop=set) is None
+    out = ct.ok(env.run(folder))
+    assert "会社のフォルダを用意しました" in out
+    assert (folder / ".hojokin").is_dir() and (folder / ".git").is_dir()
+
+
+def case_insensitive_disk(path: Path) -> bool:
+    """path のあるディスクが、大文字と小文字を区別しないか（Mac の標準のディスクは区別しない）。"""
+    return path.exists() and Path(str(path).swapcase()).exists()
+
+
+def test_case_variants_of_synced_folder_are_found(tmp_path, monkeypatch) -> None:
+    """大文字と小文字を変えた道筋（~/library/cloudstorage/… など）でも、同期されるフォルダと見分けて断る。"""
+    from lib import sync_folder
+
+    env = ct.Env(tmp_path)
+    rest = ("GoogleDrive-a@example.com", "マイドライブ", "会社")
+    real = env.home.joinpath("Library", "CloudStorage", *rest)
+    real.mkdir(parents=True)
+    if not case_insensitive_disk(real):
+        pytest.skip("大文字と小文字を区別するディスクです")
+    monkeypatch.setenv("HOME", str(env.home))
+    variants = [
+        env.home.joinpath("library", "cloudstorage", *rest),
+        env.home.joinpath("LIBRARY", "CloudStorage", *rest),
+        env.home.joinpath("Library", "CLOUDSTORAGE", "googledrive-a@example.com", "マイドライブ", "会社"),
+    ]
+    for variant in variants:
+        assert variant.exists(), variant
+        found = sync_folder.synced(variant, icloud_desktop=set)
+        assert found is not None and found.service == "Google ドライブ", variant
+    out = assert_refused(env, variants[0], said="Google ドライブで同期されています")
+    assert_sync_choice(out, "Google ドライブ")
+    assert not (real / ".git").exists() and not (real / ".hojokin").exists()
+
+    # iCloud の「デスクトップと書類」と、前からの形（ホームの直下）も、大文字と小文字を変えて見分ける
+    (env.home / "Desktop" / "会社").mkdir(parents=True)
+    (env.home / "Dropbox" / "会社").mkdir(parents=True)
+    assert sync_folder.synced(env.home / "desktop" / "会社", icloud_desktop=lambda: {"Desktop"}) is not None
+    assert sync_folder.synced(env.home / "DROPBOX" / "会社", icloud_desktop=set).service == "Dropbox"
+
+
+def test_case_variants_of_home_are_refused(tmp_path, monkeypatch) -> None:
+    """大文字と小文字を変えた道筋でも、ホームのフォルダとそれを含むフォルダを断る。"""
+    from lib import sync_folder
+
+    env = ct.Env(tmp_path)
+    if not case_insensitive_disk(env.home):
+        pytest.skip("大文字と小文字を区別するディスクです")
+    upper_home = Path(str(env.home).upper())
+    out = assert_refused(env, upper_home, said="ホームのフォルダです")
+    assert_new_folder_guide(out)
+    assert not (env.home / ".hojokin").exists() and not (env.home / ".git").exists()
+    out = assert_refused(env, Path(str(tmp_path).swapcase()), said="ホームのフォルダ", snapshot_of=[tmp_path])
+    assert "含んでいます" in out
+
+    monkeypatch.setenv("HOME", str(env.home))
+    for variant in (upper_home, env.home.parent / env.home.name.upper(), Path(str(env.home).lower())):
+        reason = sync_folder.not_allowed_reason(variant)
+        assert reason and "ホームのフォルダです" in reason, variant
+    # この Mac の本当のホーム（利用者の登録から）も、書き方を変えて断る。読むだけで、何も書かない
+    import pwd
+
+    real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    if case_insensitive_disk(real_home):
+        for variant in (Path(str(real_home).lower()), Path(str(real_home).upper())):
+            reason = sync_folder.not_allowed_reason(variant)
+            assert reason and "ホームのフォルダです" in reason, variant
+        reason = sync_folder.not_allowed_reason(Path(str(real_home.parent).upper()))
+        assert reason and "含んでいます" in reason
 
 
 @pytest.mark.parametrize("place", ["Boxes/山田製作所", "Documents/山田製作所", "Library/Application Support/山田製作所"])
@@ -754,9 +850,11 @@ def test_icloud_desktop_reader_reads_finder_setting() -> None:
         assert (name in names) == (r.returncode == 0 and r.stdout.strip() == b"1"), key
 
 
-def test_company_folder_moved_into_synced_folder_gets_warning(tmp_path) -> None:
+def test_company_folder_moved_into_synced_folder_is_refused(tmp_path) -> None:
     """Git の形の会社のフォルダ（目印と .git がある）が後から同期されるフォルダに移されていたら、
-    足りないものを補い、同期されない場所に移すよう勧める注意を添える。"""
+    経営者が同期の形を選んでいないので、何も書き足さずに断り、版の持ち方を選んでもらう。
+    同期されない場所へフォルダごと戻せば、そのまま使える。
+    （仮の形。補って注意を添える形・注意だけの形と、どれにするかは作者の決定待ち）"""
     env = ct.Env(tmp_path)
     first = env.folder()
     ct.ok(env.run(first))
@@ -765,10 +863,15 @@ def test_company_folder_moved_into_synced_folder_gets_warning(tmp_path) -> None:
     shutil.move(str(first), str(folder))
     (folder / "入れ口").rmdir()
 
-    out = ct.ok(env.run(folder))
-    assert "注意：このフォルダは、Dropboxで同期されています" in out
-    assert "同期されない場所に新しいフォルダを作って移す" in out
-    assert "足りなかったものを補いました" in out and (folder / "入れ口").is_dir()
+    out = assert_refused(env, folder, said="Dropboxで同期されています")
+    assert_sync_choice(out, "Dropbox")
+    assert "何も書き足しません" in out and "同期されない場所へフォルダごと移せば" in out
+    assert not (folder / "入れ口").exists()
+
+    back = tmp_path / "戻した会社"
+    shutil.move(str(folder), str(back))
+    out = ct.ok(env.run(back))
+    assert "足りなかったものを補いました" in out and (back / "入れ口").is_dir()
 
 
 def test_marker_without_history_in_synced_folder_is_refused(tmp_path) -> None:

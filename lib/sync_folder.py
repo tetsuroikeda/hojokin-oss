@@ -9,6 +9,11 @@
   - Mac の今の形：~/Library/CloudStorage/<サービス>-…（Google ドライブ、OneDrive、Dropbox、Box など）、
     ~/Library/Mobile Documents/（iCloud Drive）。
   - 前からの形：ホームの直下の Dropbox、Google Drive、OneDrive など。Dropbox は、根に .dropbox のファイルを置く。
+    この目印は、ホームより下だけで探す。Dropbox のアプリは、自分の設定を ~/.dropbox/（フォルダ）に置くので、
+    ホームまで遡ると、ホームの下のどのフォルダも同期されるとみなしてしまうため。
+- Mac と Windows の標準のディスクは、大文字と小文字を区別しない（~/library/cloudstorage/… でも同じ場所に着く）。
+  そのため、道筋を比べるときは、大文字と小文字をそろえて比べる（_key）。区別するディスクで別の場所を同じとみなしても、
+  断る側に倒れるだけで、害はない。
   - Windows の OneDrive は、環境変数（OneDrive など）に場所がある（期間中は確かめない。SPEC 4章）。
   - iCloud の「デスクトップと書類」：Finder の設定（com.apple.finder の FXICloudDriveDesktop・
     FXICloudDriveDocuments）が 1 のときだけ、~/Desktop・~/Documents の下を同期されるとみなす。
@@ -20,9 +25,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional, Set
+from typing import Callable, Iterable, List, Optional, Set, Tuple
 
 # ~/Library/CloudStorage/ の下のフォルダの名前の始まりと、社長に伝えるサービスの名前
 CLOUD_STORAGE_PREFIXES = (
@@ -42,8 +48,11 @@ HOME_PREFIXES = (
     ("iCloudDrive", "iCloud Drive"),
     ("Box", "Box"),
 )
-# 同期のアプリが、同期するフォルダの根に置く目印
-ROOT_MARKERS = ((".dropbox", "Dropbox"), (".dropbox.cache", "Dropbox"))
+# 同期のアプリが、同期するフォルダの根に置く目印（名前、サービス、フォルダか）。
+# .dropbox は小さなファイル、.dropbox.cache はフォルダ。ホームの ~/.dropbox/（アプリの設定のフォルダ）とは別のもの
+ROOT_MARKERS = ((".dropbox", "Dropbox", False), (".dropbox.cache", "Dropbox", True))
+# 道筋の大文字と小文字を区別しないとみなす OS（標準のディスクが区別しない）
+CASE_INSENSITIVE = sys.platform in ("darwin", "win32")
 # Windows の OneDrive の場所が入る環境変数
 ONEDRIVE_ENV = ("OneDrive", "OneDriveCommercial", "OneDriveConsumer")
 # iCloud の「デスクトップと書類」の設定の名前と、ホームの下のフォルダ
@@ -78,8 +87,25 @@ def home_dirs() -> List[Path]:
     return list(dict.fromkeys(found))
 
 
+def _key(part: str) -> str:
+    """道筋の1つの部分を、比べるための形にする（文字の合成の形と、大文字と小文字をそろえる）。"""
+    text = unicodedata.normalize("NFC", part)
+    return text.casefold() if CASE_INSENSITIVE else text
+
+
+def _keys(path: Path) -> Tuple[str, ...]:
+    return tuple(_key(p) for p in path.parts)
+
+
 def _is_within(path: Path, parent: Path) -> bool:
-    return path == parent or parent in path.parents
+    """path が parent そのものか、その下にある。"""
+    k, p = _keys(path), _keys(parent)
+    return k[: len(p)] == p
+
+
+def _is_below(path: Path, parent: Path) -> bool:
+    """path が parent の下にある（parent そのものは含まない）。"""
+    return len(path.parts) > len(parent.parts) and _is_within(path, parent)
 
 
 def not_allowed_reason(folder: Path) -> Optional[str]:
@@ -91,12 +117,12 @@ def not_allowed_reason(folder: Path) -> Optional[str]:
             "中のものがすべて版の履歴と照らしの対象になってしまうため、会社のフォルダにはしません。"
         )
     for home in home_dirs():
-        if path == home:
+        if _keys(path) == _keys(home):
             return (
                 "このフォルダは、ホームのフォルダです。"
                 "中のものがすべて版の履歴と照らしの対象になってしまうため、会社のフォルダにはしません。"
             )
-        if path in home.parents:
+        if _is_below(home, path):
             return (
                 f"このフォルダ（{path}）は、ホームのフォルダ（{home}）を含んでいます。"
                 "中のものがすべて版の履歴と照らしの対象になってしまうため、会社のフォルダにはしません。"
@@ -146,30 +172,41 @@ def synced(folder: Path, icloud_desktop: Optional[Callable[[], Set[str]]] = None
     icloud_desktop は、iCloud の「デスクトップと書類」で同期されているフォルダの名前を返す関数（テストで差し替える）。
     """
     path = _resolve(folder)
-    for home in home_dirs():
-        if home not in path.parents:
+    homes = home_dirs()
+    for home in homes:
+        if not _is_below(path, home):
             continue
-        parts = path.relative_to(home).parts
+        # 比べるのは大文字と小文字をそろえた形（keys）、社長に伝える場所は渡された書き方のまま（parts）
+        start = len(home.parts)
+        parts = path.parts[start:]
+        keys = [_key(p) for p in parts]
+
+        def top(n: int) -> Path:
+            return Path(*path.parts[: start + n])
+
         # ~/Library/CloudStorage/<サービス>-…
-        if len(parts) >= 3 and parts[0] == "Library" and parts[1] == "CloudStorage":
+        if len(parts) >= 3 and keys[0] == _key("Library") and keys[1] == _key("CloudStorage"):
             service = _match_prefix(parts[2], CLOUD_STORAGE_PREFIXES) or f"クラウドの同期（{parts[2]}）"
-            return Synced(service, home / "Library" / "CloudStorage" / parts[2])
+            return Synced(service, top(3))
         # ~/Library/Mobile Documents/（iCloud Drive と、アプリごとの iCloud の置き場）
-        if len(parts) >= 2 and parts[0] == "Library" and parts[1] == "Mobile Documents":
-            return Synced("iCloud Drive", home / "Library" / "Mobile Documents")
+        if len(parts) >= 2 and keys[0] == _key("Library") and keys[1] == _key("Mobile Documents"):
+            return Synced("iCloud Drive", top(2))
         # ホームの直下の、前からの形の同期されるフォルダ
-        service = _match_prefix(parts[0], HOME_PREFIXES, whole_word=True)
+        service = _match_prefix(unicodedata.normalize("NFC", parts[0]), HOME_PREFIXES, whole_word=True)
         if service:
-            return Synced(service, home / parts[0])
+            return Synced(service, top(1))
         # iCloud の「デスクトップと書類」
-        if parts[0] in ("Desktop", "Documents"):
-            names = (icloud_desktop or icloud_desktop_synced)()
-            if parts[0] in names:
-                return Synced("iCloud Drive（デスクトップと書類）", home / parts[0])
-    # 同期のアプリが根に置く目印（場所を変えた Dropbox など）
+        for name in ("Desktop", "Documents"):
+            if keys[0] == _key(name) and name in (icloud_desktop or icloud_desktop_synced)():
+                return Synced("iCloud Drive（デスクトップと書類）", top(1))
+    # 同期のアプリが根に置く目印（場所を変えた Dropbox など）。
+    # ホームとそれを含むフォルダ、ディスクの根は見ない（~/.dropbox/ はアプリの設定のフォルダで、同期の根ではない）
     for candidate in [path] + list(path.parents):
-        for marker, service in ROOT_MARKERS:
-            if (candidate / marker).exists():
+        if candidate.parent == candidate or any(_is_within(home, candidate) for home in homes):
+            break
+        for marker, service, is_dir in ROOT_MARKERS:
+            target = candidate / marker
+            if (target.is_dir() if is_dir else target.is_file()):
                 return Synced(service, candidate)
     # Windows の OneDrive
     for key in ONEDRIVE_ENV:
