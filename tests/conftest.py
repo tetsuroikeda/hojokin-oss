@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DOWNLOADS = REPO_ROOT / "downloads"
+
+# lib/（スクリプトと hooks が共通に使うコード）を import できるようにする
+sys.path.insert(0, str(REPO_ROOT))
 
 
 @pytest.fixture(scope="session")

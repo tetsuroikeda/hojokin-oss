@@ -1,0 +1,151 @@
+"""hooks を、Claude Code と同じように hooks.json のコマンドから動かすための道具（テスト用）。
+
+- プラグインの hooks/ と lib/ を一時フォルダに写して動かす（__pycache__ などが書かれないかも見るため）。
+- 環境変数は、渡したものだけにする（手元の PATH や HOME を使わない）。
+- Python は、本物（/usr/bin/python3 が 3.9 以上ならそれ。なければテストの Python）、
+  見つからない、壊れた（終了コード1）などに替えられる。どれも、動いたら印のファイルを作る。
+"""
+
+from __future__ import annotations
+
+import functools
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HOOKS_JSON = REPO_ROOT / "hooks" / "hooks.json"
+EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop")
+
+# 書き込みとブラウザの操作の道具（Python が動かないときに拒むもの）
+GUARDED_TOOLS = (
+    "Write",
+    "Edit",
+    "NotebookEdit",
+    "mcp__Claude_Browser__computer",
+    "mcp__Claude_Browser__form_input",
+    "mcp__Claude_Browser__read_page",
+    "mcp__remote-devices__Claude_Browser__computer",
+    "mcp__claude-in-chrome__computer",
+    "mcp__claude-in-chrome__file_upload",
+    "mcp__remote-devices__claude-in-chrome__computer",
+    "mcp__computer-use__left_click",
+    "mcp__remote-devices__computer-use__left_click",
+)
+# 書き込みでもブラウザでもない道具（拒まない）
+UNGUARDED_TOOLS = ("Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "Skill", "Task")
+
+
+@functools.lru_cache(maxsize=None)
+def real_python() -> str:
+    """hook を動かす本物の Python。社長の Mac と同じ /usr/bin/python3（3.9）を優先する。"""
+    system = Path("/usr/bin/python3")
+    if system.exists():
+        r = subprocess.run(
+            [str(system), "-c", "import sys; print(sys.version_info >= (3, 9))"],
+            capture_output=True,
+        )
+        if r.returncode == 0 and r.stdout.strip() == b"True":
+            return str(system)
+    return sys.executable
+
+
+def copy_plugin(dest: Path) -> Path:
+    ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
+    for name in ("hooks", "lib"):
+        shutil.copytree(REPO_ROOT / name, dest / name, ignore=ignore)
+    return dest
+
+
+def make_bin(bin_dir: Path, python: str, ran_marker: Path) -> str:
+    """PATH に置くフォルダを作り、PATH の値を返す。
+
+    python は "本物"・"なし"・"壊れた"・"半端"（途中まで出して落ちる）・
+    "古い"（3.9 より古い版のとき main.py が終了コード3で終えるのと同じ動き）。
+    """
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    os.symlink("/bin/sh", bin_dir / "sh")
+    bodies = {
+        "本物": f'exec "{real_python()}" "$@"',
+        "壊れた": "exit 1",
+        "半端": "printf '%s' '{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", '\nexit 1",
+        "古い": "exit 3",
+    }
+    if python != "なし":
+        script = bin_dir / "python3"
+        # 外のコマンドを使わずに、動いた印を残す
+        script.write_text(f'#!/bin/sh\n: > "{ran_marker}"\n{bodies[python]}\n', encoding="utf-8")
+        script.chmod(0o755)
+    return str(bin_dir)
+
+
+def hook_commands(event: str, tool_name: str = "") -> list:
+    """hooks.json で、その場面（と道具）に当たるコマンドの一覧。matcher は正規表現として照らす。"""
+    config = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+    commands = []
+    for entry in config["hooks"].get(event, []):
+        matcher = entry.get("matcher", "")
+        if matcher and not re.search(matcher, tool_name):
+            continue
+        commands.extend(h["command"] for h in entry["hooks"])
+    return commands
+
+
+def event_inputs(folder: Path) -> list:
+    """場面ごとの入力の例（止められそうなものを選ぶ）。"""
+    base = {"session_id": "test", "transcript_path": str(folder / "t.jsonl"), "cwd": str(folder)}
+
+    def tool(name: str, tool_input: dict) -> tuple:
+        return ("PreToolUse", {**base, "hook_event_name": "PreToolUse", "tool_name": name, "tool_input": tool_input})
+
+    return [
+        ("SessionStart", {**base, "hook_event_name": "SessionStart", "source": "startup"}),
+        ("UserPromptSubmit", {**base, "hook_event_name": "UserPromptSubmit", "prompt": "/hojokin:nyuryoku 申請画面に入れて"}),
+        tool("Write", {"file_path": str(folder / "計画書_v2.docx"), "content": "x"}),
+        tool("Edit", {"file_path": str(folder / "原本" / "見積書.pdf"), "old_string": "a", "new_string": "b"}),
+        tool("NotebookEdit", {"notebook_path": str(folder / "a.ipynb"), "new_source": "x"}),
+        tool("mcp__Claude_Browser__computer", {"action": "left_click", "ref": "ref_12"}),
+        tool("mcp__claude-in-chrome__form_input", {"ref": "ref_3", "value": "on"}),
+        tool("mcp__computer-use__left_click", {"coordinate": [10, 10]}),
+        tool("Bash", {"command": "echo hello"}),
+        ("PostToolUse", {**base, "hook_event_name": "PostToolUse", "tool_name": "mcp__Claude_Browser__read_page",
+                         "tool_input": {}, "tool_response": "button \"提出する\" [ref_12]"}),
+        ("Stop", {**base, "hook_event_name": "Stop", "stop_hook_active": False}),
+    ]
+
+
+def run(command: str, payload: dict, *, plugin: Path, folder: Path, path: str, home: Path, data: Path,
+        project_dir_env: bool = True) -> subprocess.CompletedProcess:
+    # 一時ファイルも HOME の隣に向け、書かれたら見つけられるようにする
+    tmpdir = home.parent / "tmp"
+    tmpdir.mkdir(exist_ok=True)
+    env = {"PATH": path, "HOME": str(home), "TMPDIR": str(tmpdir),
+           "CLAUDE_PLUGIN_ROOT": str(plugin), "CLAUDE_PLUGIN_DATA": str(data)}
+    if project_dir_env:
+        env["CLAUDE_PROJECT_DIR"] = str(folder)
+    return subprocess.run(
+        ["/bin/sh", "-c", command],
+        input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        env=env,
+        cwd=folder,
+        capture_output=True,
+        timeout=30,
+    )
+
+
+def snapshot(*dirs: Path) -> dict:
+    """フォルダの中のすべてのファイルとフォルダの、名前・大きさ・更新時刻・中身のハッシュ。"""
+    result = {}
+    for d in dirs:
+        for p in sorted(d.rglob("*")):
+            if p.is_dir():
+                result[str(p)] = "dir"
+            else:
+                st = p.stat()
+                result[str(p)] = (st.st_size, st.st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest())
+    return result
