@@ -27,6 +27,17 @@
      - ほかの数（人数・日数・割合・年など）は、すべて根拠の文の中にあること（「令和8年」は 2026 と 8 の両方と読む）。
      - 補助率（1/2 など）は、「1/2」か「2分の1」の形で根拠の文にあること。
      - 日付と時刻は、月日（と時刻）が根拠の文にあること。年は、根拠の文の同じ日付に書いてあれば合っていること。
+     - 期間（期限の「出来事からの期間」の期間、繰り返しの間隔、提出期間の長さ）は、数のすぐ後ろに単位の語があること
+       （日：「日」。か月：「か月」「ヶ月」「カ月」「ヵ月」「ケ月」「箇月」「月間」。年：「年」「か年」など）。
+       数が 1 なら「毎日」「毎月」「毎年」「年1回」も合っているものとする。「3月14日」の「14日」、「令和9年」の「9年」は期間と読まない。
+       「営業日」「週間」は、どの単位とも合わない（要確認にして人が確かめる）。
+     - 出来事からの期間の「出来事」は、決まった出来事の言葉（採択・交付決定・交付申請・完了など。EVENT_WORDS）を含むなら、
+       その言葉が、根拠の文のその期間の前（1つ前の期間の後から）にあること。前に出来事の言葉が1つもなければ、期間の後ろ
+       （次の期間まで）にあればよい。手続きの段階の id なら、その段階の名前で見る。決まった言葉を含まない出来事は照らさない（仮）。
+     - 提出期間の「始まりの月」は、「4月」のように、数のすぐ後ろに「月」があること。
+     - 経費の上限の「何の上限」が「補助金額」なら、補助金額に当たる言葉（補助金額・補助額・補助上限額・交付申請額など）が
+       根拠の文にあること。「補助対象経費」なら、根拠の文が補助金額だけをはっきり言っていない（補助金額・補助金の額・交付申請額が
+       あって、補助対象経費・対象経費・対象となる経費がない）こと（仮。資料が「補助上限額」と書いて経費の上限を言うことがあるため）。
      - 文字の値は、そのまま根拠の文にあるか、文字の2字ずつの組の半分以上（仮）が根拠の文にあること
        （値は根拠の文を短く言い換えてよいため。DESIGN 9章）。短い文字（6字まで）は、そのまま根拠の文にあること。
        言葉を比べるときは、句読点・かっこと数字を除く（数は上で別に照らす）。
@@ -74,8 +85,9 @@ TEXT_COVERAGE = 0.5  # 文字の値の2字ずつの組のうち、根拠の文�
 # 版の名前の語（DESIGN 5章「版のファイルを増やさない」）。M0a で版の名前を見張る道具ができたら、そちらの一覧にそろえる（仮）
 VERSION_WORDS = re.compile(r"(?i)(?:[_\-\s・](?:v|ver\.?)\d+|最終|修正版|コピー|複製|copy|バックアップ|backup)")
 
-# 文字としては照らさない欄（スキーマの決まった言葉や、手続きの段階の id）
-SKIP_TEXT_KEYS = {"種類", "単位", "何の上限", "税", "旬", "出来事"}
+# 文字としては照らさない欄（スキーマの決まった言葉。旬は日付と一緒に照らす。
+# 単位・出来事・何の上限は、期間と経費の上限の照らし方で別に照らす）
+SKIP_TEXT_KEYS = {"種類", "旬"}
 # 金額（円）の欄（値の中の欄の名前）
 MONEY_KEYS = {"金額"}
 # 補助額の特例のうち、値が金額のもの（スキーマで「補助率の置き換え」のほかは出典つきの金額）
@@ -116,6 +128,47 @@ CHAPTER_FORM = {
 
 # 「税」の欄の言葉と、根拠の文にあるべき言葉
 TAX_WORDS = {"税抜き": ("税抜", "税別"), "税込み": ("税込",)}
+
+# 期間の単位ごとの、根拠の文の書き方（数のすぐ後ろに付く語）と、数の前に来てはいけない字
+# （日：「3月14日」の 14 は日付。年：「令和9年」の 9 は元号の年。どれも、数の途中から読まない）
+UNIT_FORMS = {
+    "日": ("日",),
+    "か月": ("か月", "カ月", "ヵ月", "ヶ月", "ケ月", "箇月", "月間"),
+    "年": ("年", "か年", "カ年", "ヵ年", "ヶ年", "ケ年", "箇年"),
+}
+_UNIT_LEFT = {"日": r"(?<![\d.月])", "か月": r"(?<![\d.])", "年": r"(?<![\d.和成])"}
+_UNIT_DIGITS = {"日": r"\d+", "か月": r"\d+", "年": r"\d{1,3}"}  # 4桁の年（2027年）は期間と読まない
+# 数が 1 の期間の、数を書かない言い方（間隔の「毎年」など）
+_EVERY = {"日": r"毎日", "か月": r"毎月", "年": r"毎年|(?<![\dかカヵヶケ箇])年に?1回"}
+
+
+def _unit_alt(unit: str) -> str:
+    return "(?:" + "|".join(re.escape(w) for w in UNIT_FORMS[unit]) + ")"
+
+
+# 根拠の文の中の、どの単位の期間にも当たる所（出来事を、どの期間の前の文で探すかを決めるのに使う）
+_ANY_PERIOD = re.compile("|".join(_UNIT_LEFT[u] + _UNIT_DIGITS[u] + _unit_alt(u) for u in UNIT_FORMS))
+
+# 決まった出来事の言葉（仮）。出来事の値がこの言葉を含めば、根拠の文の期間の前（か後ろ）に、同じ出来事の言葉があることを求める
+EVENT_WORDS = (
+    ("採択", ("採択",)),
+    ("交付決定", ("交付決定", "交付の決定")),
+    ("交付申請", ("交付申請", "交付の申請")),
+    ("完了", ("完了",)),
+    ("実績報告", ("実績報告", "実績の報告")),
+    ("確定", ("確定",)),
+    ("支払", ("支払", "入金")),
+    ("契約", ("契約",)),
+    ("発注", ("発注",)),
+    ("締切", ("締切", "締め切")),
+)
+_ALL_EVENT_WORDS = tuple(w for _name, words in EVENT_WORDS for w in words)
+
+# 経費の上限の「何の上限」（仮）。補助金額の上限は、補助金額に当たる言葉がはっきりあるときだけ通す。
+# 補助対象経費の上限は、根拠の文が補助金額だけをはっきり言うときだけ外す（資料が「補助上限額」と書いて経費の上限を言うことがあるため）
+SUBSIDY_WORDS = ("補助金額", "補助金の額", "補助額", "補助上限額", "補助金の上限", "交付申請額")
+SUBSIDY_CLEAR = ("補助金額", "補助金の額", "交付申請額")
+COST_CLEAR = ("補助対象経費", "対象経費", "対象となる経費")
 
 
 class InputError(ValueError):
@@ -427,6 +480,98 @@ def _iso_problems(value: str, evidence: str, term: Optional[str] = None) -> Opti
                          int(mi) if mi else None, evidence, term)
 
 
+# ---- 期間・出来事・始まりの月・何の上限 ----
+
+
+def _is_period(value: Any) -> bool:
+    return (isinstance(value, dict) and set(value) == {"数", "単位"} and value["単位"] in UNIT_FORMS
+            and isinstance(value["数"], int) and not isinstance(value["数"], bool))
+
+
+def _period_label(period: Dict) -> str:
+    return f"{period['数']}{period['単位']}"
+
+
+def period_spans(period: Dict, evidence: str) -> List[Tuple[int, int]]:
+    """根拠の文（数を読む形）の中で、期間（数のすぐ後ろに単位の語）に当たる所の（始め、終わり）の一覧。"""
+    text = _NUM_COMMA.sub("", evidence)
+    unit, n = period["単位"], period["数"]
+    if unit == "年" and n >= 1000:
+        return []  # 4桁の年は、暦の年と区別できない
+    pattern = _UNIT_LEFT[unit] + re.escape(str(n)) + _unit_alt(unit)
+    if n == 1:
+        pattern += "|" + _EVERY[unit]
+    return [(m.start(), m.end()) for m in re.finditer(pattern, text)]
+
+
+def period_problems(period: Dict, evidence: str, found: Numbers) -> List[str]:
+    """期間（数と単位）が、根拠の文に「数のすぐ後ろに単位の語」の形であるか。"""
+    if period_spans(period, evidence):
+        return []
+    n, unit = period["数"], period["単位"]
+    if n != 1 and Decimal(n) not in found.numbers:
+        return [f"数「{n}」が根拠の文にありません"]
+    words = "」「".join(UNIT_FORMS[unit][:3])
+    every = f"。数が 1 なら「{_EVERY[unit].split('|')[0]}」も見ます" if n == 1 else ""
+    return [f"期間「{_period_label(period)}」が根拠の文にありません"
+            f"（根拠の文の「{n}」のすぐ後ろに、単位の語「{words}」などがありません{every}）"]
+
+
+def _event_concepts(event: str) -> List[Tuple[str, Tuple[str, ...]]]:
+    text = normalize(event)
+    return [(name, words) for name, words in EVENT_WORDS if any(w in text for w in words)]
+
+
+def event_problems(event: Any, period: Dict, evidence: str, steps: Optional[Dict[str, str]]) -> List[str]:
+    """出来事からの期間の「出来事」が、根拠の文のその期間の前（前に出来事の言葉がなければ後ろ）にあるか。
+
+    前の文は、1つ前の期間（どの単位でも）の後から、その期間の前まで。後ろの文は、その期間の後から次の期間の前まで。
+    決まった出来事の言葉（EVENT_WORDS）を含まない出来事は照らさない（手続きの段階の id は、その段階の名前で見る）。
+    """
+    if not isinstance(event, str) or not event:
+        return []
+    name = steps.get(event) if steps and event in steps else event
+    concepts = _event_concepts(name or "")
+    if not concepts:
+        return []
+    text = _NUM_COMMA.sub("", evidence)
+    spans = period_spans(period, text)
+    if not spans:
+        return []  # 期間がないことは、期間の照らしで書く
+    bounds = [(m.start(), m.end()) for m in _ANY_PERIOD.finditer(text)]
+    for start, end in spans:
+        before_from = max([e for s, e in bounds if e <= start] + [0])
+        after_to = min([s for s, e in bounds if s >= end] + [len(text)])
+        before, after = text[before_from:start], text[end:after_to]
+        place = before if any(w in before for w in _ALL_EVENT_WORDS) else before + after
+        if all(any(w in place for w in words) for _n, words in concepts):
+            return []
+    shown = "・".join(words[0] for _n, words in concepts)
+    via = f"（手続きの段階「{name}」）" if name != event else ""
+    return [f"出来事「{event}」{via}に当たる言葉（{shown}）が、根拠の文の期間「{_period_label(period)}」の前にありません"]
+
+
+def month_problems(month: int, evidence: str) -> List[str]:
+    """提出期間の「始まりの月」が、根拠の文に「4月」の形であるか（「4か月」の 4 は月と読まない）。"""
+    text = _NUM_COMMA.sub("", evidence)
+    if re.search(rf"(?<![\d.]){month}月", text):
+        return []
+    return [f"始まりの月「{month}月」が根拠の文にありません"]
+
+
+def limit_kind_problems(kind: Any, evidence: str) -> List[str]:
+    """経費の上限の「何の上限」が、根拠の文と食い違わないか（SUBSIDY_WORDS・SUBSIDY_CLEAR・COST_CLEAR の注を見る）。"""
+    if kind == "補助金額":
+        if any(w in evidence for w in SUBSIDY_WORDS):
+            return []
+        return [f"「補助金額」の上限に当たる言葉（{'・'.join(SUBSIDY_WORDS)}）が根拠の文にありません"]
+    if kind == "補助対象経費":
+        clear = [w for w in SUBSIDY_CLEAR if w in evidence]
+        if clear and not any(w in evidence for w in COST_CLEAR):
+            return [f"根拠の文は「{clear[0]}」の上限で、「補助対象経費」の上限に当たる言葉（{'・'.join(COST_CLEAR)}）がありません"]
+    return []
+
+
 # ---- 値が根拠の文の中にあるか ----
 
 
@@ -460,10 +605,12 @@ def _short(text: str, limit: int = 30) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def value_problems(value: Any, evidence: str, key: Optional[str] = None, money: bool = False) -> List[str]:
+def value_problems(value: Any, evidence: str, key: Optional[str] = None, money: bool = False,
+                   steps: Optional[Dict[str, str]] = None) -> List[str]:
     """値（出典つき値の「値」）が、根拠の文（数を読む形にそろえ、切れ端を「|」でつないだもの）の中にあるか。
 
     money が True なら、値は金額（円）：根拠の文の円の付いた数を円にしたものと同じであることを求める。
+    steps は、手続きの段階の id と名前（出来事が段階の id のとき、名前で照らすため）。
     """
     found = scan_numbers(evidence, evidence=True)
     if value is None:
@@ -490,7 +637,7 @@ def value_problems(value: Any, evidence: str, key: Optional[str] = None, money: 
     if isinstance(value, list):
         problems = []
         for i, item in enumerate(value):
-            problems += [f"{i + 1}つ目：{p}" for p in value_problems(item, evidence, key, money)]
+            problems += [f"{i + 1}つ目：{p}" for p in value_problems(item, evidence, key, money, steps)]
         return problems
     if isinstance(value, dict):
         if set(value) == {"日時"} and isinstance(value["日時"], str):
@@ -499,8 +646,21 @@ def value_problems(value: Any, evidence: str, key: Optional[str] = None, money: 
             m = re.match(r"^(\d{4})-(\d{2})$", value["年月"])
             if m:
                 return date_problems(int(m.group(1)), int(m.group(2)), None, None, None, evidence, value.get("旬"))
+        if _is_period(value):
+            # 期間（間隔・提出期間の長さも）：数と単位を組で照らす（数だけが別の所にあっても通さない）
+            return period_problems(value, evidence, found)
         problems = []
+        handled: Set[str] = set()
+        if value.get("種類") == "出来事からの期間" and _is_period(value.get("期間")):
+            problems += period_problems(value["期間"], evidence, found)
+            problems += event_problems(value.get("出来事"), value["期間"], evidence, steps)
+            handled |= {"出来事", "期間"}
+        if "何の上限" in value:
+            problems += limit_kind_problems(value["何の上限"], evidence)
+            handled.add("何の上限")
         for k, item in value.items():
+            if k in handled:
+                continue
             if k == "税" and item in TAX_WORDS:
                 if not any(w in evidence for w in TAX_WORDS[item]):
                     problems.append(f"「{item}」（{'・'.join(TAX_WORDS[item])}）が根拠の文にありません")
@@ -510,7 +670,10 @@ def value_problems(value: Any, evidence: str, key: Optional[str] = None, money: 
             if k == "日時" and isinstance(item, str):
                 problems += _iso_problems(item, evidence) or []
                 continue
-            problems += value_problems(item, evidence, k)
+            if k == "始まりの月" and isinstance(item, int) and not isinstance(item, bool):
+                problems += month_problems(item, evidence)
+                continue
+            problems += value_problems(item, evidence, k, steps=steps)
         return problems
     return []
 
@@ -746,6 +909,9 @@ def restore(data: Dict) -> None:
 def verify(data: Dict, texts: Texts) -> Result:
     """data（形を確かめた後の、章ごとの結果の「制度データ」か、制度データの全体）を、その場で直す。"""
     result = Result()
+    # 手続きの段階の id と名前（出来事が段階の id のとき、名前で照らす）
+    steps = {s["id"]: s["名前"] for s in data.get("手続きの段階") or []
+             if isinstance(s, dict) and isinstance(s.get("id"), str) and isinstance(s.get("名前"), str)}
 
     def visit(node: Any, path: List[Any], parent: Any) -> None:
         if _is_sourced_value(node):
@@ -754,7 +920,7 @@ def verify(data: Dict, texts: Texts) -> Result:
                 result.checked += 1
                 problems, evidence = evidence_problems(node, texts)
                 if evidence:
-                    problems += value_problems(node.get("値"), evidence, money=_money_place(path, parent))
+                    problems += value_problems(node.get("値"), evidence, money=_money_place(path, parent), steps=steps)
                 if problems:
                     before = node["状態"]
                     node["状態"] = CHECK
@@ -997,7 +1163,8 @@ def error_report(errors: List[str]) -> str:
 
 
 __all__ = [
-    "CHAPTER_FORM", "InputError", "PlaceError", "Result", "Texts", "error_report", "find_case", "form_for",
-    "fragments", "inside", "is_full", "normalize", "path_label", "report", "restore", "run", "scan_numbers",
-    "shape_errors", "strip_own_notes", "text_found", "value_problems", "verify",
+    "CHAPTER_FORM", "InputError", "PlaceError", "Result", "Texts", "error_report", "event_problems", "find_case",
+    "form_for", "fragments", "inside", "is_full", "limit_kind_problems", "month_problems", "normalize", "path_label",
+    "period_problems", "period_spans", "report", "restore", "run", "scan_numbers", "shape_errors", "strip_own_notes",
+    "text_found", "value_problems", "verify",
 ]
