@@ -53,6 +53,28 @@ def test_version_names_are_caught(name) -> None:
     assert vn.version_label(name) is not None, name
 
 
+@pytest.mark.parametrize("name, label", [
+    # 前に区切りなしで付けた版の番号（前が英字でなければ当てる）
+    ("計画書v2.docx", "「_v2」のような版の番号"), ("計画書ver2.docx", "「_v2」のような版の番号"),
+    ("計画書Ver.2.docx", "「_v2」のような版の番号"), ("計画書rev3.docx", "「_v2」のような版の番号"),
+    ("その1v2.md", "「_v2」のような版の番号"), ("その1version2.md", "「_v2」のような版の番号"),
+    ("計画書第2版.docx", "「第2版」のような版の番号"), ("計画書2版.docx", "「第2版」のような版の番号"),
+    ("その1第2版.md", "「第2版」のような版の番号"), ("その1第３稿.md", "「第2版」のような版の番号"),
+    # 名前の終わりの「最終」「最新」「修正」
+    ("申請書最終.docx", "「最終」"), ("その1最終.md", "「最終」"), ("申請書最新.docx", "「最新」"),
+    ("申請書修正.docx", "「修正版」"), ("その1修正.md", "「修正版」"), ("その1修正済み.md", "「修正版」"),
+    ("その1修正後.md", "「修正版」"), ("見積書差し替え.md", "「修正版」"), ("その1訂正.md", "「修正版」"),
+])
+def test_version_words_glued_to_the_name_are_caught(name, label) -> None:
+    """名前に区切りなしで付けた「v2」「第2版」「最終」「修正」も当てる（DESIGN 5章の「最終」は名前の終わりに来る）。"""
+    assert vn.version_label(name) == label, (name, vn.version_label(name))
+
+
+@pytest.mark.parametrize("name", ["申請書最終", "申請書第2版", "申請書v2", "申請書修正済み"])
+def test_version_words_glued_to_the_folder_name_are_caught(name) -> None:
+    assert vn.version_label(name, is_dir=True) is not None, name
+
+
 def test_nfd_and_full_width_names_are_caught() -> None:
     """濁点が分かれた形（NFD）や全角の英数字でも当たる。"""
     for name in ("その1_コピー.docx", "その1_バックアップ.docx", "その1 のコピー.docx"):
@@ -75,6 +97,9 @@ def test_nfd_and_full_width_names_are_caught() -> None:
     "差し替え用の説明.md", "旧工場の写真.jpg", "最終年度の目標.md", "公募要領_第8回.pdf", "第8回の要点.md",
     "overview.md", "renewal.md", "copyright.txt", "development.md", "version_names.md", "r6_koubover8_ip20.pdf",
     "p001.txt", "1年目.md", "様式第1.docx", "バージョン管理の説明.md",
+    # 区切りなしの形を当てても、言葉の途中や英単語の中には当てない
+    "最終確認.md", "最新情報.md", "修正点.md", "server2.md", "dev2.md", "preview3.md", "第2版の説明.md", "契約更新.pdf",
+    "富士コピー.pdf", "確定申告書.pdf",
 ])
 def test_ordinary_names_pass(name) -> None:
     assert vn.version_label(name) is None, (name, vn.version_label(name))
@@ -103,6 +128,11 @@ def test_original_of_finds_the_file_without_the_version_words(tmp_path) -> None:
     assert vn.original_of(folder, "申請書/その1_修正版.md") == "申請書/その1.md"
     assert vn.original_of(folder, "申請書/その1.docx.bak") == "申請書/その1.docx"
     assert vn.original_of(folder, "申請書/入力シート (1).xlsx") == "申請書/入力シート.xlsx"
+    # 区切りなしで付けた形も、版の言葉を除いて元を探す
+    assert vn.original_of(folder, "申請書/その1最終.docx") == "申請書/その1.docx"
+    assert vn.original_of(folder, "申請書/その1第2版.docx") == "申請書/その1.docx"
+    assert vn.original_of(folder, "申請書/その1v2.docx") == "申請書/その1.docx"
+    assert vn.original_of(folder, "申請書/その1修正.md") == "申請書/その1.md"
     assert vn.original_of(folder, "申請書/その2_v2.docx") is None
     assert vn.original_of(folder, "申請書/v2.docx") is None
 
@@ -144,6 +174,15 @@ def test_pre_tool_use_denies_new_version_files(company) -> None:
     reason = vt.denied_reason(company.pre("Write", {"file_path": str(folder / "今の状態_最終.html"), "content": "x"}))
     assert "「最終」" in reason
     assert not (folder / vt.APPLICATION / "その1_v2.md").exists()
+
+
+@pytest.mark.parametrize("name", ["その1第2版.md", "その1v2.md", "その1最終.md", "その1修正.md"])
+def test_pre_tool_use_denies_version_words_glued_to_the_name(company, name) -> None:
+    """区切りなしで付けた版の言葉の新しいファイルも拒み、元のファイルを示す。"""
+    reason = vt.denied_reason(company.pre("Write", {"file_path": str(company.folder / vt.APPLICATION / name),
+                                                    "content": "x"}))
+    assert reason.startswith(f"{VERSION_REASON}（{name}：")
+    assert f"元のファイル（{vt.APPLICATION}/その1.md）を直してください" in reason
 
 
 def test_pre_tool_use_resolves_relative_and_nfd_paths(company) -> None:
@@ -200,6 +239,17 @@ def test_stop_finds_version_files_made_by_code(company) -> None:
                if r["版"] == company.log()[0]["版"]}
     assert changes == {f"{vt.APPLICATION}/その1.md": ("変えた", "ツール", "その1を直して"),
                        f"{vt.APPLICATION}/その1_v2.md": ("消した", "ツール", "その1を直して")}
+
+
+def test_stop_finds_version_words_glued_to_the_name(company) -> None:
+    """その場のコードが区切りなしで版の言葉を付けたファイル（その1最終.md など）も、応答の終わりに見つける。"""
+    company.say("その1を直して")
+    for name in ("その1最終.md", "その1第2版.md", "その1v2.md"):
+        company.write(f"{vt.APPLICATION}/{name}", "x")
+    reason = company.stop()["reason"]
+    for name, label in (("その1最終.md", "「最終」"), ("その1第2版.md", "「第2版」のような版の番号"),
+                        ("その1v2.md", "「_v2」のような版の番号")):
+        assert f"{vt.APPLICATION}/{name}（{label}） → 元のファイル：{vt.APPLICATION}/その1.md" in reason, name
 
 
 def test_stop_reports_version_files_made_while_continuing(company) -> None:

@@ -193,6 +193,13 @@ def changed_paths(folder: Path) -> List[str]:
 #   錠を持つ処理がもう動いていなければ、すぐに錠を外し、dulwich が残した錠（`.git/index.lock`、
 #   `.git/objects/xx/….lock` など）と書きかけのファイルも片付けてから残す。
 #
+# 1つのファイルやフォルダを読めないとき（権限がない、読む途中で失敗した）と、比べた後に消えたときは、
+# そのファイルだけを飛ばし、ほかのファイルは残す（場面ごと止めない）。
+# - 読めないものは、版に残さず（消したことにもしない）、開いたときに Claude に知らせる。最初に見つけた場面の
+#   だれ・理由を `残り.json` に控え、読めるようになったら、その控えのだれ・理由で残す。
+# - 比べた後に消えたものは、次の場面で比べ直す。
+# - .git の側（中身や記録を書く所）の失敗は、これまでどおり場面ごと止める（hooks/version_hooks.py が控えて知らせる）。
+#
 # 版のメッセージの形（人が git で読んでも分かり、M0b・M0c の道具が読み返せる形）：
 #
 #   ツール：その1.docx ほか1件
@@ -278,6 +285,7 @@ class Change:
     index_key: Optional[bytes] = None  # 履歴の中の名前（変えた・消した。NFD のこともある）
     unsure: bool = False  # 時間の上限で、中身が変わったかを比べきれなかった（次の場面で比べる）
     entry: Optional[IndexEntry] = None  # 残すときの記録（中身を書いた後）
+    unreadable: bool = False  # 読めなかった（権限がないなど）。版に残さず、知らせる
 
 
 @dataclass
@@ -289,6 +297,8 @@ class Result:
     deferred: List[Change] = field(default_factory=list)  # 時間の上限で、次の場面に回したもの
     too_large: List[Change] = field(default_factory=list)  # 大きすぎて、版に残さないもの
     known_dirs: Set[str] = field(default_factory=set)  # この場面より前の版にあったフォルダ
+    unreadable: List[Change] = field(default_factory=list)  # 読めなくて、版に残さないファイル
+    unreadable_dirs: List[str] = field(default_factory=list)  # 中を読めないフォルダ（会社のフォルダからの場所）
 
 
 @dataclass
@@ -480,12 +490,46 @@ def _under_skipped_dir(rel: str) -> bool:
     return any(_skipped_dir("/".join(parts[:i])) for i in range(1, len(parts)))
 
 
-def _work_files(folder: Path, repo: Repo) -> Dict[str, str]:
-    """作業のファイルの一覧（NFC の場所 → 実際の場所）。.gitignore にあるものと、履歴に入れない場所は除く。"""
-    ignore = IgnoreFilterManager.from_repo(repo)
+def _vanished(error: OSError) -> bool:
+    """そのファイル（か、途中のフォルダ）がもうないときの失敗か。"""
+    return isinstance(error, (FileNotFoundError, NotADirectoryError))
+
+
+class _UnreadableDir(OSError):
+    """中を読めないフォルダ（権限がないなど。その中の .gitignore を読めないときを含む）。path は会社のフォルダから。"""
+
+    def __init__(self, path: str, error: OSError) -> None:
+        super().__init__(error.errno, f"フォルダを読めません（{path or '.'}）: {error.strerror}")
+        self.path = path.rstrip("/")
+
+
+class _WalkIgnore(IgnoreFilterManager):
+    """作業のファイルを数えるときだけ使う除外の判定。.gitignore を読めないフォルダを、読めないフォルダとして返す
+    （dulwich は、ない以外の失敗をそのまま上げるため、そのままでは1つのフォルダで場面ごと止まる）。"""
+
+    def _load_path(self, path: str):
+        try:
+            return super()._load_path(path)
+        except OSError as error:
+            raise _UnreadableDir(path, error) from error
+
+
+def _work_files(folder: Path, repo: Repo) -> Tuple[Dict[str, str], List[str]]:
+    """作業のファイルの一覧（NFC の場所 → 実際の場所）と、中を読めないフォルダの一覧（NFC の場所）。
+    .gitignore にあるものと、履歴に入れない場所は除く。会社のフォルダそのものを読めなければ、場面ごと止める。"""
+    ignore = _WalkIgnore.from_repo(repo)
     root = str(folder)
     found: Dict[str, str] = {}
-    for dirpath, dirnames, filenames in os.walk(root):
+    unreadable: List[str] = []
+
+    def walk_error(error: OSError) -> None:
+        where = error.filename if isinstance(error.filename, str) else ""
+        rel = os.path.relpath(where, root) if where else "."
+        if rel == "." or rel.startswith(".."):
+            raise error
+        unreadable.append(nfc(rel).replace(os.sep, "/"))
+
+    for dirpath, dirnames, filenames in os.walk(root, onerror=walk_error):
         keep = []
         for name in sorted(dirnames):
             rel = _rel(dirpath, root, name)
@@ -495,7 +539,16 @@ def _work_files(folder: Path, repo: Repo) -> Dict[str, str]:
                 if not ignore.is_ignored(rel):
                     found.setdefault(rel, full)
                 continue
-            if _skipped_dir(rel) or ignore.is_ignored(rel + "/"):
+            if _skipped_dir(rel):
+                continue
+            try:
+                ignored = ignore.is_ignored(rel + "/")
+            except _UnreadableDir as error:
+                if error.path != rel:
+                    raise  # 上のフォルダ（会社のフォルダそのものなど）の失敗
+                unreadable.append(rel)
+                continue
+            if ignored:
                 continue
             keep.append(name)
         dirnames[:] = keep
@@ -504,23 +557,30 @@ def _work_files(folder: Path, repo: Repo) -> Dict[str, str]:
             if ignore.is_ignored(rel):
                 continue
             found.setdefault(rel, os.path.join(dirpath, name))
-    return found
+    return found, unreadable
 
 
 def _exists_exactly(folder: Path, rel: str) -> Optional[str]:
-    """その名前のファイルが（大文字と小文字・濁点の形を区別して）あれば、実際の場所を返す。"""
+    """その名前のファイルが（大文字と小文字・濁点の形を区別して）あれば、実際の場所を返す。なければ None。
+    途中のフォルダを読めなければ _UnreadableDir（あるかどうか分からないので、消したことにしない）。"""
     parts = rel.split("/")
     current = str(folder)
-    for part in parts:
+    for i, part in enumerate(parts):
         try:
             names = os.listdir(current)
-        except OSError:
-            return None
+        except OSError as error:
+            if _vanished(error):
+                return None
+            raise _UnreadableDir("/".join(parts[:i]), error) from error
         match = next((n for n in names if nfc(n) == part), None)
         if match is None:
             return None
         current = os.path.join(current, match)
     return current if not os.path.isdir(current) or os.path.islink(current) else None
+
+
+def _under(rel: str, dirs: Sequence[str]) -> bool:
+    return any(rel.startswith(d + "/") for d in dirs)
 
 
 def _time_ns(value) -> Optional[int]:
@@ -582,6 +642,8 @@ def _hash_file(fs_path: str, st: os.stat_result, deadline: Optional[float]) -> O
 WROTE = "書いた"
 OUT_OF_TIME = "時間切れ"
 CHANGING = "書き換え中"
+VANISHED = "消えた"
+UNREADABLE = "読めない"
 
 
 def _write_blob(repo: Repo, fs_path: str, deadline: Optional[float]) -> Tuple[str, Optional[os.stat_result], bytes]:
@@ -589,45 +651,58 @@ def _write_blob(repo: Repo, fs_path: str, deadline: Optional[float]) -> Tuple[st
 
     1MB ごとに読みながら印を計算して書きかけのファイルに書き、終わったら印の名前に移す（全部をメモリに読まない。
     止められても、書きかけのファイルが残るだけで、ほかの錠は残らない）。時間の上限を過ぎたら、途中でやめる。
+    作業のファイルを読む所の失敗は、結果（消えた・読めない）で返す（そのファイルだけを飛ばすため）。
+    .git に書く所の失敗は、そのまま上げる（場面ごと止める）。
     """
-    st = os.lstat(fs_path)
+    try:
+        st = os.lstat(fs_path)
+        if stat_mode.S_ISLNK(st.st_mode):
+            blob = _link_blob(fs_path)
+        else:
+            # 書きかけのファイルを作る前に開く（読めないときに、書きかけを残さない）
+            src = open(fs_path, "rb")
+    except OSError as error:
+        return (VANISHED if _vanished(error) else UNREADABLE), None, b""
     if stat_mode.S_ISLNK(st.st_mode):
-        blob = _link_blob(fs_path)
         repo.object_store.add_object(blob)
         return WROTE, st, blob.id
-    objects = os.path.join(repo.controldir(), "objects")
-    level = 0 if st.st_size >= STORE_ONLY_BYTES else -1
-    fd, tmp = tempfile.mkstemp(prefix=TMP_OBJECT_PREFIX, dir=objects)
-    try:
-        header = b"blob %d\x00" % st.st_size
-        sha = hashlib.sha1(header)
-        packer = zlib.compressobj(level)
-        total = 0
-        with os.fdopen(fd, "wb") as out, open(fs_path, "rb") as src:
-            out.write(packer.compress(header))
-            while total <= st.st_size:
-                if _past(deadline):
-                    return OUT_OF_TIME, st, b""
-                chunk = src.read(CHUNK_BYTES)
-                if not chunk:
-                    break
-                total += len(chunk)
-                sha.update(chunk)
-                out.write(packer.compress(chunk))
-            out.write(packer.flush())
-        if total != st.st_size:
-            return CHANGING, st, b""
-        hexsha = sha.hexdigest()
-        final_dir = os.path.join(objects, hexsha[:2])
-        final = os.path.join(final_dir, hexsha[2:])
-        if not os.path.exists(final):
-            os.makedirs(final_dir, exist_ok=True)
-            os.chmod(tmp, 0o444)
-            os.replace(tmp, final)
-        return WROTE, st, hexsha.encode("ascii")
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(tmp)
+    with src:
+        objects = os.path.join(repo.controldir(), "objects")
+        level = 0 if st.st_size >= STORE_ONLY_BYTES else -1
+        fd, tmp = tempfile.mkstemp(prefix=TMP_OBJECT_PREFIX, dir=objects)
+        try:
+            header = b"blob %d\x00" % st.st_size
+            sha = hashlib.sha1(header)
+            packer = zlib.compressobj(level)
+            total = 0
+            with os.fdopen(fd, "wb") as out:
+                out.write(packer.compress(header))
+                while total <= st.st_size:
+                    if _past(deadline):
+                        return OUT_OF_TIME, st, b""
+                    try:
+                        chunk = src.read(CHUNK_BYTES)
+                    except OSError:
+                        return UNREADABLE, st, b""  # 読む途中の失敗（ディスクの不具合、同期の途中など）
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    sha.update(chunk)
+                    out.write(packer.compress(chunk))
+                out.write(packer.flush())
+            if total != st.st_size:
+                return CHANGING, st, b""
+            hexsha = sha.hexdigest()
+            final_dir = os.path.join(objects, hexsha[:2])
+            final = os.path.join(final_dir, hexsha[2:])
+            if not os.path.exists(final):
+                os.makedirs(final_dir, exist_ok=True)
+                os.chmod(tmp, 0o444)
+                os.replace(tmp, final)
+            return WROTE, st, hexsha.encode("ascii")
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp)
 
 
 def _same_as_entry(fs_path: str, entry: IndexEntry,
@@ -650,12 +725,14 @@ def _same_as_entry(fs_path: str, entry: IndexEntry,
 
 
 def _compare(folder: Path, repo: Repo, index,
-             deadline: Optional[float] = None) -> Tuple[List[Change], Dict[bytes, IndexEntry]]:
-    """最後の版（index）と作業のファイルを比べる。変わったものと、書き直すだけの記録を返す。
+             deadline: Optional[float] = None) -> Tuple[List[Change], Dict[bytes, IndexEntry], List[str]]:
+    """最後の版（index）と作業のファイルを比べる。変わったものと、書き直すだけの記録と、中を読めないフォルダを返す。
 
     時間の上限で中身を比べきれなかったものは、変えたもの（unsure）として返す。
+    読めないもの（履歴にあって、中を読めないフォルダの中にあるものを含む）は、変えたかどうか分からないもの
+    （unreadable）として返す（消したことにはしない）。比べる間に消えたものは返さない（次の場面で比べ直す）。
     """
-    files = _work_files(folder, repo)
+    files, unreadable_dirs = _work_files(folder, repo)
     tracked: Dict[str, Tuple[bytes, object]] = {}
     for key, entry in index.items():
         tracked.setdefault(nfc(key.decode("utf-8", "surrogateescape")), (key, entry))
@@ -669,28 +746,41 @@ def _compare(folder: Path, repo: Repo, index,
         key, entry = tracked[name]
         if fs_path is None:
             # 履歴にあって一覧にないもの。.gitignore に後から足されたものは、Git と同じく続けて見る
-            fs_path = None if _under_skipped_dir(name) else _exists_exactly(folder, name)
+            if _under(name, unreadable_dirs):
+                changes.append(Change(name, MODIFIED, index_key=key, unreadable=True))
+                continue
+            try:
+                fs_path = None if _under_skipped_dir(name) else _exists_exactly(folder, name)
+            except _UnreadableDir:
+                changes.append(Change(name, MODIFIED, index_key=key, unreadable=True))
+                continue
             if fs_path is None:
                 changes.append(Change(name, DELETED, index_key=key))
                 continue
         if isinstance(entry, ConflictedIndexEntry):
             changes.append(Change(name, MODIFIED, fs_path=fs_path, index_key=key))
             continue
-        same, fresh = _same_as_entry(fs_path, entry, deadline)
+        try:
+            same, fresh = _same_as_entry(fs_path, entry, deadline)
+        except OSError as error:
+            # 作業のファイルを読む所の失敗だけ（.git には書かない）
+            if not _vanished(error):
+                changes.append(Change(name, MODIFIED, fs_path=fs_path, index_key=key, unreadable=True))
+            continue
         if same is None:
             changes.append(Change(name, MODIFIED, fs_path=fs_path, index_key=key, unsure=True))
         elif not same:
             changes.append(Change(name, MODIFIED, fs_path=fs_path, index_key=key))
         elif fresh is not None:
             refresh[key] = fresh
-    return changes, refresh
+    return changes, refresh, unreadable_dirs
 
 
 def pending_changes(folder: Path) -> List[Change]:
-    """最後の版から変わったファイル（読むだけ。何も書かない）。"""
+    """最後の版から変わったファイル（読むだけ。何も書かない）。読めないファイルも含む（unreadable）。"""
     repo = Repo(str(folder))
     try:
-        changes, _ = _compare(folder, repo, repo.open_index())
+        changes, _, _ = _compare(folder, repo, repo.open_index())
     finally:
         repo.close()
     return changes
@@ -845,7 +935,7 @@ def record_scene(folder: Path, who: str, reason: str, when: Optional[datetime] =
         try:
             index = repo.open_index()
             result.known_dirs = _dirs_of(index)
-            changes, refresh = _compare(folder, repo, index, deadline)
+            changes, refresh, result.unreadable_dirs = _compare(folder, repo, index, deadline)
             for key, entry in refresh.items():
                 index[key] = entry
             wrote = bool(refresh)
@@ -854,14 +944,28 @@ def record_scene(folder: Path, who: str, reason: str, when: Optional[datetime] =
             for g_who, g_reason, items, earlier in _groups(changes, leftovers, who, reason):
                 done: List[Change] = []
                 deferred: List[Change] = []
+                skipped: List[Change] = []  # 読めなかったもの
+
+                def skip(ch: Change, note: dict) -> None:
+                    # 版に残さず、最初に見つけた場面のだれ・理由を控える（読めるようになったら、それで残す）
+                    ch.unreadable = True
+                    skipped.append(ch)
+                    result.unreadable.append(ch)
+                    kept[ch.path] = note
+
                 for ch in sorted(items, key=lambda c: (c.kind != DELETED, _size(c), c.path)):
                     if ch.kind == DELETED:
                         done.append(ch)
                         continue
                     note: dict = {"だれ": g_who, "理由": g_reason}
+                    if ch.unreadable or ch.fs_path is None:
+                        skip(ch, note)
+                        continue
                     try:
                         st = os.lstat(ch.fs_path)
-                    except OSError:
+                    except OSError as error:
+                        if not _vanished(error):
+                            skip(ch, note)
                         continue  # 比べた後に消えた。次の場面で比べ直す
                     if not (stat_mode.S_ISREG(st.st_mode) or stat_mode.S_ISLNK(st.st_mode)):
                         continue  # ファイルでないもの（名前付きの管など）は残さない
@@ -882,6 +986,11 @@ def record_scene(folder: Path, who: str, reason: str, when: Optional[datetime] =
                             ch.entry = _entry_from_stat(written, sha)
                             done.append(ch)
                             continue
+                        if status == VANISHED:
+                            continue  # 比べた後に消えた。次の場面で比べ直す
+                        if status == UNREADABLE:
+                            skip(ch, {"だれ": g_who, "理由": g_reason})
+                            continue
                         if status == OUT_OF_TIME:
                             note.update({"大きさ": st.st_size, "止めた回数": aborts + 1})
                     deferred.append(ch)
@@ -893,7 +1002,8 @@ def record_scene(folder: Path, who: str, reason: str, when: Optional[datetime] =
                 result.recorded += recorded
                 result.deferred += deferred
                 if not earlier:
-                    result.mine = recorded + deferred
+                    # 版の名前の確かめ（Stop）には、読めなかったものも入れる
+                    result.mine = recorded + deferred + skipped
             if wrote:
                 index.write()
             if kept != leftovers:

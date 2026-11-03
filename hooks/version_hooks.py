@@ -4,7 +4,8 @@
 - SessionStart（startup・resume・clear）：閉じている間に社長が手で変えたファイルを「社長」として残す。
   理由は「社長が手で変更」。compact では残さない（応答の途中で自動の compact が走ると、ツールが変えた分を
   社長の分として残してしまうため。社長の分は、次に送ったときに残る）。
-  版の記録が止まっているとき、大きすぎて残せないファイルがあるとき、残しきれずに次に回したファイルがあるときは、
+  版の記録が止まっているとき、大きすぎて残せないファイルがあるとき、読めないファイル・フォルダがあるとき
+  （権限がないなど。そのファイルだけを飛ばし、ほかは残す）、残しきれずに次に回したファイルがあるときは、
   開いたときの情報（additionalContext）で Claude に伝える。
 - UserPromptSubmit：社長が手で変えたファイルを「社長」として残し、社長の依頼の文を控える（Stop の理由に使う）。
   控えは `.hojokin/一時/版の記録/<セッション>.json`（版の履歴に入れない）。
@@ -17,6 +18,9 @@
   （decision: block）。Stop の hook で続けているとき（stop_hook_active）も、新しく足された分は伝える
   （伝えるのは新しく足されたものだけなので、同じものを繰り返し伝えない）。1つの応答で続けさせるのは
   MAX_BLOCKS 回までにし、超えた分は控えて、次の応答の終わりに伝える。
+  続けさせるときは、応答をまだ終わっていないもの（応答中）として控える。続きの中でツールが変えた分は、
+  続きの Stop で「ツール」として残し、社長が続きを止めて次を送ったときも「ツール」で残す（社長の分にしない）。
+  Stop のほかの hook が続けさせるときは、continue_response() で同じように控える（後のタスク）。
 
 1回の場面で版を残すのに使う時間には、hooks/run.sh の見張りより短い上限を設ける（BUDGET_SECONDS）。
 残しきれない分は次の場面に回す（lib/history.py）。版を残す処理が落ちたとき（.git が壊れた、書けないなど）は、
@@ -217,6 +221,12 @@ def _int(value) -> int:
 
 # ---- 開いたときに伝えること ----
 
+def _names(names: List[str]) -> str:
+    """名前を NOTE_LIST_MAX 件まで並べる（超えた分は件数）。"""
+    return "、".join(names[:NOTE_LIST_MAX]) + (f"（ほか{len(names) - NOTE_LIST_MAX}件）"
+                                              if len(names) > NOTE_LIST_MAX else "")
+
+
 def _notes(folder: Path, result) -> List[str]:
     notes = []
     failure = _read_json(_failure_path(folder))
@@ -238,14 +248,21 @@ def _notes(folder: Path, result) -> List[str]:
     if result is not None and result.too_large:
         from lib import history
 
-        names = [ch.path for ch in result.too_large]
-        shown = "、".join(names[:NOTE_LIST_MAX]) + (f"（ほか{len(names) - NOTE_LIST_MAX}件）"
-                                                    if len(names) > NOTE_LIST_MAX else "")
         limit = f"{history.LARGE_FILE_BYTES // 1024 ** 3}GB"
         notes.append(
             f"【hojokin】次のファイルは大きすぎるため（1つ{limit}まで。時間内に読みきれないものも含む）、"
-            f"版の履歴に残していません（前の版を取り出せません）：{shown}。"
+            f"版の履歴に残していません（前の版を取り出せません）：{_names([ch.path for ch in result.too_large])}。"
             "社長に伝え、版を残さなくてよいかを確かめてください。"
+        )
+    if result is not None and (result.unreadable or result.unreadable_dirs):
+        dirs = sorted(set(result.unreadable_dirs))
+        names = [f"{d}/" for d in dirs] + [ch.path for ch in result.unreadable
+                                            if not any(ch.path.startswith(d + "/") for d in dirs)]
+        notes.append(
+            "【hojokin】次のファイル・フォルダは読めないため（読む権限がないなど）、今の中身を版の履歴に残せていません"
+            f"（消したことにもしていません）：{_names(names)}。ほかのファイルは残しています。"
+            "社長に伝え、読めるように直す（Finder の「情報を見る」で、自分に読み書きできる権限を付ける）か、"
+            "要らなければ消してもらってください。読めるようになれば、次から残します。"
         )
     if result is not None and result.deferred:
         notes.append(
@@ -305,9 +322,27 @@ def stop(data: dict, folder: Path) -> Optional[dict]:
             new_state["伝えていない"] = items
         else:
             new_state["続けた回数"] = count + 1
+            # 続けさせるので、応答はまだ終わっていない。続きの中でツールが変えた分は、続きの Stop で「ツール」として
+            # 残す。社長が続きを止めて次を送ったとき（Stop が来ない）も、途中で止まった応答として「ツール」で残す
+            new_state["応答中"] = True
             output = {"decision": "block", "reason": version_names.stop_reason([tuple(i) for i in items])}
     _save_state(folder, session_id, new_state)
     return output
+
+
+def continue_response(data: dict, folder: Path) -> None:
+    """Stop のほかの hook（後のタスクの書式の戻しなど）が続けさせる（decision: block）ときに、stop() の後に呼ぶ。
+
+    応答をまだ終わっていないものとして控え、続きの中でツールが変えた分を、社長が続きを止めたときも
+    「社長が手で変更」にしないようにする（仮。TASKS M0a の質問）。
+    """
+    if not _enabled(folder):
+        return
+    session_id = data.get("session_id")
+    state = _load_state(folder, session_id)
+    if state is None:
+        return
+    _save_state(folder, session_id, {**state, "応答中": True})
 
 
 def pre_tool_use(data: dict, folder: Path) -> Optional[dict]:

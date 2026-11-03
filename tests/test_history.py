@@ -205,6 +205,61 @@ def test_interrupted_response_is_recorded_as_tool(company) -> None:
     assert (record["だれ"], record["理由"]) == ("ツール", "やっぱり別の書き方で")
 
 
+def test_continuation_stopped_by_the_owner_is_recorded_as_tool(company) -> None:
+    """Stop で続けさせている間（版の名前のファイルを伝えたとき）に社長が止めて次を送っても、続きの中でツールが変えた分は
+    「社長が手で変更」にせず、前の依頼のツールの分として残す。"""
+    company.say("その1を直して")
+    company.write(f"{vt.APPLICATION}/その1_v2.md", "直した中身")
+    assert company.stop()["decision"] == "block"
+    # 続きの中で、Claude がその1.md にまとめている途中（Stop はまだ来ない）に、社長が止めて次を送った
+    company.write(SONO1, "直した中身")
+    company.say("やっぱり待って")
+    (record,) = newest(company)
+    assert (record["書類"], record["だれ"], record["理由"]) == (
+        SONO1, "ツール", "その1を直して（応答が途中で止まったため、次の発言のときに残した）")
+    company.write(SONO1, "待った後に直した")
+    assert company.stop() is None
+    (record,) = newest(company)
+    assert (record["書類"], record["だれ"], record["理由"]) == (SONO1, "ツール", "やっぱり待って")
+
+
+def test_continuation_that_reaches_stop_is_recorded_as_tool(company) -> None:
+    """続きが応答の終わり（stop_hook_active の Stop）まで行けば、そこで前の依頼のツールの分として残す。
+    その後に社長が手で直した分は、社長の分として残す。"""
+    company.say("その1を直して")
+    company.write(f"{vt.APPLICATION}/その1_v2.md", "直した中身")
+    assert company.stop()["decision"] == "block"
+    company.write(SONO1, "直した中身")
+    (company.folder / vt.APPLICATION / "その1_v2.md").unlink()
+    assert company.stop(active=True) is None
+    changes = {r["書類"]: (r["変更"], r["だれ"], r["理由"]) for r in newest(company)}
+    assert changes == {SONO1: ("足した", "ツール", "その1を直して"),
+                       f"{vt.APPLICATION}/その1_v2.md": ("消した", "ツール", "その1を直して")}
+    company.write(SONO1, "社長が直した")
+    company.say("次へ")
+    (record,) = newest(company)
+    assert (record["書類"], record["だれ"], record["理由"]) == (SONO1, "社長", OWNER_REASON)
+
+
+def test_other_stop_hooks_can_keep_the_response_going(company) -> None:
+    """Stop のほかの hook（後のタスク）が続けさせるときは continue_response で控える。続きを社長が止めても、
+    続きの中でツールが変えた分はツールの分として残す。"""
+    company.say("その1を直して")
+    company.write(SONO1, "一版目")
+    assert company.stop() is None
+    code = ("from pathlib import Path\n"
+            f"sys.path.insert(0, {str(ct.REPO_ROOT / 'hooks')!r})\n"
+            "import version_hooks\n"
+            "version_hooks.continue_response({'session_id': sys.argv[2]}, Path(sys.argv[1]))\n"
+            "print('null')")
+    assert ct.py_json(code, str(company.folder), vt.SESSION) is None
+    company.write(SONO1, "続きで直した")
+    company.say("待って")
+    (record,) = newest(company)
+    assert (record["書類"], record["だれ"], record["理由"]) == (
+        SONO1, "ツール", "その1を直して（応答が途中で止まったため、次の発言のときに残した）")
+
+
 def test_deleted_and_renamed_files_are_recorded(company) -> None:
     """消したファイルと名前を変えたファイルも残す。"""
     company.say("2つ書いて")
@@ -564,6 +619,8 @@ def test_tool_files_left_for_later_keep_the_request(company) -> None:
     assert "記録/紹介動画_最終.mp4（「最終」）" in output["reason"]
     (record,) = newest(company)
     assert (record["書類"], record["だれ"]) == (SONO1, "ツール")
+    # 続き（Claude が伝えられたことに答えて終える）の Stop でも残しきれず、次に回したまま応答が終わった
+    assert company.stop(active=True, env=SHORT_BUDGET) is None
     company.write("入れ口/メモ.txt", "社長のメモ")
     company.say("ありがとう")
     by_doc = {r["書類"]: (r["だれ"], r["理由"]) for r in newest(company, 2)}
@@ -658,6 +715,183 @@ def test_record_failure_is_told_at_session_start_not_as_python_missing(company) 
     assert company.say("直した") is None
     assert company.pending() == []
     assert company.start() is None
+
+
+# ---- 読めないファイル・フォルダ、比べた後に消えたファイル ----
+
+def test_unreadable_file_is_skipped_and_the_rest_is_recorded(company) -> None:
+    """読めないファイル（権限がない）が1つあっても、そのファイルだけを飛ばし、ほかのファイルは残す。
+    同じ場面で作られた版の名前のファイルも伝える。読めないファイルは開いたときに伝え（版の記録が止まったとはしない）、
+    読めるようになったら、最初に見つけた場面のだれ・理由で残す。"""
+    locked = company.write("入れ口/読めない.pdf", b"%PDF-1.4 owner")
+    locked.chmod(0)
+    try:
+        company.write("記録/ふつう.md", "社長のメモ")
+        assert company.say("資料を入れた") is None
+        (record,) = newest(company)
+        assert (record["書類"], record["だれ"], record["理由"]) == ("記録/ふつう.md", "社長", OWNER_REASON)
+        assert company.pending() == [["入れ口/読めない.pdf", "足した"]]
+        # 応答の中で、その場のコードが版の名前のファイルを作った
+        company.say("その1を直して")
+        company.write(f"{vt.APPLICATION}/その1_v2.md", "直した")
+        output = company.stop()
+        assert output is not None and output["decision"] == "block", output
+        assert f"{vt.APPLICATION}/その1_v2.md（「_v2」のような版の番号）" in output["reason"]
+        assert "読めない.pdf" not in output["reason"]
+        (record,) = newest(company)
+        assert (record["書類"], record["だれ"], record["理由"]) == (f"{vt.APPLICATION}/その1_v2.md", "ツール",
+                                                                  "その1を直して")
+        assert company.stop(active=True) is None
+        assert vt.git_leftovers(company.folder) == []
+        assert not (company.folder / ".hojokin" / "一時" / "版の記録" / "止まった.json").exists()
+        context = vt.start_context(company.start())
+        assert "読めないため" in context and "入れ口/読めない.pdf" in context, context
+        assert "版の記録が止まっています" not in context, context
+        assert not any(word in context for word in PYTHON_MISSING), context
+    finally:
+        locked.chmod(0o644)
+    # 読めるようにした後、社長が送った。最初に見つけた場面（社長が送ったとき）のだれ・理由で残す
+    company.say("権限を直した")
+    (record,) = newest(company)
+    assert (record["書類"], record["だれ"], record["理由"]) == ("入れ口/読めない.pdf", "社長", OWNER_REASON)
+    assert company.pending() == []
+    assert company.start() is None
+    assert not (company.folder / ".hojokin" / "一時" / "版の記録" / "残り.json").exists()
+    fsck(company)
+
+
+def test_unreadable_file_made_by_the_tool_keeps_the_request(company) -> None:
+    """応答の中で作られ、読めなかったファイルは、読めるようになった後の場面（社長が送ったとき）でも、
+    作られた応答のだれ・理由（ツールと依頼の文）で残す。"""
+    company.say("見積書を書き出して")
+    made = company.write("記録/書き出し.pdf", b"%PDF-1.4 tool")
+    made.chmod(0)
+    try:
+        company.write(SONO1, "書いた")
+        assert company.stop() is None
+        (record,) = newest(company)
+        assert (record["書類"], record["だれ"]) == (SONO1, "ツール")
+        # 読めないまま、社長が次を送り、応答が終わった
+        assert company.say("ありがとう") is None
+        assert company.stop() is None
+        assert company.pending() == [["記録/書き出し.pdf", "足した"]]
+    finally:
+        made.chmod(0o644)
+    company.write("入れ口/メモ.txt", "社長のメモ")
+    company.say("権限を直した")
+    by_doc = {r["書類"]: (r["だれ"], r["理由"]) for r in newest(company, 2)}
+    assert by_doc == {"記録/書き出し.pdf": ("ツール", "見積書を書き出して"), "入れ口/メモ.txt": ("社長", OWNER_REASON)}
+    assert company.pending() == []
+
+
+def test_tracked_file_that_cannot_be_read_is_not_recorded_as_deleted(company) -> None:
+    """履歴にあるファイルが読めなくなっても、消したことにはしない。ほかのファイルは残す。中身が変わっていなければ、
+    読めるようになっても版を増やさない。"""
+    company.say("書いて")
+    company.write(SONO1, "一版目")
+    company.stop()
+    path = company.folder / SONO1
+    path.chmod(0)
+    try:
+        company.say("見て")
+        company.write("記録/メモ.md", "x")
+        assert company.stop() is None
+        (record,) = newest(company)
+        assert (record["書類"], record["だれ"]) == ("記録/メモ.md", "ツール")
+        assert SONO1 in company.tracked()
+        assert all(r["変更"] != "消した" for r in company.log(SONO1))
+        context = vt.start_context(company.start())
+        assert SONO1 in context and "読めないため" in context, context
+    finally:
+        path.chmod(0o644)
+    count = len(company.versions())
+    assert company.say("直した") is None
+    assert len(company.versions()) == count
+    assert company.pending() == []
+    assert company.start() is None
+
+
+@pytest.mark.parametrize("mode", [0o000, 0o311], ids=["mode000", "mode311"])
+def test_folder_that_cannot_be_read_is_skipped_and_told(company, mode) -> None:
+    """中を読めないフォルダ（権限がない）は飛ばし、中のファイルを消したことにしない。ほかのファイルは残し、
+    開いたときにフォルダを伝える。読めるようになれば、変わっていない中身では版を増やさない。"""
+    company.write("入れ口/鍵付き/見積書.pdf", b"%PDF-1.4")
+    company.say("入れた")
+    assert company.stop() is None
+    assert "入れ口/鍵付き/見積書.pdf" in company.tracked()
+    locked = company.folder / "入れ口" / "鍵付き"
+    locked.chmod(mode)
+    try:
+        company.write("記録/メモ.md", "x")
+        assert company.say("続けて") is None
+        (record,) = newest(company)
+        assert (record["書類"], record["だれ"]) == ("記録/メモ.md", "社長")
+        assert "入れ口/鍵付き/見積書.pdf" in company.tracked()
+        context = vt.start_context(company.start())
+        assert "読めないため" in context and "入れ口/鍵付き/" in context, context
+        assert "入れ口/鍵付き/見積書.pdf" not in context and "版の記録が止まっています" not in context, context
+    finally:
+        locked.chmod(0o755)
+    count = len(company.versions())
+    assert company.say("直した") is None
+    assert len(company.versions()) == count
+    assert company.pending() == []
+
+
+def test_files_that_vanish_while_recording_are_skipped(company) -> None:
+    """一覧を作った後に消えたファイルと、中身を書く前に消えたファイルは飛ばし、ほかのファイルは残す
+    （消えたことは、次の場面で比べ直して残す）。"""
+    company.say("書いて")
+    company.write(SONO1, "一版目")
+    company.stop()
+    company.write(SONO1, "二版目")
+    company.write("記録/消える.md", "x")
+    company.write("記録/残る.md", "x")
+    code = ("import os\nfrom pathlib import Path\n"
+            "folder = Path(sys.argv[1])\n"
+            "work_files = history._work_files\n"
+            "def listed(folder_, repo):\n"
+            "    found = work_files(folder_, repo)\n"
+            "    (folder / sys.argv[2]).unlink()  # 一覧を作った後、比べる前に消えた（履歴にあるファイル）\n"
+            "    return found\n"
+            "history._work_files = listed\n"
+            "write_blob = history._write_blob\n"
+            "def write(repo, fs_path, deadline):\n"
+            "    if fs_path.endswith('消える.md'):\n"
+            "        os.unlink(fs_path)  # 中身を書く前に消えた（足したファイル）\n"
+            "    return write_blob(repo, fs_path, deadline)\n"
+            "history._write_blob = write\n"
+            "r = history.record_scene(folder, history.TOOL, '書いて')\n"
+            "print(json.dumps([sorted(c.path for c in r.recorded), [c.path for c in r.unreadable]], ensure_ascii=False))")
+    assert ct.py_json(code, str(company.folder), SONO1) == [["記録/残る.md"], []]
+    assert vt.git_leftovers(company.folder) == []
+    assert company.pending() == [[SONO1, "消した"]]
+    company.say("確かめて")
+    (record,) = newest(company)
+    assert (record["書類"], record["変更"]) == (SONO1, "消した")
+
+
+def test_read_error_midway_skips_only_that_file(company) -> None:
+    """読む途中の失敗（同期の途中のファイルなど）も、そのファイルだけを飛ばし、書きかけの中身を残さない。"""
+    company.write("入れ口/同期中.pdf", b"%PDF-1.4 " * 1000)
+    company.write("入れ口/メモ.txt", "社長のメモ")
+    code = ("import errno, io\nfrom pathlib import Path\n"
+            "class Broken(io.FileIO):\n"
+            "    def read(self, size=-1):\n"
+            "        raise OSError(errno.EDEADLK, 'Resource deadlock avoided')\n"
+            "real_open = open\n"
+            "def fake_open(path, mode='r', *args, **kwargs):\n"
+            "    if str(path).endswith('同期中.pdf'):\n"
+            "        return Broken(path, 'rb')\n"
+            "    return real_open(path, mode, *args, **kwargs)\n"
+            "history.open = fake_open\n"
+            "r = history.record_scene(Path(sys.argv[1]), history.OWNER, history.OWNER_REASON)\n"
+            "print(json.dumps([sorted(c.path for c in r.recorded), [c.path for c in r.unreadable]], ensure_ascii=False))")
+    assert ct.py_json(code, str(company.folder)) == [["入れ口/メモ.txt"], ["入れ口/同期中.pdf"]]
+    assert vt.git_leftovers(company.folder) == []
+    company.say("見て")
+    (record,) = newest(company)
+    assert (record["書類"], record["だれ"]) == ("入れ口/同期中.pdf", "社長")
 
 
 # ---- .git のない会社のフォルダ ----
