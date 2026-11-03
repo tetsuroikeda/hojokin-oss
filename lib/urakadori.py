@@ -37,13 +37,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from lib import case_folder, doc_text
+from lib.official_docs import RECORDS_DIR, TEXT_DIR  # 資料の本文の置き場所は、取る道具（M2a）と同じ
 from lib.schema_lite import Validator, path_label
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_FILE = PLUGIN_ROOT / "schema" / "制度データ.schema.json"
-RECORDS_DIR = "記録"
-TEXT_DIR = "資料の本文"  # lib/official_docs.py と同じ
-LIST_FILE = "資料の一覧.json"
 OUT_DIR = ("制度データ", "読み取り")
 
 CONFIRMED = "確認済み"
