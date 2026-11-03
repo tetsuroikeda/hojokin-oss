@@ -1,0 +1,8 @@
+{
+  "name": "e4-probe",
+  "version": "0.1.0",
+  "description": "実験 E4 の試しのプラグイン。SessionStart・UserPromptSubmit・PreToolUse・Stop の hook がログを書く",
+  "author": {
+    "name": "hojokin-oss"
+  }
+}
