@@ -123,7 +123,13 @@ def commit(folder: Path, message: str, who: str, paths: Optional[Sequence[Path]]
 
     paths を渡したときは、そのファイルだけを加える（ほかの変更は、だれが変えたかを後で見分けるため残す）。
     渡さないときは、増えたファイルと変わったファイルをすべて加える。.gitignore にあるものは加えない。
+    版の履歴に書く処理は、どれも locked() の中で1つずつ動かす（途中で止まった処理の錠を片付けられるように）。
     """
+    with locked(folder):
+        return _commit(folder, message, who, paths)
+
+
+def _commit(folder: Path, message: str, who: str, paths: Optional[Sequence[Path]]) -> Optional[bytes]:
     identity = IDENTITIES[who].encode("utf-8")
     repo = Repo(str(folder))
     try:
@@ -173,6 +179,20 @@ def changed_paths(folder: Path) -> List[str]:
 # - 履歴に入れないものは、会社のフォルダの .gitignore で決める。.git と、このプラグインのその場限りの置き場
 #   （.hojokin/一時/）は、.gitignore がなくても入れない。
 #
+# hook の見張り（hooks/run.sh。開いたとき・送ったときは25秒、応答の終わりは55秒）に止められないよう、
+# 1回の場面で使う時間に上限（budget）を設ける（DESIGN 5章「補助プログラムが動かないときは止める」の備え）。
+# - 上限までに残しきれないファイルは、次の場面に回す。回したファイルは `.hojokin/一時/版の記録/残り.json` に、
+#   回した場面のだれ・理由を控え、次の場面ではその控えのだれ・理由で先に残す（社長が入れた写真を、次の応答の
+#   終わりに「ツール」として残さないため）。
+# - 中身は1MB ごとに読みながら印（ハッシュ）を計算し、そのまま .git に書く（大きなファイルでも、全部をメモリに
+#   読まない）。上限を過ぎたら、そのファイルの途中でもやめて次の場面に回す。1MB 以上のファイルは圧縮しない
+#   （写真・PDF・Word はもともと圧縮されていて、圧縮すると10倍ほど遅くなるため。git でもそのまま読める）。
+# - 大きすぎるファイル（LARGE_FILE_BYTES を超えるもの）と、上限で途中までしか読めないことが続いたファイルは、
+#   版に残さず、開いたときに Claude に知らせる（hooks/version_hooks.py）。
+# - それでも見張りに止められたとき（遅いディスクなど）に備え、版の錠に動いている処理の番号（pid）を書く。
+#   錠を持つ処理がもう動いていなければ、すぐに錠を外し、dulwich が残した錠（`.git/index.lock`、
+#   `.git/objects/xx/….lock` など）と書きかけのファイルも片付けてから残す。
+#
 # 版のメッセージの形（人が git で読んでも分かり、M0b・M0c の道具が読み返せる形）：
 #
 #   ツール：その1.docx ほか1件
@@ -191,16 +211,21 @@ def changed_paths(folder: Path) -> List[str]:
 #   段階: —
 
 import contextlib  # noqa: E402
+import hashlib  # noqa: E402
+import json  # noqa: E402
 import re  # noqa: E402
+import stat as stat_mode  # noqa: E402
+import tempfile  # noqa: E402
 import time  # noqa: E402
 import unicodedata  # noqa: E402
-from dataclasses import dataclass  # noqa: E402
+import zlib  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
 from datetime import datetime, timedelta, timezone  # noqa: E402
-from typing import Dict, Iterator, Tuple  # noqa: E402
+from typing import Dict, Iterator, Set, Tuple  # noqa: E402
 
-from dulwich.index import ConflictedIndexEntry, IndexEntry, blob_from_path_and_stat, cleanup_mode  # noqa: E402
+from dulwich.index import ConflictedIndexEntry, IndexEntry, cleanup_mode  # noqa: E402
 from dulwich.object_store import tree_lookup_path  # noqa: E402
-from dulwich.objects import Commit  # noqa: E402
+from dulwich.objects import Blob, Commit  # noqa: E402
 
 from lib import case_folder, company  # noqa: E402
 
@@ -216,7 +241,25 @@ JST = timezone(timedelta(hours=9), "JST")
 ALWAYS_SKIPPED_DIRS = (".git", f"{company.MARKER_DIR}/{company.TEMP_DIR}")
 LOCK_NAME = "hojokin-record.lock"
 LOCK_WAIT_SECONDS = 5.0
+# 錠を持つ処理の番号が読めないときに、古い残りとみなすまでの秒数（hook は長くても55秒で止められる）
 LOCK_STALE_SECONDS = 120.0
+# 錠を持つ処理がまだ動いているように見えても、dulwich・git の錠がこの秒数より古ければ残りとみなす
+# （手で動かした git が、いま書いているところの錠は消さない）
+LEFTOVER_SECONDS = 60.0
+# 書きかけの中身を置く名前（.git/objects/ の直下。書き終えたら、印の名前に移す）
+TMP_OBJECT_PREFIX = "hojokin-tmp-"
+# 次の場面に回したファイルの控え（だれ・理由）。その場限りの置き場なので、版の履歴に入れない
+STATE_DIR = f"{company.MARKER_DIR}/{company.TEMP_DIR}/版の記録"
+LEFTOVER_FILE = "残り.json"
+# 1つのファイルの大きさの上限。超えるものは版に残さず、開いたときに知らせる（仮。TASKS M0a の質問）
+LARGE_FILE_BYTES = 2 * 1024 ** 3
+# これより大きいファイルは圧縮しない
+STORE_ONLY_BYTES = 1024 ** 2
+# 残せるかを前もって見積もるときの速さ（遅めのパソコンを見込む。この Mac では 800MB/秒ほど出た）
+ESTIMATED_BYTES_PER_SECOND = 100 * 1024 ** 2
+# 上限で途中までしか読めないことがこの回数続いたファイルは、大きすぎるものとして扱う
+MAX_ABORTS = 2
+CHUNK_BYTES = 1024 ** 2
 YEAR_DIR = re.compile(r"^[0-9]+年目$")
 _TREE_KIND = {"add": ADDED, "modify": MODIFIED, "delete": DELETED}
 
@@ -233,6 +276,19 @@ class Change:
     kind: str
     fs_path: Optional[str] = None  # 作業のファイルの実際の場所（足した・変えた）
     index_key: Optional[bytes] = None  # 履歴の中の名前（変えた・消した。NFD のこともある）
+    unsure: bool = False  # 時間の上限で、中身が変わったかを比べきれなかった（次の場面で比べる）
+    entry: Optional[IndexEntry] = None  # 残すときの記録（中身を書いた後）
+
+
+@dataclass
+class Result:
+    """1回の場面で版を残した結果。"""
+
+    recorded: List[Change] = field(default_factory=list)  # 版に残したもの（前の場面から回したものを含む）
+    mine: List[Change] = field(default_factory=list)  # この場面のだれ・理由に当たるもの（残した・回した）
+    deferred: List[Change] = field(default_factory=list)  # 時間の上限で、次の場面に回したもの
+    too_large: List[Change] = field(default_factory=list)  # 大きすぎて、版に残さないもの
+    known_dirs: Set[str] = field(default_factory=set)  # この場面より前の版にあったフォルダ
 
 
 @dataclass
@@ -295,29 +351,113 @@ def one_line(text: str, limit: Optional[int] = None) -> str:
     return line
 
 
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        # Windows の os.kill は、合図0でも処理を止めてしまうので使わない（古さだけで判断する）
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        # 調べることを許されないとき（ほかの利用者の処理など）は、動いているとみなす
+        return True
+    return True
+
+
+def _lock_state(path: Path) -> Tuple[Optional[str], Optional[bool]]:
+    """錠の中身と、途中で止まった処理の残りか。錠がもうなければ (None, None)。"""
+    try:
+        st = path.stat()
+        text = path.read_bytes().decode("ascii", "replace").strip()
+    except FileNotFoundError:
+        return None, None
+    except OSError:
+        return "", False
+    if time.time() - st.st_mtime > LOCK_STALE_SECONDS:
+        return text, True
+    if text.isdigit():
+        return text, not _pid_alive(int(text))
+    return text, False
+
+
+def _git_leftovers(gdir: Path) -> List[Path]:
+    """dulwich（と git）が書いている間だけ置く錠と、書きかけの中身の一覧。"""
+    found = [gdir / name for name in ("index.lock", "HEAD.lock", "packed-refs.lock", "config.lock")]
+    refs = gdir / "refs"
+    for dirpath, _dirnames, filenames in os.walk(str(refs)):
+        found += [Path(dirpath) / name for name in filenames if name.endswith(".lock")]
+    objects = gdir / "objects"
+    try:
+        entries = list(os.scandir(str(objects)))
+    except OSError:
+        entries = []
+    for entry in entries:
+        if entry.name.startswith(TMP_OBJECT_PREFIX):
+            found.append(Path(entry.path))
+        elif len(entry.name) == 2 and entry.is_dir(follow_symlinks=False):
+            try:
+                found += [Path(e.path) for e in os.scandir(entry.path) if e.name.endswith(".lock")]
+            except OSError:
+                continue
+    return found
+
+
+def clear_leftovers(folder: Path, min_age: float = LEFTOVER_SECONDS) -> List[str]:
+    """途中で止まった処理が .git に残した錠と書きかけの中身を消す。消したものの場所（.git から）を返す。
+
+    版の錠（locked）を持っている間だけ呼ぶ。版の履歴に書く処理はどれも版の錠の中で動くので、
+    ここにある錠は、止められた処理の残り。手で動かした git の錠を消さないよう、min_age より新しいものは残す
+    （錠を持っていた処理がもう動いていないと分かったときは、0 で呼ぶ）。
+    """
+    gdir = git_dir(folder)
+    now = time.time()
+    removed = []
+    for path in _git_leftovers(gdir):
+        try:
+            if now - os.lstat(str(path)).st_mtime < min_age:
+                continue
+            os.unlink(str(path))
+        except OSError:
+            continue
+        removed.append(path.relative_to(gdir).as_posix())
+    return removed
+
+
 @contextlib.contextmanager
 def locked(folder: Path) -> Iterator[None]:
-    """同じ会社のフォルダで、版を残す処理を1つずつにする（2つのセッションの hook が重なったとき）。"""
+    """同じ会社のフォルダで、版を残す処理を1つずつにする（2つのセッションの hook が重なったとき）。
+
+    錠（.git/hojokin-record.lock）には、持っている処理の番号（pid）を書く。その処理がもう動いていなければ
+    （hook の見張りに止められたときなど）、すぐに外し、その処理が残した dulwich の錠も片付ける。
+    """
     path = git_dir(folder) / LOCK_NAME
     deadline = time.monotonic() + LOCK_WAIT_SECONDS
+    holder_gone = False
     while True:
         try:
             fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             break
         except FileExistsError:
-            try:
-                age = time.time() - path.stat().st_mtime
-            except FileNotFoundError:
+            text, stale = _lock_state(path)
+            if stale is None:
                 continue
-            if age > LOCK_STALE_SECONDS:
-                # 途中で止まった処理の残り
-                with contextlib.suppress(FileNotFoundError):
-                    path.unlink()
+            if stale:
+                # 途中で止まった処理の残り。ほかの処理が先に取り直していないかを、中身で確かめてから外す
+                again, _ = _lock_state(path)
+                if again == text:
+                    with contextlib.suppress(FileNotFoundError):
+                        path.unlink()
+                holder_gone = True
                 continue
             if time.monotonic() > deadline:
                 raise HistoryBusy("ほかの処理が版を残しているところです")
             time.sleep(0.05)
     try:
+        os.write(fd, f"{os.getpid()}\n".encode("ascii"))
+        clear_leftovers(folder, 0.0 if holder_gone else LEFTOVER_SECONDS)
         yield
     finally:
         os.close(fd)
@@ -405,21 +545,116 @@ def _entry_from_stat(st: os.stat_result, sha: bytes) -> IndexEntry:
     )
 
 
-def _same_as_entry(fs_path: str, entry: IndexEntry) -> Tuple[bool, Optional[IndexEntry]]:
-    """作業のファイルが履歴の中身と同じか。同じで、時刻などだけが違うときは、書き直した記録を返す。"""
+def _past(deadline: Optional[float]) -> bool:
+    return deadline is not None and time.monotonic() > deadline
+
+
+def _fits(size: int, deadline: Optional[float]) -> bool:
+    """その大きさのファイルを、上限までに書き終えられそうか（見積もり）。"""
+    return deadline is None or time.monotonic() + size / ESTIMATED_BYTES_PER_SECOND <= deadline
+
+
+def _link_blob(fs_path: str) -> Blob:
+    """別名（シンボリックリンク）は、Git と同じく、指す先の名前を中身にする。"""
+    return Blob.from_string(os.readlink(os.fsencode(fs_path)))
+
+
+def _hash_file(fs_path: str, st: os.stat_result, deadline: Optional[float]) -> Optional[bytes]:
+    """中身の印（Git の blob の40桁）。時間の上限を過ぎたら None。読む間に大きさが変わったら空。"""
+    if stat_mode.S_ISLNK(st.st_mode):
+        return _link_blob(fs_path).id
+    sha = hashlib.sha1(b"blob %d\x00" % st.st_size)
+    total = 0
+    with open(fs_path, "rb") as f:
+        while True:
+            if _past(deadline):
+                return None
+            chunk = f.read(CHUNK_BYTES)
+            if not chunk:
+                break
+            total += len(chunk)
+            sha.update(chunk)
+    if total != st.st_size:
+        return b""
+    return sha.hexdigest().encode("ascii")
+
+
+WROTE = "書いた"
+OUT_OF_TIME = "時間切れ"
+CHANGING = "書き換え中"
+
+
+def _write_blob(repo: Repo, fs_path: str, deadline: Optional[float]) -> Tuple[str, Optional[os.stat_result], bytes]:
+    """作業のファイルの中身を .git に書く。(結果, 読んだときの状態, 印) を返す。
+
+    1MB ごとに読みながら印を計算して書きかけのファイルに書き、終わったら印の名前に移す（全部をメモリに読まない。
+    止められても、書きかけのファイルが残るだけで、ほかの錠は残らない）。時間の上限を過ぎたら、途中でやめる。
+    """
+    st = os.lstat(fs_path)
+    if stat_mode.S_ISLNK(st.st_mode):
+        blob = _link_blob(fs_path)
+        repo.object_store.add_object(blob)
+        return WROTE, st, blob.id
+    objects = os.path.join(repo.controldir(), "objects")
+    level = 0 if st.st_size >= STORE_ONLY_BYTES else -1
+    fd, tmp = tempfile.mkstemp(prefix=TMP_OBJECT_PREFIX, dir=objects)
+    try:
+        header = b"blob %d\x00" % st.st_size
+        sha = hashlib.sha1(header)
+        packer = zlib.compressobj(level)
+        total = 0
+        with os.fdopen(fd, "wb") as out, open(fs_path, "rb") as src:
+            out.write(packer.compress(header))
+            while total <= st.st_size:
+                if _past(deadline):
+                    return OUT_OF_TIME, st, b""
+                chunk = src.read(CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                sha.update(chunk)
+                out.write(packer.compress(chunk))
+            out.write(packer.flush())
+        if total != st.st_size:
+            return CHANGING, st, b""
+        hexsha = sha.hexdigest()
+        final_dir = os.path.join(objects, hexsha[:2])
+        final = os.path.join(final_dir, hexsha[2:])
+        if not os.path.exists(final):
+            os.makedirs(final_dir, exist_ok=True)
+            os.chmod(tmp, 0o444)
+            os.replace(tmp, final)
+        return WROTE, st, hexsha.encode("ascii")
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+
+
+def _same_as_entry(fs_path: str, entry: IndexEntry,
+                   deadline: Optional[float] = None) -> Tuple[Optional[bool], Optional[IndexEntry]]:
+    """作業のファイルが履歴の中身と同じか。同じで、時刻などだけが違うときは、書き直した記録を返す。
+
+    時間の上限で比べきれなかったときは (None, None)。
+    """
     st = os.lstat(fs_path)
     if cleanup_mode(st.st_mode) != entry.mode or (st.st_size & 0xFFFFFFFF) != entry.size:
         return False, None
     if _time_ns(entry.mtime) == st.st_mtime_ns and _time_ns(entry.ctime) == st.st_ctime_ns:
         return True, None
-    blob = blob_from_path_and_stat(os.fsencode(fs_path), st)
-    if blob.id != entry.sha:
+    sha = _hash_file(fs_path, st, deadline)
+    if sha is None:
+        return None, None
+    if sha != entry.sha:
         return False, None
     return True, _entry_from_stat(st, entry.sha)
 
 
-def _compare(folder: Path, repo: Repo, index) -> Tuple[List[Change], Dict[bytes, IndexEntry]]:
-    """最後の版（index）と作業のファイルを比べる。変わったものと、書き直すだけの記録を返す。"""
+def _compare(folder: Path, repo: Repo, index,
+             deadline: Optional[float] = None) -> Tuple[List[Change], Dict[bytes, IndexEntry]]:
+    """最後の版（index）と作業のファイルを比べる。変わったものと、書き直すだけの記録を返す。
+
+    時間の上限で中身を比べきれなかったものは、変えたもの（unsure）として返す。
+    """
     files = _work_files(folder, repo)
     tracked: Dict[str, Tuple[bytes, object]] = {}
     for key, entry in index.items():
@@ -441,8 +676,10 @@ def _compare(folder: Path, repo: Repo, index) -> Tuple[List[Change], Dict[bytes,
         if isinstance(entry, ConflictedIndexEntry):
             changes.append(Change(name, MODIFIED, fs_path=fs_path, index_key=key))
             continue
-        same, fresh = _same_as_entry(fs_path, entry)
-        if not same:
+        same, fresh = _same_as_entry(fs_path, entry, deadline)
+        if same is None:
+            changes.append(Change(name, MODIFIED, fs_path=fs_path, index_key=key, unsure=True))
+        elif not same:
             changes.append(Change(name, MODIFIED, fs_path=fs_path, index_key=key))
         elif fresh is not None:
             refresh[key] = fresh
@@ -497,52 +734,179 @@ def parse_message(text: str) -> Tuple[str, Dict[str, str], Dict[str, Dict[str, s
     return subject, header, documents
 
 
-def record(folder: Path, who: str, reason: str, when: Optional[datetime] = None) -> List[Change]:
-    """最後の版から変わったファイルを、だれ・理由を付けて1件の版に残す。残したものの一覧を返す（なければ空）。
+def _leftover_path(folder: Path) -> Path:
+    return Path(folder) / STATE_DIR / LEFTOVER_FILE
 
-    when は版の日時（今日の日付の差し替えを含む。dates.now）。渡さなければ今の日本時間。
-    """
+
+def load_leftovers(folder: Path) -> Dict[str, dict]:
+    """次の場面に回したファイルの控え（場所 → だれ・理由、途中でやめた回数）。読めなければ空。"""
+    try:
+        value = json.loads(_leftover_path(folder).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    documents = value.get("書類") if isinstance(value, dict) else None
+    if not isinstance(documents, dict):
+        return {}
+    return {nfc(path): note for path, note in documents.items()
+            if isinstance(note, dict) and note.get("だれ") in IDENTITIES and isinstance(note.get("理由"), str)}
+
+
+def _save_leftovers(folder: Path, leftovers: Dict[str, dict]) -> None:
+    path = _leftover_path(folder)
+    if not leftovers:
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"書類": leftovers}, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    os.replace(str(tmp), str(path))
+
+
+def _dirs_of(index) -> Set[str]:
+    """履歴にあるファイルを含むフォルダの一覧（会社のフォルダからの場所。NFC）。"""
+    dirs: Set[str] = set()
+    for key, _entry in index.items():
+        parts = nfc(key.decode("utf-8", "surrogateescape")).split("/")
+        for i in range(1, len(parts)):
+            dirs.add("/".join(parts[:i]))
+    return dirs
+
+
+def _groups(changes: List[Change], leftovers: Dict[str, dict], who: str,
+            reason: str) -> List[Tuple[str, str, List[Change], bool]]:
+    """(だれ, 理由, 変わったもの, 前の場面から回したものか) の一覧。前の場面から回したものを先にする。"""
+    earlier: Dict[Tuple[str, str], List[Change]] = {}
+    current: List[Change] = []
+    for ch in changes:
+        note = leftovers.get(ch.path)
+        if note is None:
+            current.append(ch)
+        else:
+            earlier.setdefault((note["だれ"], note["理由"]), []).append(ch)
+    groups = [(w, r, items, True) for (w, r), items in earlier.items()]
+    groups.append((who, reason, current, False))
+    return groups
+
+
+def _size(ch: Change) -> int:
+    if ch.kind == DELETED or ch.fs_path is None:
+        return -1
+    try:
+        return os.lstat(ch.fs_path).st_size
+    except OSError:
+        return -1
+
+
+def _commit_changes(repo: Repo, index, who: str, reason: str, moment: datetime,
+                    done: List[Change]) -> List[Change]:
+    """中身を書いた変更を、1件の版に残す。中身が最後の版と同じなら、記録だけをそろえて空を返す。"""
+    for ch in done:
+        if ch.index_key is not None and ch.index_key in index:
+            del index[ch.index_key]
+        if ch.kind != DELETED:
+            # 履歴の中の名前は NFC にそろえる
+            index[ch.path.encode("utf-8")] = ch.entry
+    tree = index.commit(repo.object_store)
+    parent = repo.refs[b"HEAD"] if has_commits(repo) else None
+    if parent is not None and repo[parent].tree == tree:
+        # 中身は最後の版と同じ（前に途中で止まった処理の残りなど）
+        return []
     identity = IDENTITIES[who].encode("utf-8")
+    commit_obj = Commit()
+    commit_obj.tree = tree
+    commit_obj.parents = [parent] if parent is not None else []
+    commit_obj.author = commit_obj.committer = identity
+    commit_obj.author_time = commit_obj.commit_time = int(moment.timestamp())
+    commit_obj.author_timezone = commit_obj.commit_timezone = 9 * 3600
+    commit_obj.message = format_message(who, reason, done).encode("utf-8")
+    repo.object_store.add_object(commit_obj)
+    if not repo.refs.set_if_equals(b"HEAD", parent, commit_obj.id):
+        raise HistoryBusy("ほかの処理が、同じときに版を残しました")
+    return done
+
+
+def record_scene(folder: Path, who: str, reason: str, when: Optional[datetime] = None,
+                 budget: Optional[float] = None) -> Result:
+    """最後の版から変わったファイルを、だれ・理由を付けて版に残す（1つの場面の分）。
+
+    - when は版の日時（今日の日付の差し替えを含む。dates.now）。渡さなければ今の日本時間。
+    - budget は、この呼び出しで使ってよい秒数。過ぎたら、残しきれないファイルを次の場面に回す（上の説明）。
+      渡さなければ、上限なしで全部を残す。
+    - 前の場面から回したファイルは、その場面のだれ・理由で先に残す（版が2件になることがある）。
+    """
+    if who not in IDENTITIES:
+        raise ValueError(f"だれ（{who}）が分かりません")
+    deadline = None if budget is None else time.monotonic() + budget
     moment = (when or datetime.now(timezone.utc)).astimezone(JST)
+    result = Result()
     with locked(folder):
         repo = Repo(str(folder))
         try:
             index = repo.open_index()
-            changes, refresh = _compare(folder, repo, index)
+            result.known_dirs = _dirs_of(index)
+            changes, refresh = _compare(folder, repo, index, deadline)
             for key, entry in refresh.items():
                 index[key] = entry
-            if changes:
-                for ch in changes:
-                    if ch.index_key is not None and ch.index_key in index:
-                        del index[ch.index_key]
+            wrote = bool(refresh)
+            leftovers = load_leftovers(folder)
+            kept: Dict[str, dict] = {}
+            for g_who, g_reason, items, earlier in _groups(changes, leftovers, who, reason):
+                done: List[Change] = []
+                deferred: List[Change] = []
+                for ch in sorted(items, key=lambda c: (c.kind != DELETED, _size(c), c.path)):
                     if ch.kind == DELETED:
+                        done.append(ch)
                         continue
-                    st = os.lstat(ch.fs_path)
-                    blob = blob_from_path_and_stat(os.fsencode(ch.fs_path), st)
-                    repo.object_store.add_object(blob)
-                    # 履歴の中の名前は NFC にそろえる
-                    index[ch.path.encode("utf-8")] = _entry_from_stat(st, blob.id)
-                tree = index.commit(repo.object_store)
-                parent = repo.refs[b"HEAD"] if has_commits(repo) else None
-                if parent is not None and repo[parent].tree == tree:
-                    # 中身は最後の版と同じ（前に途中で止まった処理の残りなど）。記録だけをそろえる
-                    changes = []
-                else:
-                    commit_obj = Commit()
-                    commit_obj.tree = tree
-                    commit_obj.parents = [parent] if parent is not None else []
-                    commit_obj.author = commit_obj.committer = identity
-                    commit_obj.author_time = commit_obj.commit_time = int(moment.timestamp())
-                    commit_obj.author_timezone = commit_obj.commit_timezone = 9 * 3600
-                    commit_obj.message = format_message(who, reason, changes).encode("utf-8")
-                    repo.object_store.add_object(commit_obj)
-                    if not repo.refs.set_if_equals(b"HEAD", parent, commit_obj.id):
-                        raise HistoryBusy("ほかの処理が、同じときに版を残しました")
-            if changes or refresh:
+                    note: dict = {"だれ": g_who, "理由": g_reason}
+                    try:
+                        st = os.lstat(ch.fs_path)
+                    except OSError:
+                        continue  # 比べた後に消えた。次の場面で比べ直す
+                    if not (stat_mode.S_ISREG(st.st_mode) or stat_mode.S_ISLNK(st.st_mode)):
+                        continue  # ファイルでないもの（名前付きの管など）は残さない
+                    before = leftovers.get(ch.path) or {}
+                    aborts = before.get("止めた回数", 0) if before.get("大きさ") == st.st_size else 0
+                    if not isinstance(aborts, int):
+                        aborts = 0
+                    if aborts:
+                        note.update({"大きさ": st.st_size, "止めた回数": aborts})
+                    if st.st_size > LARGE_FILE_BYTES or aborts >= MAX_ABORTS:
+                        result.too_large.append(ch)
+                        if aborts:
+                            kept[ch.path] = note  # 途中でやめた回数を覚えておく（大きさが変わったら、また試す）
+                        continue
+                    if not ch.unsure and _fits(st.st_size, deadline):
+                        status, written, sha = _write_blob(repo, ch.fs_path, deadline)
+                        if status == WROTE:
+                            ch.entry = _entry_from_stat(written, sha)
+                            done.append(ch)
+                            continue
+                        if status == OUT_OF_TIME:
+                            note.update({"大きさ": st.st_size, "止めた回数": aborts + 1})
+                    deferred.append(ch)
+                    kept[ch.path] = note
+                recorded: List[Change] = []
+                if done:
+                    recorded = _commit_changes(repo, index, g_who, g_reason, moment, done)
+                    wrote = True
+                result.recorded += recorded
+                result.deferred += deferred
+                if not earlier:
+                    result.mine = recorded + deferred
+            if wrote:
                 index.write()
-            return changes
+            if kept != leftovers:
+                _save_leftovers(folder, kept)
+            return result
         finally:
             repo.close()
+
+
+def record(folder: Path, who: str, reason: str, when: Optional[datetime] = None,
+           budget: Optional[float] = None) -> List[Change]:
+    """record_scene と同じ。残したものの一覧を返す（なければ空）。"""
+    return record_scene(folder, who, reason, when=when, budget=budget).recorded
 
 
 def _who_from_author(author: bytes) -> str:

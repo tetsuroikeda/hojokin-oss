@@ -19,7 +19,8 @@ import hook_runner as hr
 SESSION = "session-m0a"
 CASE = "2026_省力化（一般型）第9回"
 STAGE = "1_申請"
-APPLICATION = f"案件/{CASE}/{STAGE}/申請書"
+CASE_DIR = f"案件/{CASE}"
+APPLICATION = f"{CASE_DIR}/{STAGE}/申請書"
 
 
 class Company:
@@ -48,7 +49,12 @@ class Company:
 
     # ---- hook ----
 
-    def hook(self, event: str, payload: Optional[dict] = None, tool: str = "", session: str = SESSION):
+    def hook(self, event: str, payload: Optional[dict] = None, tool: str = "", session: str = SESSION,
+             env: Optional[dict] = None):
+        """hooks.json のコマンドで hook を動かし、出力の JSON を返す（なければ None）。
+
+        env は足す環境変数（見張りの秒数 HOJOKIN_WATCH_SECONDS、版を残す秒数 HOJOKIN_RECORD_SECONDS を短くする）。
+        """
         base = {"session_id": session, "transcript_path": str(self.env.home / "t.jsonl"),
                 "cwd": str(self.folder), "hook_event_name": event}
         if tool:
@@ -56,20 +62,20 @@ class Company:
         commands = hr.hook_commands(event, tool)
         assert len(commands) == 1, commands
         r = hr.run(commands[0], {**base, **(payload or {})}, plugin=self.plugin, folder=self.folder,
-                   path=self.env.path, home=self.env.home, data=self.data)
+                   path=self.env.path, home=self.env.home, data=self.data, extra_env=env, timeout=90)
         assert r.returncode == 0, (event, r)
         assert r.stderr == b"", (event, r.stderr.decode("utf-8"))
         out = r.stdout.decode("utf-8").strip()
         return json.loads(out) if out else None
 
-    def start(self, source: str = "startup", session: str = SESSION):
-        return self.hook("SessionStart", {"source": source}, session=session)
+    def start(self, source: str = "startup", session: str = SESSION, env: Optional[dict] = None):
+        return self.hook("SessionStart", {"source": source}, session=session, env=env)
 
-    def say(self, prompt: str, session: str = SESSION):
-        return self.hook("UserPromptSubmit", {"prompt": prompt}, session=session)
+    def say(self, prompt: str, session: str = SESSION, env: Optional[dict] = None):
+        return self.hook("UserPromptSubmit", {"prompt": prompt}, session=session, env=env)
 
-    def stop(self, active: bool = False, session: str = SESSION):
-        return self.hook("Stop", {"stop_hook_active": active}, session=session)
+    def stop(self, active: bool = False, session: str = SESSION, env: Optional[dict] = None):
+        return self.hook("Stop", {"stop_hook_active": active}, session=session, env=env)
 
     def pre(self, tool: str, tool_input: dict, cwd: Optional[Path] = None):
         payload = {"tool_input": tool_input}
@@ -114,3 +120,20 @@ def denied_reason(output) -> str:
     assert hso["hookEventName"] == "PreToolUse"
     assert hso["permissionDecision"] == "deny", hso
     return hso["permissionDecisionReason"]
+
+
+def start_context(output) -> str:
+    """開いたとき（SessionStart）に Claude に渡した情報。渡さなければ空。"""
+    if output is None:
+        return ""
+    hso = output["hookSpecificOutput"]
+    assert hso["hookEventName"] == "SessionStart"
+    return hso["additionalContext"]
+
+
+def git_leftovers(folder: Path) -> list:
+    """.git に残った錠と書きかけの中身（途中で止まった処理の残り）。"""
+    git = folder / ".git"
+    found = [p for p in git.rglob("*.lock")]
+    found += [p for p in (git / "objects").iterdir() if p.name.startswith("hojokin-tmp-")]
+    return sorted(p.relative_to(git).as_posix() for p in found)

@@ -4,6 +4,10 @@
   PreToolUse で拒む。前からあるファイルを直すこと、ふつうの名前のファイルを作ることは拒まない。
 - その場のコード（Bash など）で作られたら、Stop で見つけ、元のファイルにまとめるよう Claude に伝える。
   社長が置いたもの、原本・入れ口・公式資料の名前（社長や公式の名前のまま）は、見つける対象にしない。
+  Stop の hook で続けているとき（stop_hook_active）も、新しく足された分は伝える（1つの応答で3回まで。
+  超えた分と、途中で止めた応答の分は、次の応答の終わりに伝える）。
+- フォルダの名前も見る（「申請書_v2/その1.md」、cp -r で写した「申請書_バックアップ/」）。新しいフォルダだけに当て、
+  前からあるフォルダと、案件・段階のふつうの名前（「…第9回」「1_申請」「1年目」）には当てない。
 - 言葉の一部として出てくるもの（「富士コピー」「最終確認のメモ」など）には当てない。
 
 名前の判定（lib/version_names.py）はテストの Python で、hook は hooks.json のコマンドから動かして確かめる。
@@ -11,6 +15,7 @@
 
 from __future__ import annotations
 
+import shutil
 import unicodedata
 
 import pytest
@@ -197,14 +202,172 @@ def test_stop_finds_version_files_made_by_code(company) -> None:
                        f"{vt.APPLICATION}/その1_v2.md": ("消した", "ツール", "その1を直して")}
 
 
-def test_stop_does_not_block_again_while_continuing(company) -> None:
-    """Stop の hook で続けているとき（stop_hook_active）は、繰り返さないよう伝えない（版には残す）。"""
+def test_stop_reports_version_files_made_while_continuing(company) -> None:
+    """Stop の hook で続けているとき（stop_hook_active。後のタスクの Word・Excel の書式の戻しなどで続けさせたとき）も、
+    その続きの中で新しく足された版の名前のファイルは伝える。一度伝えたものは繰り返さない。"""
     company.say("直して")
+    company.write(f"{vt.APPLICATION}/その1.md", "直した")
+    assert company.stop() is None
+    # 続きの中で、その場のコードが作った
     company.write(f"{vt.APPLICATION}/その1_最終.md", "x")
-    assert company.stop(active=True) is None
+    output = company.stop(active=True)
+    assert output["decision"] == "block"
+    assert f"{vt.APPLICATION}/その1_最終.md（「最終」） → 元のファイル：{vt.APPLICATION}/その1.md" in output["reason"]
     assert company.log()[0]["書類"] == f"{vt.APPLICATION}/その1_最終.md"
-    # 一度残したものは、次の応答の終わりにも言い直さない
+    # まとめないまま応答を終えても、同じものを繰り返さない（続けさせ続けない）
+    assert company.stop(active=True) is None
     company.say("ほかを直して")
+    assert company.stop() is None
+
+
+def test_stop_blocks_a_limited_number_of_times_and_tells_the_rest_later(company) -> None:
+    """1つの応答で続けさせるのは3回まで。超えた分は控えて、次の応答の終わりに伝える（まだあれば）。"""
+    company.say("直して")
+    company.write(f"{vt.APPLICATION}/その1_v1.md", "x")
+    assert "その1_v1.md" in company.stop()["reason"]
+    for n in (2, 3):
+        company.write(f"{vt.APPLICATION}/その1_v{n}.md", "x")
+        assert f"その1_v{n}.md" in company.stop(active=True)["reason"], n
+    company.write(f"{vt.APPLICATION}/その1_v4.md", "x")
+    company.write(f"{vt.APPLICATION}/その1_v5.md", "x")
+    assert company.stop(active=True) is None
+    assert company.stop(active=True) is None
+    # 次の応答の終わり。v5 は Claude が消したので伝えない。v1〜v3 は伝え済み
+    (company.folder / vt.APPLICATION / "その1_v5.md").unlink()
+    company.say("続けて")
+    reason = company.stop()["reason"]
+    assert f"{vt.APPLICATION}/その1_v4.md（「_v2」のような版の番号）" in reason
+    for n in (1, 2, 3, 5):
+        assert f"その1_v{n}.md" not in reason, n
+    assert company.stop(active=True) is None
+
+
+def test_version_files_of_an_interrupted_response_are_told_at_the_next_stop(company) -> None:
+    """応答を途中で止めて次を送ったとき（ツールの分として残す）に足されていた版の名前のファイルも、次の Stop で伝える。"""
+    company.say("その1を直して")
+    company.write(f"{vt.APPLICATION}/その1_v2.md", "途中")
+    company.say("やっぱり別の書き方で")
+    assert (company.log()[0]["書類"], company.log()[0]["だれ"]) == (f"{vt.APPLICATION}/その1_v2.md", "ツール")
+    reason = company.stop()["reason"]
+    assert f"{vt.APPLICATION}/その1_v2.md（「_v2」のような版の番号） → 元のファイル：{vt.APPLICATION}/その1.md" in reason
+
+
+# ---- フォルダの名前 ----
+
+@pytest.mark.parametrize("name", [
+    "申請書_v2", "申請書 v2.1", "申請書-ver2", "申請書_第2版", "申請書_最終", "申請書_最終版", "最終_申請書",
+    "申請書_修正版", "申請書 のコピー", "申請書のコピー", "申請書 - コピー", "申請書_コピー", "申請書_バックアップ",
+    "申請書_旧", "旧_申請書", "申請書_old", "申請書_backup", "backup", "old", "申請書 (2)", "申請書.bak", "申請書 copy",
+])
+def test_version_folder_names_are_caught(name) -> None:
+    assert vn.version_label(name, is_dir=True) is not None, name
+
+
+@pytest.mark.parametrize("name", [
+    # 会社のフォルダの決まった形（DESIGN 4.5）と、案件・段階の名前
+    vt.CASE, "2026_省力化（一般型）第10回", "2026_持続化（一般型）第20回", "1_申請", "2_交付申請", "2_見積書等の提出",
+    "3_実績報告", "4_効果報告", "1年目", "2年目", "申請書", "添付する書類", "公式資料", "概要と流れ", "入れ口", "原本",
+    "登記・名簿", "決算・税", "見積・契約・請求", "役所からの通知", "会社の資料", "写真・カタログ", "記録", "見るだけ",
+    "資料の本文", "要領8", "審査役の結果", "版",
+    # 言葉の一部として出てくるもの
+    "新規事業", "旧工場の写真", "コピー機の資料", "最終確認", "development", "renewal",
+])
+def test_ordinary_folder_names_pass(name) -> None:
+    assert vn.version_label(name, is_dir=True) is None, (name, vn.version_label(name, is_dir=True))
+
+
+def test_version_part_checks_only_new_parts() -> None:
+    """場所の各部分のうち、新しい部分だけに当てる。前からあるフォルダ（社長が作った「旧資料」など）には当てない。"""
+    known = {"案件", f"案件/{vt.CASE}", f"案件/{vt.CASE}/{vt.STAGE}", vt.APPLICATION, "記録", "記録/旧資料"}
+
+    def is_known(prefix):
+        return prefix in known
+
+    assert vn.version_part(f"{vt.CASE_DIR}/{vt.STAGE}/申請書_v2/その1.md", is_known) == (
+        f"{vt.CASE_DIR}/{vt.STAGE}/申請書_v2", "「_v2」のような版の番号", True)
+    assert vn.version_part(f"{vt.APPLICATION}/その1 のコピー.md", is_known)[1:] == ("「コピー」", False)
+    assert vn.version_part("記録/旧資料/メモ.md", is_known) is None
+    assert vn.version_part("記録/旧資料/メモ_v2.md", is_known)[0] == "記録/旧資料/メモ_v2.md"
+    # 案件・段階のフォルダが新しくても、ふつうの名前には当てない
+    assert vn.version_part("案件/2026_省力化（一般型）第10回/4_効果報告/1年目/申請書/効果報告.md", is_known) is None
+
+
+def test_found_at_stop_reports_a_copied_folder_once_with_the_original(tmp_path) -> None:
+    folder = tmp_path
+    (folder / vt.APPLICATION).mkdir(parents=True)
+    (folder / f"{vt.CASE_DIR}/{vt.STAGE}/申請書_バックアップ").mkdir(parents=True)
+    known = {"案件", vt.CASE_DIR, f"{vt.CASE_DIR}/{vt.STAGE}", vt.APPLICATION}
+    added = [f"{vt.CASE_DIR}/{vt.STAGE}/申請書_バックアップ/{name}" for name in ("その1.md", "入力シート.xlsx", "その1_v2.md")]
+    assert vn.found_at_stop(folder, added, known) == [
+        (f"{vt.CASE_DIR}/{vt.STAGE}/申請書_バックアップ/", "「バックアップ」", f"{vt.APPLICATION}/")]
+    assert vn.original_of(folder, f"{vt.CASE_DIR}/{vt.STAGE}/申請書のコピー", is_dir=True) == vt.APPLICATION
+    assert vn.original_of(folder, f"{vt.CASE_DIR}/{vt.STAGE}/計画_v2", is_dir=True) is None
+
+
+def test_folder_messages_name_the_folder_and_the_original() -> None:
+    deny = vn.deny_reason(f"{vt.CASE_DIR}/{vt.STAGE}/申請書_v2", "「_v2」のような版の番号", vt.APPLICATION, is_dir=True)
+    for text in ("版の名前のフォルダは作れません（申請書_v2/：「_v2」のような版の番号）", "書類ごとに1つのファイルを直して使う",
+                 f"元のフォルダ（{vt.APPLICATION}/）の中のファイルを直してください", "hojokin プラグインの決まり"):
+        assert text in deny, text
+    stop = vn.stop_reason([(f"{vt.CASE_DIR}/{vt.STAGE}/申請書_バックアップ/", "「バックアップ」", f"{vt.APPLICATION}/"),
+                           ("記録/旧/", "「旧」「新」", None)])
+    for text in (f"{vt.CASE_DIR}/{vt.STAGE}/申請書_バックアップ/（「バックアップ」） → 元のフォルダ：{vt.APPLICATION}/",
+                 "記録/旧/（「旧」「新」） → 元のフォルダが見つかりません", "フォルダごと消す"):
+        assert text in stop, text
+
+
+def test_pre_tool_use_denies_files_in_new_version_folders(company) -> None:
+    """まだないフォルダの名前に版の言葉があれば、その中に書くことも拒む（申請書_v2/その1.md など）。"""
+    folder = company.folder
+    for name in ("申請書_v2", "申請書のコピー", "申請書 - コピー", "申請書_バックアップ"):
+        target = folder / vt.CASE_DIR / vt.STAGE / name / "その1.md"
+        reason = vt.denied_reason(company.pre("Write", {"file_path": str(target), "content": "x"}))
+        assert reason.startswith(f"版の名前のフォルダは作れません（{name}/："), reason
+        assert f"元のフォルダ（{vt.APPLICATION}/）の中のファイルを直してください" in reason
+        assert not target.parent.exists()
+    # 深い所の新しいフォルダでも
+    reason = vt.denied_reason(company.pre("Write", {"file_path": str(folder / "記録" / "旧" / "メモ" / "a.md"),
+                                                    "content": "x"}))
+    assert "版の名前のフォルダは作れません（旧/：" in reason
+
+
+def test_pre_tool_use_passes_new_ordinary_folders_and_existing_version_folders(company) -> None:
+    """新しい案件・段階のふつうの名前のフォルダと、前からある版の言葉のフォルダ（社長が作ったもの）の中は通す。"""
+    folder = company.folder
+    for rel in ("案件/2026_省力化（一般型）第10回/1_申請/申請書/その1.md",
+                f"{vt.CASE_DIR}/4_効果報告/1年目/申請書/効果報告.md", "記録/新規事業/メモ.md",
+                f"{vt.CASE_DIR}/公式資料/要領8/p001.txt"):
+        assert company.pre("Write", {"file_path": str(folder / rel), "content": "x"}) is None, rel
+    company.write("入れ口/見積書_最終/メモ.txt", "社長が作った")
+    company.say("見て")
+    assert company.pre("Write", {"file_path": str(folder / "入れ口" / "見積書_最終" / "まとめ.md"), "content": "x"}) is None
+
+
+def test_stop_finds_a_folder_copied_by_code(company) -> None:
+    """その場のコードが申請書のフォルダを丸ごと写したら（cp -r 申請書 申請書_バックアップ）、フォルダを1件として伝える。"""
+    company.write(f"{vt.APPLICATION}/入力シート.md", "入力")
+    company.say("直す前に写しを取って直して")
+    shutil.copytree(company.folder / vt.APPLICATION, company.folder / vt.CASE_DIR / vt.STAGE / "申請書_バックアップ")
+    company.write(f"{vt.APPLICATION}/その1.md", "直した")
+    output = company.stop()
+    assert output["decision"] == "block"
+    reason = output["reason"]
+    assert (f"- {vt.CASE_DIR}/{vt.STAGE}/申請書_バックアップ/（「バックアップ」） → 元のフォルダ：{vt.APPLICATION}/"
+            in reason)
+    assert "申請書_バックアップ/その1.md" not in reason and "フォルダごと消す" in reason
+    # ふつうの名前の新しい案件・段階のフォルダでは伝えない
+    company.say("次の案件の準備をして")
+    company.write("案件/2026_省力化（一般型）第10回/1_申請/申請書/その1.md", "x")
+    company.write(f"{vt.CASE_DIR}/4_効果報告/1年目/申請書/効果報告.md", "x")
+    assert company.stop() is None
+
+
+def test_stop_skips_version_folders_in_owner_and_official_places(company) -> None:
+    """原本・入れ口（社長の名前のまま）と公式資料（公式の名前のまま）の中のフォルダには当てない。"""
+    company.say("取り込んで")
+    company.write("入れ口/コピー/見積書.pdf", b"%PDF")
+    company.write("原本/会社の資料/旧/会社案内.pdf", b"%PDF")
+    company.write(f"{vt.CASE_DIR}/公式資料/第8版/公募要領.pdf", b"%PDF")
     assert company.stop() is None
 
 

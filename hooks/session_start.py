@@ -13,5 +13,4 @@ import version_hooks
 
 
 def handle(data: dict, folder: Path) -> Optional[dict]:
-    version_hooks.session_start(data, folder)
-    return None
+    return version_hooks.session_start(data, folder)

@@ -8,12 +8,18 @@
 - 履歴に入れないもの（.gitignore と、その場限りの置き場）は残さない。濁点の分かれた名前は1文字の形で残す。
 - 送り先は持たないまま。利用者の Git の設定と全体の除外の指定は読まない。
 - Git の形の履歴（.git）がない会社のフォルダでは、何も書かない。
+- hook の見張り（開いたとき・送ったときは25秒）に止められないよう、1回の場面で使う時間に上限を設ける。
+  残しきれない分は次の場面に回し、回した場面のだれ・理由で残す。大きすぎるファイルは残さず、開いたときに伝える。
+- 見張りに止められて .git に錠が残っても、次の場面で片付けて残す。版を残す処理が落ちても hook は落とさず、
+  「Python が動かない」の案内ではなく、版の記録が止まったことを開いたときに伝える。
 
 hook は hooks.json のコマンドから、Claude Code と同じ入力で動かす（tests/version_tool.py）。
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -29,6 +35,11 @@ import version_tool as vt
 JST = timezone(timedelta(hours=9))
 SONO1 = f"{vt.APPLICATION}/その1.md"
 OWNER_REASON = "社長が手で変更"
+# 版を残す秒数を短くする（テストのため。長くはできない）
+SHORT_BUDGET = {"HOJOKIN_RECORD_SECONDS": "1"}
+# 見積もり（100MB/秒）では1秒の上限に収まらない大きさ（中身は0。読むのはすぐ終わる）
+BIG_BYTES = 160 * 1024 * 1024
+PYTHON_MISSING = ("補助プログラム（Python）が動かない", "xcode-select")
 
 
 @pytest.fixture
@@ -416,6 +427,237 @@ def test_real_git_reads_the_history(company) -> None:
     assert r.returncode == 0
     text = r.stdout.decode("utf-8")
     assert text.startswith("ツール\n") and f"書類: {SONO1}" in text
+
+
+# ---- 見張りの中で残す（時間の上限、大きなファイル、止められた後、落ちたとき） ----
+
+def sparse(company: vt.Company, rel: str, size: int):
+    """中身が0の大きなファイル（ディスクはほとんど使わない）。"""
+    path = company.folder / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        f.truncate(size)
+    return path
+
+
+def blob_id(data: bytes) -> str:
+    return hashlib.sha1(b"blob %d\x00" % len(data) + data).hexdigest()
+
+
+def dead_pid() -> int:
+    """もう動いていない処理の番号。"""
+    p = subprocess.Popen(["/usr/bin/true"])
+    p.wait()
+    return p.pid
+
+
+def fsck(company: vt.Company) -> None:
+    """本物の git で、履歴が壊れていないかを確かめる（手元に git があるときだけ）。"""
+    git = shutil.which("git")
+    if git is None:
+        return
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(company.env.home), "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_CONFIG_GLOBAL": os.devnull}
+    r = subprocess.run([git, "fsck", "--no-progress", "--strict"], cwd=company.folder, env=env, capture_output=True,
+                       timeout=120)
+    assert r.returncode == 0, r.stderr.decode("utf-8")
+
+
+def test_photos_in_bulk_are_recorded_well_within_the_watch(company) -> None:
+    """写真をまとめて入れたように、大きなファイルが多くても、送ったときの見張り（25秒）より十分早く残す。"""
+    for i in range(50):
+        company.write(f"入れ口/写真/IMG_{i:04d}.jpg", os.urandom(4 * 1024 * 1024))
+    start = time.monotonic()
+    assert company.say("写真を入れた") is None
+    assert time.monotonic() - start < 10
+    assert len(newest(company)) == 50
+    assert company.pending() == []
+    fsck(company)
+
+
+def test_leftover_locks_of_a_stopped_hook_are_cleared(company) -> None:
+    """見張りに止められた hook が .git に残した錠（版の錠、dulwich の錠、書きかけの中身）は、次の場面で片付けて残す。
+
+    版の錠を持っていた処理がもう動いていなければ、120秒を待たずにすぐ外す。同じ中身の錠が残っていても残せる。
+    """
+    data = b"photo-" * 2000
+    company.write("入れ口/写真/IMG_0001.jpg", data)
+    git = company.folder / ".git"
+    sha = blob_id(data)
+    (git / "objects" / sha[:2]).mkdir(exist_ok=True)
+    for path in (git / "objects" / sha[:2] / f"{sha[2:]}.lock", git / "index.lock", git / "refs" / "heads" / "master.lock",
+                 git / "objects" / "hojokin-tmp-abc123"):
+        path.write_bytes(b"")
+    (git / "hojokin-record.lock").write_text(f"{dead_pid()}\n", encoding="ascii")
+    assert len(vt.git_leftovers(company.folder)) == 5
+    start = time.monotonic()
+    assert company.say("写真を入れた") is None
+    assert time.monotonic() - start < 4
+    (record,) = newest(company)
+    assert (record["書類"], record["だれ"], record["理由"]) == ("入れ口/写真/IMG_0001.jpg", "社長", OWNER_REASON)
+    assert vt.git_leftovers(company.folder) == []
+    output = company.start()
+    assert output is None, output
+    company.write(SONO1, "x")
+    assert company.stop() is None
+    assert newest(company)[0]["書類"] == SONO1
+    fsck(company)
+
+
+def test_record_recovers_after_the_watch_kills_it(company) -> None:
+    """見張りが本当に止めても（kill -9）、次の場面で錠を片付け、残っていたものをすべて残す。"""
+    for i in range(6000):
+        company.write(f"記録/資料の本文/{vt.CASE}/要領8/p{i:04d}.txt", f"ページ {i}\n" * 20)
+    context = vt.start_context(company.start(env={"HOJOKIN_WATCH_SECONDS": "1"}))
+    assert "補助プログラム（Python）が時間内に終わらなかった" in context, context
+    assert company.pending() != []
+    start = time.monotonic()
+    assert company.say("続けて") is None
+    assert time.monotonic() - start < 20
+    assert company.pending() == []
+    assert vt.git_leftovers(company.folder) == []
+    assert len([r for r in company.log() if r["書類"].startswith("記録/資料の本文/")]) == 6000
+    assert company.start() is None
+    fsck(company)
+
+
+def test_lock_of_a_running_process_is_respected(company) -> None:
+    """版の錠を持つ処理がまだ動いていれば、待って、何も書かずに次の場面に回す（何も伝えない）。古すぎる錠は外す。"""
+    company.write(SONO1, "x")
+    lock = company.folder / ".git" / "hojokin-record.lock"
+    lock.write_text(f"{os.getpid()}\n", encoding="ascii")
+    count = len(company.versions())
+    assert company.say("書いて") is None
+    assert len(company.versions()) == count and lock.exists()
+    old = time.time() - 600
+    os.utime(lock, (old, old))
+    assert company.say("もう一度") is None
+    (record,) = newest(company)
+    assert record["書類"] == SONO1
+    assert not lock.exists()
+
+
+def test_owner_files_left_for_later_are_recorded_as_the_owner(company) -> None:
+    """時間の上限で残しきれなかった社長のファイルは、次の場面（応答の終わり）でも「社長」として残す。"""
+    sparse(company, "入れ口/動画.mp4", BIG_BYTES)
+    company.write("入れ口/メモ.txt", "社長のメモ")
+    assert company.say("動画を入れた", env=SHORT_BUDGET) is None
+    (record,) = newest(company)
+    assert (record["書類"], record["だれ"]) == ("入れ口/メモ.txt", "社長")
+    assert company.pending() == [["入れ口/動画.mp4", "足した"]]
+    company.write(SONO1, "ツールが書いた")
+    assert company.stop() is None
+    by_doc = {r["書類"]: (r["だれ"], r["理由"]) for r in newest(company, 2)}
+    assert by_doc == {"入れ口/動画.mp4": ("社長", OWNER_REASON), SONO1: ("ツール", "動画を入れた")}
+    assert company.pending() == []
+    assert not (company.folder / ".hojokin" / "一時" / "版の記録" / "残り.json").exists()
+
+
+def test_tool_files_left_for_later_keep_the_request(company) -> None:
+    """応答の終わりに残しきれなかったツールのファイルは、次に送ったときに「ツール」と前の依頼で残す。
+    残しきれなくても、版の名前のファイルは伝える。"""
+    company.say("動画を書き出して")
+    sparse(company, "記録/紹介動画_最終.mp4", BIG_BYTES)
+    company.write(SONO1, "x")
+    output = company.stop(env=SHORT_BUDGET)
+    assert output["decision"] == "block"
+    assert "記録/紹介動画_最終.mp4（「最終」）" in output["reason"]
+    (record,) = newest(company)
+    assert (record["書類"], record["だれ"]) == (SONO1, "ツール")
+    company.write("入れ口/メモ.txt", "社長のメモ")
+    company.say("ありがとう")
+    by_doc = {r["書類"]: (r["だれ"], r["理由"]) for r in newest(company, 2)}
+    assert by_doc == {"記録/紹介動画_最終.mp4": ("ツール", "動画を書き出して"), "入れ口/メモ.txt": ("社長", OWNER_REASON)}
+    assert company.pending() == []
+
+
+def test_session_start_tells_files_left_for_later(company) -> None:
+    """開いたときに残しきれなかったファイルがあれば、件数を伝える。次の場面で残す。"""
+    sparse(company, "入れ口/動画.mp4", BIG_BYTES)
+    context = vt.start_context(company.start(env=SHORT_BUDGET))
+    assert "1件はまだ版の履歴に残していません" in context, context
+    assert not any(word in context for word in PYTHON_MISSING)
+    assert company.start() is None
+    (record,) = newest(company)
+    assert (record["書類"], record["だれ"]) == ("入れ口/動画.mp4", "社長")
+
+
+def test_too_large_files_are_not_recorded_and_told(company) -> None:
+    """大きすぎるファイル（2GB を超えるもの）は版に残さず、開いたときに伝える。ツールの分にも、版の名前の確かめにも入れない。"""
+    sparse(company, "入れ口/撮影データ_最終.mov", 2 * 1024 ** 3 + 1)
+    company.write("入れ口/メモ.txt", "x")
+    start = time.monotonic()
+    context = vt.start_context(company.start())
+    assert time.monotonic() - start < 5
+    assert "大きすぎるため" in context and "入れ口/撮影データ_最終.mov" in context, context
+    (record,) = newest(company)
+    assert record["書類"] == "入れ口/メモ.txt"
+    assert "入れ口/撮影データ_最終.mov" not in company.tracked()
+    sparse(company, "記録/書き出し_v2.mov", 2 * 1024 ** 3 + 1)
+    company.say("見て")
+    assert company.stop() is None
+    assert "記録/書き出し_v2.mov" in vt.start_context(company.start())
+
+
+def test_files_cut_off_twice_are_treated_as_too_large(company) -> None:
+    """時間の上限でファイルの途中までしか読めないことが2回続いたら、大きすぎるものとして伝える（遅いディスクなどで、
+    毎回の場面の時間を使い切らないため）。大きさが変わったら、また試す。"""
+    # 会社のフォルダを作ったときの記録（時刻）をそろえておく（小さな上限では、比べることも次に回すため）
+    assert company.start() is None
+    company.write("入れ口/動画.mov", b"x" * (3 * 1024 * 1024))
+    code = ("from pathlib import Path\n"
+            "history._fits = lambda size, deadline: True  # 見積もりでは収まり、書く途中で上限を過ぎたことにする\n"
+            "r = history.record_scene(Path(sys.argv[1]), history.OWNER, history.OWNER_REASON, budget=0.000001)\n"
+            "print(json.dumps([len(r.recorded), len(r.deferred), len(r.too_large)]))")
+    assert ct.py_json(code, str(company.folder)) == [0, 1, 0]
+    assert vt.git_leftovers(company.folder) == []
+    leftovers = json.loads((company.folder / ".hojokin/一時/版の記録/残り.json").read_text(encoding="utf-8"))
+    assert leftovers == {"書類": {"入れ口/動画.mov": {"だれ": "社長", "理由": OWNER_REASON, "大きさ": 3 * 1024 * 1024,
+                                                    "止めた回数": 1}}}
+    assert ct.py_json(code, str(company.folder)) == [0, 1, 0]
+    assert ct.py_json(code, str(company.folder)) == [0, 0, 1]
+    context = vt.start_context(company.start())
+    assert "大きすぎるため" in context and "入れ口/動画.mov" in context
+    assert company.pending() == [["入れ口/動画.mov", "足した"]]
+    company.write("入れ口/動画.mov", b"y" * (3 * 1024 * 1024 + 1))
+    assert company.start() is None
+    (record,) = newest(company)
+    assert (record["書類"], record["だれ"]) == ("入れ口/動画.mov", "社長")
+
+
+def test_writing_stops_midway_at_the_deadline(company) -> None:
+    """中身を書く途中で時間の上限を過ぎたら、やめて、書きかけのファイルも錠も残さない。"""
+    company.write("入れ口/a.bin", b"x" * (3 * 1024 * 1024))
+    code = ("import time\nfrom dulwich.repo import Repo\n"
+            "repo = Repo(sys.argv[1])\n"
+            "status, _st, sha = history._write_blob(repo, sys.argv[2], time.monotonic() - 1)\n"
+            "print(json.dumps([status, sha.decode('ascii')], ensure_ascii=False))")
+    assert ct.py_json(code, str(company.folder), str(company.folder / "入れ口" / "a.bin")) == ["時間切れ", ""]
+    assert vt.git_leftovers(company.folder) == []
+
+
+def test_record_failure_is_told_at_session_start_not_as_python_missing(company) -> None:
+    """版を残す処理が落ちても hook は落とさず（書き込みの守りも続く）、開いたときに版の記録が止まったことを伝える。
+    「Python が動かない」の案内にはしない。次に残せたら、知らせは消える。"""
+    company.write(SONO1, "x")
+    objects = company.folder / ".git" / "objects"
+    objects.chmod(0o500)
+    try:
+        context = vt.start_context(company.start())
+        assert "版の記録が止まっています" in context and "開いたとき" in context and "PermissionError" in context, context
+        assert not any(word in context for word in PYTHON_MISSING), context
+        assert company.say("書いて") is None
+        company.write(f"{vt.APPLICATION}/その1_v2.md", "x")
+        assert company.stop() is None
+        assert company.pre("Write", {"file_path": str(company.folder / vt.APPLICATION / "その1_v3.md"),
+                                     "content": "x"}) is not None
+        context = vt.start_context(company.start())
+        assert "版の記録が止まっています" in context and "開いたとき" in context
+    finally:
+        objects.chmod(0o755)
+    assert company.say("直した") is None
+    assert company.pending() == []
+    assert company.start() is None
 
 
 # ---- .git のない会社のフォルダ ----

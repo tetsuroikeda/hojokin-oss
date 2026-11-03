@@ -5,13 +5,17 @@
 - PreToolUse：Write・Edit・NotebookEdit で、名前がこの型に当たる新しいファイルを作ることを拒む。
   前からあるファイル（社長が置いた「見積書_最終.pdf」など）を直すことは拒まない。
 - Stop：その場のコード（Bash など）で作られたものを、応答の終わりに見つけ、元のファイルにまとめるよう伝える。
+- フォルダの名前も見る（「申請書_v2/その1.md」「cp -r 申請書 申請書_バックアップ」も、書類ごとにファイルが
+  2つになるため）。会社のフォルダからの場所の各部分のうち、新しい部分（PreToolUse ではまだない部分、Stop では
+  前の版になかったフォルダとファイル）に当てる。前からあるフォルダ（社長が作った「旧資料/」など）には当てない。
 
-名前は、拡張子を除いた部分を、文字の形をそろえて（NFKC。全角の英数字・記号は半角に、濁点の分かれた形は1文字に）
+名前は、拡張子を除いた部分を（フォルダは名前の全部を）、文字の形をそろえて（NFKC。全角の英数字・記号は半角に、濁点の分かれた形は1文字に）
 小文字にしてから比べる。「富士コピー」「コピー機の見積書」「最終確認のメモ」のように、言葉の一部として出てくる
 ものには当てない。版を表す言葉は、名前の端か区切りの記号（空白・「_」「-」「.」「・」・かっこなど）に挟まれた
 ときだけ当てる。「最終版」「修正版」「のコピー」のように、それだけで版と分かる形は、どこにあっても当てる。
 
-ここは文字の処理だけで、ファイルも版の履歴も読まない（PreToolUse の守りの中で動くため）。
+ここは文字の処理が中心で、版の履歴は読まない（PreToolUse の守りの中で動くため）。読むのは、元のファイルを
+探すときの、同じフォルダの名前の一覧だけ。
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ import os
 import re
 import unicodedata
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 # 区切りの記号（NFKC にそろえた後の形）。「ー」（長音）は言葉の一部なので入れない
 _SEP = r"[\s_\-.・,、+~〜()\[\]【】「」『』—–]"
@@ -68,16 +72,63 @@ def _split(name: str) -> Tuple[str, str]:
     return stem, suffix
 
 
-def version_label(name: str) -> Optional[str]:
-    """ファイルの名前（場所を含まない）が版の名前なら、当たった型の説明を返す。当たらなければ None。"""
-    stem, suffix = _split(unicodedata.normalize("NFC", name))
+def version_label(name: str, is_dir: bool = False) -> Optional[str]:
+    """ファイルかフォルダの名前（場所を含まない）が版の名前なら、当たった型の説明を返す。当たらなければ None。
+
+    フォルダは拡張子を持たないので、名前の全部を見る（「申請書 v2.1」の「.1」を拡張子として除かない）。
+    """
+    name = unicodedata.normalize("NFC", name)
+    stem, suffix = _split(name)
     if _fold(suffix) in BACKUP_SUFFIXES:
         return BACKUP_LABEL
-    folded = _fold(stem)
+    folded = _fold(name if is_dir else stem)
     for label, pattern in RULES:
         if pattern.search(folded):
             return label
     return None
+
+
+def version_part(path: str, is_known: Callable[[str], bool]) -> Optional[Tuple[str, str, bool]]:
+    """会社のフォルダからの場所（区切りは「/」）のうち、新しい部分の名前が版の名前なら、
+    (その部分までの場所, 型の説明, フォルダか) を返す。上の部分から見て、最初に当たったもの。
+
+    is_known(その部分までの場所) が True の部分（前からあるフォルダ）は見ない。最後の部分はファイルの名前。
+    """
+    parts = unicodedata.normalize("NFC", path).split("/")
+    for i, part in enumerate(parts):
+        prefix = "/".join(parts[: i + 1])
+        is_dir = i < len(parts) - 1
+        if is_dir and is_known(prefix):
+            continue
+        label = version_label(part, is_dir=is_dir)
+        if label is not None:
+            return prefix, label, is_dir
+    return None
+
+
+def found_at_stop(folder: Path, added: List[str], known_dirs) -> List[Tuple[str, str, Optional[str]]]:
+    """応答の中で足されたファイル（会社のフォルダからの場所）のうち、版の名前のものを
+    (場所, 型の説明, 元のファイル) の一覧にする。フォルダが当たったときは、場所と元のフォルダの後ろに「/」を付け、
+    中のファイルをまとめて1件にする。known_dirs は、前の版にあったフォルダの集まり。
+    """
+    found: List[Tuple[str, str, Optional[str]]] = []
+    seen = set()
+    for path in added:
+        if not checked_at_stop(path):
+            continue
+        hit = version_part(path, lambda prefix: prefix in known_dirs)
+        if hit is None:
+            continue
+        where, label, is_dir = hit
+        key = where + "/" if is_dir else where
+        if key in seen:
+            continue
+        seen.add(key)
+        original = original_of(folder, where, is_dir=is_dir)
+        if is_dir and original is not None:
+            original += "/"
+        found.append((key, label, original))
+    return found
 
 
 def checked_at_stop(path: str) -> bool:
@@ -97,13 +148,15 @@ def _without_version(stem: str) -> str:
     return re.sub(rf"^{_SEP}+|{_SEP}+$", "", folded)
 
 
-def original_of(folder: Path, path: str) -> Optional[str]:
-    """版の名前のファイルの、元のファイルらしいもの（同じフォルダにあり、版の言葉を除いた名前が同じもの）。
+def original_of(folder: Path, path: str, is_dir: bool = False) -> Optional[str]:
+    """版の名前のファイル（フォルダ）の、元のものらしいもの（同じフォルダにあり、版の言葉を除いた名前が同じもの）。
 
     path は会社のフォルダからの場所。見つかれば、その場所（会社のフォルダから）を返す。
     """
-    path = unicodedata.normalize("NFC", path)
+    path = unicodedata.normalize("NFC", path).rstrip("/")
     directory, _, name = path.rpartition("/")
+    if is_dir:
+        return _original_dir(folder, directory, name)
     stem, suffix = _split(name)
     if _fold(suffix) in BACKUP_SUFFIXES:
         # 「その1.docx.bak」の元は「その1.docx」
@@ -127,27 +180,58 @@ def original_of(folder: Path, path: str) -> Optional[str]:
     return None
 
 
+def _original_dir(folder: Path, directory: str, name: str) -> Optional[str]:
+    """版の名前のフォルダの、元のフォルダらしいもの（同じ場所にあり、版の言葉を除いた名前が同じフォルダ）。"""
+    stem, suffix = _split(name)
+    base = _fold(stem) if _fold(suffix) in BACKUP_SUFFIXES else _without_version(name)
+    if not base:
+        return None
+    parent = folder / directory if directory else folder
+    try:
+        siblings = sorted(os.listdir(parent))
+    except OSError:
+        return None
+    for sibling in siblings:
+        candidate = unicodedata.normalize("NFC", sibling)
+        if candidate == name or version_label(candidate, is_dir=True) is not None:
+            continue
+        if _fold(candidate) == base and (parent / sibling).is_dir():
+            return f"{directory}/{candidate}" if directory else candidate
+    return None
+
+
 RULE_TEXT = "書類ごとに1つのファイルを直して使う決まりです（前の版は、版の履歴に自動で残ります）"
 
 
-def deny_reason(path: str, label: str, original: Optional[str]) -> str:
-    """PreToolUse で拒むときの文。"""
+def deny_reason(path: str, label: str, original: Optional[str], is_dir: bool = False) -> str:
+    """PreToolUse で拒むときの文。path は版の名前に当たった部分までの場所。"""
     name = path.rsplit("/", 1)[-1]
-    where = f"元のファイル（{original}）を直してください" if original else "元のファイルを直すか、版を表さない名前にしてください"
+    if is_dir:
+        where = (f"元のフォルダ（{original}/）の中のファイルを直してください" if original
+                 else "元のフォルダの中のファイルを直すか、版を表さない名前のフォルダにしてください")
+        head = f"版の名前のフォルダは作れません（{name}/：{label}）"
+    else:
+        where = f"元のファイル（{original}）を直してください" if original else "元のファイルを直すか、版を表さない名前にしてください"
+        head = f"版の名前のファイルは作れません（{name}：{label}）"
     return (
-        f"版の名前のファイルは作れません（{name}：{label}）。{RULE_TEXT}。{where}。"
+        f"{head}。{RULE_TEXT}。{where}。"
         "社長が別の書類として残したいときは、版を表さない名前を社長と決めてください（hojokin プラグインの決まり）。"
     )
 
 
 def stop_reason(found: List[Tuple[str, str, Optional[str]]]) -> str:
-    """Stop で Claude に伝える文。found は (場所, 型の説明, 元のファイル) の一覧。"""
+    """Stop で Claude に伝える文。found は (場所, 型の説明, 元のファイル) の一覧（フォルダは後ろに「/」）。"""
     lines = [f"【hojokin】この応答の中で、版の名前のファイルが作られました。{RULE_TEXT}。"]
     for path, label, original in found:
-        to = f" → 元のファイル：{original}" if original else " → 元のファイルが見つかりません"
+        if path.endswith("/"):
+            to = f" → 元のフォルダ：{original}" if original else " → 元のフォルダが見つかりません"
+        else:
+            to = f" → 元のファイル：{original}" if original else " → 元のファイルが見つかりません"
         lines.append(f"- {path}（{label}）{to}")
     lines.append(
-        "中身を元のファイルにまとめてから、版の名前のファイルを消してください（Word・Excel はスクリプトで書き込む）。"
+        "中身を元のファイルにまとめてから、版の名前のファイルを消してください"
+        "（版の名前のフォルダは、中のファイルを元のフォルダのファイルにまとめてから、フォルダごと消す。"
+        "Word・Excel はスクリプトで書き込む）。"
         "元のファイルが分からないときは、社長に聞いてください。"
     )
     return "\n".join(lines)
