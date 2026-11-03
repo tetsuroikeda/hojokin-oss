@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: a-kakunin
+tags: [e3a]
+context:
+  scaffold_script: scaffold.sh
