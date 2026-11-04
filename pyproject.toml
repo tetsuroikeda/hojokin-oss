@@ -12,6 +12,7 @@ dependencies = []
 dev = [
     "pytest>=8",
     "jsonschema>=4.23",
+    "pytest-xdist>=3.6",
 ]
 
 [tool.uv]

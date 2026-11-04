@@ -20,7 +20,8 @@ OUTPUT_TAIL = 3000
 
 CHECKS = [
     ("構成の検査", ["claude", "plugin", "validate", ".", "--strict"]),
-    ("速いテスト", ["uv", "run", "pytest", "-q", "-m", "not slow"]),
+    # 版の履歴（Git）を使うテストが増え、1つずつ流すと300秒を超えるので、CPU の数だけ並べて流す（pytest-xdist）
+    ("速いテスト", ["uv", "run", "pytest", "-q", "-m", "not slow", "-n", "auto"]),
 ]
 
 
