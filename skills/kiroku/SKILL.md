@@ -1,6 +1,10 @@
 ---
 name: kiroku
 description: この会社について覚えていることを見る・直すとき、書類の前の版を見る・戻すとき、「提出した」と言われたときに使う。「覚えていることを見せて」「前の版に戻して」「さっきの直しを取り消して」「申請を出した」と言われたときに使う。
+allowed-tools:
+  - Bash(python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/*)
+  - Bash(python3 -B ${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/*)
+  - Read(/${CLAUDE_PLUGIN_ROOT}/skills/kiroku/**)
 ---
 
 # 会社の記録と版（F13 の一覧と手直し、版）

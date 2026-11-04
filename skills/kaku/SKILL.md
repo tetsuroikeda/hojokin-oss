@@ -3,6 +3,10 @@ name: kaku
 description: 財務モデル・計画書・入力シート・採択後の報告書を作り、審査役に確かめさせて直すときに使う。差し戻しへの対応と、説明の練習も扱う。「計画書を書いて」「数字の計画を作って」「差し戻された」「面接の練習をしたい」「審査で聞かれそうなことを練習したい」と言われたときに使う。
 model: opus
 effort: high
+allowed-tools:
+  - Bash(python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kaku/scripts/*)
+  - Bash(python3 -B ${CLAUDE_PLUGIN_ROOT}/skills/kaku/scripts/*)
+  - Read(/${CLAUDE_PLUGIN_ROOT}/skills/kaku/**)
 ---
 
 # 申請書を書く・確かめる・直す（F8、F9、F10 の入力シート、F11、F12 の差し戻しと実績の比較）

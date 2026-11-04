@@ -2,6 +2,10 @@
 name: nyuryoku
 description: 電子申請の画面に入力し、一時保存まで進める。担当者が /hojokin:nyuryoku と呼んだときだけ動く。
 disable-model-invocation: true
+allowed-tools:
+  - Bash(python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/nyuryoku/scripts/*)
+  - Bash(python3 -B ${CLAUDE_PLUGIN_ROOT}/skills/nyuryoku/scripts/*)
+  - Read(/${CLAUDE_PLUGIN_ROOT}/skills/nyuryoku/**)
 ---
 
 # 電子申請の入力（F10 の画面入力）
