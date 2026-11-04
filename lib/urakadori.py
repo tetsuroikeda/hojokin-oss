@@ -59,7 +59,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from lib import case_folder, doc_text
+from lib import case_folder, doc_text, places
 from lib.official_docs import LIST_FILE, RECORDS_DIR, TEXT_DIR  # 資料の本文の置き場所は、取る道具（M2a）と同じ
 from lib.schema_lite import Validator, path_label
 
@@ -1013,10 +1013,10 @@ def full_out_path(company: Path, case: str, data: Dict) -> Path:
 
 
 def _check_place(company: Path, out: Path) -> None:
-    """置き場所が、別名をたどった後も `記録/制度データ/` の中にあるか（.claude/ や 原本/ などに書かせない）。"""
+    """置き場所が、別名をたどった後も `記録/制度データ/` の中にあるか（.claude/ や 原本/ などに書かせない。lib/places.py）。"""
     try:
-        rel = out.resolve().relative_to(company.resolve())
-    except ValueError:
+        rel = Path(places.relative_inside(company, out))
+    except places.PlaceError:
         raise PlaceError(f"置き場所（{out}）が、会社のフォルダの外になります。何も書いていません")
     if rel.parts[:2] != (RECORDS_DIR, SEIDO_DIR) or out.suffix != ".json":
         raise PlaceError(f"置き場所（{rel}）が、{RECORDS_DIR}/{SEIDO_DIR}/ の中の JSON になりません"
@@ -1099,15 +1099,6 @@ def run(company: Path, case: str, data: Any) -> Tuple[Result, Dict]:
     return result, saved
 
 
-def inside(path: Path, folder: Path) -> bool:
-    """path が、別名をたどった後も folder の中にあるか。"""
-    try:
-        path.resolve().relative_to(folder.resolve())
-        return True
-    except ValueError:
-        return False
-
-
 def summary(result: Result) -> Dict:
     out = {
         "照らした値": result.checked,
@@ -1164,7 +1155,7 @@ def error_report(errors: List[str]) -> str:
 
 __all__ = [
     "CHAPTER_FORM", "InputError", "PlaceError", "Result", "Texts", "error_report", "event_problems", "find_case",
-    "form_for", "fragments", "inside", "is_full", "limit_kind_problems", "month_problems", "normalize", "path_label",
+    "form_for", "fragments", "is_full", "limit_kind_problems", "month_problems", "normalize", "path_label",
     "period_problems", "period_spans", "report", "restore", "run", "scan_numbers", "shape_errors", "strip_own_notes",
     "text_found", "value_problems", "verify",
 ]

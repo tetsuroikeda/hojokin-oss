@@ -27,7 +27,7 @@ import unicodedata
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-from lib import company
+from lib import company, places
 from lib.case_folder import OFFICIAL_DIR
 from lib.company_init import CASES_DIR, ORIGINAL_KINDS, ORIGINALS_DIR
 
@@ -85,14 +85,16 @@ def real_place_problem(folder: Path, rel: str) -> str:
     """
     folder = Path(folder)
     parts = nfc(rel).split("/")
-    current = folder
-    for part in parts[:-1]:
-        current = current / part
-        if os.path.islink(str(current)):
-            return f"{current.relative_to(folder).as_posix()} が別名（エイリアス）になっています"
-    real_folder = os.path.realpath(str(folder))
-    expected = os.path.join(real_folder, *parts[:-1])
-    if nfc(os.path.realpath(str(folder.joinpath(*parts[:-1])))) != nfc(expected):
+    if len(parts) > 1:
+        # 途中のフォルダだけを見る（ファイルそのものは問わない。lib/places.py）
+        try:
+            link = places.first_link(folder, "/".join(parts[:-1]))
+        except places.PlaceError:
+            return f"{rel} は会社のフォルダからの場所として正しくありません"
+        if link is not None:
+            return f"{link} が別名（エイリアス）になっています"
+    expected = places.real(folder).joinpath(*parts[:-1])
+    if places.real(folder.joinpath(*parts[:-1])) != Path(nfc(str(expected))):
         return f"{'/'.join(parts[:-1])} が会社のフォルダの別の場所を指しています"
     return ""
 

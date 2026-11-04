@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from lib import company, protected_store, seiri
+from lib import company, places, protected_store, seiri
 from lib.company_init import RECORDS_DIR
 
 ORIGINAL = protected_store.ORIGINAL
@@ -365,12 +365,6 @@ def _stat_key(st: os.stat_result) -> list:
 # ---- 戻す ----
 
 
-def _inside(folder: Path, path: Path) -> bool:
-    real_folder = os.path.realpath(str(folder))
-    real_parent = os.path.realpath(str(path.parent))
-    return os.path.commonpath([real_folder, real_parent]) == real_folder
-
-
 def find_content(folder: Path, target: Target) -> Optional[bytes]:
     """版の履歴の置き場から、target のハッシュと同じ中身を探す。なければ None。"""
     from lib import history  # 同梱の dulwich を読み込む（戻すときだけ）
@@ -408,7 +402,7 @@ def _write_back(folder: Path, target: Target, data: bytes) -> None:
     if problem:
         raise OSError(problem)
     path = Path(folder) / target.path
-    if not _inside(folder, path):
+    if not places.is_inside(folder, path.parent):
         raise OSError(f"{target.path} の置き場が会社のフォルダの外を指しています")
     path.parent.mkdir(parents=True, exist_ok=True)
     if os.path.isdir(str(path)) and not os.path.islink(str(path)):

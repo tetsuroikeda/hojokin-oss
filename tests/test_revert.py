@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+from pathlib import Path
 
 import company_tool as ct
 import pytest
@@ -139,3 +141,52 @@ def test_submission_record_is_not_reverted(company) -> None:
     assert record.read_bytes() == good
     assert [e["番号"] for e in submissions(company)] == [1, 2]
     ct.ok(run_tool(company, "show-submitted", "--number", "2"))
+
+
+# ---- 別名を通って、会社のフォルダの外を書き換えない（DESIGN 5章「会社のフォルダの外に書かない」） ----
+
+
+def tree(folder: Path) -> dict:
+    """フォルダの中のすべて（場所 → 中身。フォルダと別名は None）。別名はたどらない。"""
+    found = {}
+    for dirpath, dirnames, filenames in os.walk(str(folder)):
+        for name in dirnames + filenames:
+            path = Path(dirpath) / name
+            found[str(path.relative_to(folder))] = None if path.is_dir() or path.is_symlink() else path.read_bytes()
+    return found
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("where", ["申請書", "案件のフォルダ", "書類そのもの"])
+def test_revert_does_not_write_through_a_link(company, where) -> None:
+    """申請書/ や 案件/<案件>/（か、書類そのもの）が外を指す別名なら、戻さずに断る。外のファイルは変わらず、版も増えない。"""
+    edit_three_times(company)
+    first = company.log(SONO1)[-1]["版"]
+    outside = company.env.folder("外のフォルダ")
+    if where == "書類そのもの":
+        target = outside / "その1.docx"
+        target.write_bytes(blob("docx", 3))
+        (company.folder / SONO1).unlink()
+        (company.folder / SONO1).symlink_to(target)
+        link = SONO1
+    else:
+        link = vt.APPLICATION if where == "申請書" else vt.CASE_DIR
+        place = company.folder / link
+        moved = outside / "移した中身"
+        place.rename(moved)
+        place.symlink_to(moved, target_is_directory=True)
+    company.say("申請書のフォルダを置き換えました")
+    assert company.stop() is None
+    count = len(company.versions())
+    outside_before = tree(outside)
+    assert blob("docx", 3) in outside_before.values()
+    company.say("最初の版に戻して")
+    out = refused(run_tool(company, "revert", "--document", SONO1, "--version", first, "--reason", "最初の版に戻して"))
+    assert "戻せません" in out and "別名" in out and link in out, out
+    assert "戻しました" not in out
+    # 外のファイルは書き換わらず（最初の版の中身はどこにも書かれない）、版も増えない
+    assert tree(outside) == outside_before
+    assert blob("docx", 1) not in tree(outside).values()
+    assert company.stop() is None
+    assert len(company.versions()) == count
+    assert (company.folder / link).is_symlink()

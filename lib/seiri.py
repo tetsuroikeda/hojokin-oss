@@ -36,7 +36,7 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from lib import case_folder, company, dates, protected_store
+from lib import case_folder, company, dates, places, protected_store
 from lib.company_init import CASES_DIR, INBOX_DIR, ORIGINAL_KINDS, ORIGINALS_DIR, RECORDS_DIR, VIEW_DIR
 
 LEDGER_FILE = "書類の台帳.json"
@@ -224,11 +224,15 @@ def resolve_document(folder: Path, given: str) -> Tuple[Path, str]:
     path = raw if raw.is_absolute() else folder / raw
     if os.path.islink(str(path)):
         raise SeiriError(f"{given} は別名（エイリアス）です。元のファイルを指してください")
-    real_folder = os.path.realpath(str(folder))
-    real = os.path.realpath(str(path))
-    if os.path.commonpath([real_folder, real]) != real_folder or real == real_folder:
+    # 別名と「..」をたどった後に、会社のフォルダの中かを確かめる（lib/places.py。会社のフォルダそのものも断る）
+    try:
+        rel = places.relative_inside(folder, path)
+    except places.PlaceError:
+        rel = "."
+    if rel == ".":
         raise SeiriError(f"{given} は会社のフォルダの外です。外の書類は、社長に場所を聞いて取り込んでから整理します")
-    rel = nfc(Path(os.path.relpath(real, real_folder)).as_posix())
+    real_folder = str(places.real(folder))
+    real = os.path.join(real_folder, *rel.split("/"))
     parts = rel.split("/")
     top = parts[0]
     hidden = next((p for p in parts if p.startswith(".")), None)

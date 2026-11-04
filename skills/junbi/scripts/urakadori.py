@@ -52,14 +52,14 @@ def parse(argv):
     return parser.parse_args(argv)
 
 
-def read_input(where: str, folder: Path, inside) -> object:
+def read_input(where: str, folder: Path, places) -> object:
+    """読み取りの結果。ファイルは、別名と「..」をたどった後も会社のフォルダの中にあるものだけ読む（lib/places.py）。"""
     if where == "-":
         return json.loads(sys.stdin.read())
     path = Path(where).expanduser()
-    if not path.is_absolute():
-        path = folder / path
-    if not inside(path, folder):
+    if not places.is_inside(folder, path):
         raise OutsideInput(where)
+    path = path if path.is_absolute() else folder / path
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -69,7 +69,7 @@ def main(argv) -> int:
     sys.stdin.reconfigure(encoding="utf-8")
     args = parse(argv)
     try:
-        from lib import case_folder, company, urakadori
+        from lib import case_folder, company, places, urakadori
     except Exception as e:  # 同梱のファイルが欠けた・壊れた、Python が古いなど
         print(f"{NOT_DONE}補助プログラムを読み込めませんでした（{type(e).__name__}: {e}）。"
               "プラグインを入れ直してから、もう一度試してください。")
@@ -96,7 +96,7 @@ def main(argv) -> int:
               "先に、社長の了承を得て会社のフォルダを作り、公式資料を取ってください。")
         return 2
     try:
-        data = read_input(args.input, folder, urakadori.inside)
+        data = read_input(args.input, folder, places)
     except OutsideInput:
         print(f"{NOT_DONE}読み取りの結果のファイル（{args.input}）が、会社のフォルダの外にあります。"
               "外のファイルは読みません。読み取り役が返した JSON を、--input - で標準入力から渡してください。")

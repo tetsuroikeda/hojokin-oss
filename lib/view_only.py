@@ -23,7 +23,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from lib import company
+from lib import company, places
 from lib.company_init import VIEW_DIR
 
 STATE_DIR = f"{company.MARKER_DIR}/{company.TEMP_DIR}/見るだけ"
@@ -141,9 +141,14 @@ def _same_file(path: Path, sha: str) -> bool:
         return False
 
 
-def _check_root(top: Path) -> None:
+def _root_not_folder(folder: Path, top: Path) -> bool:
+    """`見るだけ/` が、別名（lib/places.py）かファイルになっているか。"""
+    return places.first_link(folder, VIEW_DIR) is not None or (os.path.lexists(str(top)) and not top.is_dir())
+
+
+def _check_root(folder: Path, top: Path) -> None:
     """`見るだけ/` が別名やファイルになっていれば断る（別名の先の、会社のフォルダの外に書かないため）。"""
-    if top.is_symlink() or (os.path.lexists(str(top)) and not top.is_dir()):
+    if _root_not_folder(folder, top):
         raise ViewError(f"{VIEW_DIR} がフォルダでない（別名かファイルになっている）ため、出せません。"
                         f"{VIEW_DIR} を別の場所に移してから、もう一度試してください")
 
@@ -165,7 +170,7 @@ def export_file(folder: Path, names: Sequence[str], data: bytes) -> str:
     """
     folder = Path(folder)
     top = root(folder)
-    _check_root(top)
+    _check_root(folder, top)
     sha = sha256_bytes(data)
     exports = load_exports(folder)
     candidates = list(names) + [_numbered(names[-1], n, False) for n in range(2, 100)]
@@ -196,7 +201,7 @@ def export_tree(folder: Path, dir_name: str, items: Sequence[Tuple[str, bytes]])
     """
     folder = Path(folder)
     top = root(folder)
-    _check_root(top)
+    _check_root(folder, top)
     exports = load_exports(folder)
     wanted = {rel: sha256_bytes(data) for rel, data in items}
     for rel in wanted:
@@ -247,7 +252,7 @@ def cleanup(folder: Path) -> List[str]:
     folder = Path(folder)
     top = root(folder)
     exports = load_exports(folder)
-    if top.is_symlink() or (os.path.lexists(str(top)) and not top.is_dir()):
+    if _root_not_folder(folder, top):
         # 別名やファイルになっていたら、触らない
         _save_exports(folder, {})
         return [VIEW_DIR]

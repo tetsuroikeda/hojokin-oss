@@ -7,6 +7,8 @@
   「…の版に戻した」と書く）。履歴は書き換えない。原本・公式資料・審査役の結果・提出版の記録・プラグインの設定は
   戻さない（原本と公式資料は入れたときの1版だけで、変わっていれば開いたときと応答の終わりに戻される。DESIGN 5章。
   提出版の記録は、戻すと記録した提出版が消えるため。壊れたか消えたときだけ、直すために戻せる）。
+  書類までの途中のフォルダか書類そのものが別名（シンボリックリンク）なら、戻さない（別名の先の、会社のフォルダの外や
+  別の場所のファイルを書き換えないため。DESIGN 5章。確かめは lib/places.py）。
 - 書類は、会社のフォルダからの場所で指す。場所でなく名前（「その1.docx」「その1」）だけでも、
   版の履歴の中で1つに決まれば、それにする。
 
@@ -23,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from lib import case_folder, dates, history, view_only
+from lib import case_folder, dates, history, places, view_only
 
 # 戻さない場所（会社のフォルダからの場所の始まり）。提出版の記録は、戻すと記録した提出版が消えるので戻さない
 # （壊れたか消えたときだけ、直すために戻せる。revert）
@@ -58,8 +60,8 @@ def _relative(folder: Path, raw: str) -> str:
     path = Path(text)
     if path.is_absolute():
         try:
-            path = path.resolve().relative_to(Path(folder).resolve())
-        except ValueError as error:
+            path = Path(places.relative_inside(folder, path))
+        except places.PlaceError as error:
             raise VersionError(f"会社のフォルダの外の場所です（{raw}）") from error
     rel = nfc(path.as_posix())
     if rel in ("", ".") or any(p in ("..",) for p in rel.split("/")):
@@ -181,20 +183,18 @@ def _record_usable(folder: Path) -> bool:
     return True
 
 
-def _actual_path(folder: Path, document: str) -> Path:
-    """作業のファイルの実際の場所（名前が NFD のこともある）。なければ NFC の名前の場所。"""
-    current = Path(folder)
-    parts = document.split("/")
-    for i, part in enumerate(parts):
-        try:
-            names = os.listdir(str(current))
-        except OSError:
-            return Path(folder).joinpath(*parts)
-        match = next((n for n in names if nfc(n) == part), None)
-        if match is None:
-            return current.joinpath(*parts[i:])
-        current = current / match
-    return current
+def _check_no_link(folder: Path, document: str) -> None:
+    """書類までの途中のフォルダと書類そのものに、別名がないかを確かめる（lib/places.py）。
+
+    別名があると、書き戻しが別名の先（会社のフォルダの外や、別の置き場）のファイルを書き換えるため、戻さない。
+    """
+    try:
+        places.no_link_on_the_way(folder, document)
+    except places.PlaceError as error:
+        raise VersionError(
+            f"{error.link} が別名（シンボリックリンク）になっているため、{document} は戻せません"
+            "（戻すと、別名の先の、会社のフォルダの外や別の場所のファイルを書き換えるため）。"
+            "別名を本物のフォルダやファイルに置き換えてから、もう一度試してください") from error
 
 
 def _write_back(path: Path, data: bytes) -> None:
@@ -230,11 +230,15 @@ def revert(folder: Path, document: str, version: Optional[str] = None, back: Opt
         raise VersionError(f"{doc} は戻せません（原本・公式資料・審査役の結果・設定は、ツールが入れたときの形を守ります）")
     record = pick(records(folder, doc), version, back)
     data = _content(folder, record)
+    # 別名を通って外を書き換えないよう、何か残す前に断る（版も増やさない）
+    _check_no_link(folder, doc)
     moment = (when or _now(folder)).astimezone(dates.JST)
     words = history.one_line(reason, history.REASON_MAX_CHARS) if reason and reason.strip() else ""
     # 1. まだ版にしていない変更を、先に残す（戻した後も、戻す前の中身を取り出せるように）
     history.record_scene(folder, history.TOOL, words or PENDING_REASON, when=moment)
-    path = _actual_path(folder, doc)
+    # 先に残す間に置き換えられていないかを、書き戻す直前にもう一度
+    _check_no_link(folder, doc)
+    path = places.actual(folder, doc, partial=True)
     try:
         if path.is_file() and path.read_bytes() == data:
             return record, False

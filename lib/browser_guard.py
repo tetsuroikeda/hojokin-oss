@@ -48,7 +48,7 @@ import unicodedata
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from lib import company
+from lib import company, places
 from lib.page_tree import CHOICE_ROLES, TEXT_ROLES, Page, normalize, parse, response_text
 
 # 押さないボタンの語。制度データ（AI が下書きする）にかかわらず、名前に含むボタン・リンクは押させない
@@ -467,10 +467,6 @@ def _check_form_input(ctx: Context, tool_input: dict) -> None:
     _check_choice(ctx, page, control)
 
 
-def _real(path) -> Path:
-    return Path(unicodedata.normalize("NFC", os.path.realpath(str(path))))
-
-
 def _is_attach_copy(parts: Tuple[str, ...]) -> bool:
     """`案件/` からの場所の部分が、段階のフォルダの「添付する書類」の中のファイルか。
 
@@ -497,17 +493,17 @@ def _check_upload(ctx: Context, tool_input: dict) -> None:
         paths = [paths]
     if not isinstance(paths, list) or not paths:
         raise Denied("添付するファイルの場所がありません（hojokin プラグインの決まり）。")
-    cases = _real(ctx.folder / CASE_DIR)
     cwd = Path(str(ctx.data.get("cwd") or ctx.folder))
     for raw in paths:
         target = Path(os.path.expanduser(str(raw)))
         if not target.is_absolute():
             target = cwd / target
-        real = _real(target)
+        # 別名と「..」をたどった後に、`案件/` からの場所で見る（lib/places.py）
         try:
-            parts = real.relative_to(cases).parts
-        except ValueError:
+            parts = tuple(places.relative_inside(ctx.folder / CASE_DIR, target).split("/"))
+        except places.PlaceError:
             parts = ()
+        real = places.real(target)
         if not _is_attach_copy(parts) or not real.is_file():
             raise Denied(
                 f"「{raw}」は添付できません（hojokin プラグインの決まり）。"

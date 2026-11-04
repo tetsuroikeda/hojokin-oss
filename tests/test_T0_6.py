@@ -487,6 +487,56 @@ def test_submit_refuses_when_the_stage_folder_is_a_link(company) -> None:
     assert "その1.docx" not in out
 
 
+def outside_tree(folder: Path) -> dict:
+    """フォルダの中のすべて（場所 → 中身。フォルダと別名は None）。別名はたどらない。"""
+    found = {}
+    for dirpath, dirnames, filenames in os.walk(str(folder)):
+        for name in dirnames + filenames:
+            path = Path(dirpath) / name
+            found[path.relative_to(folder).as_posix()] = (
+                None if path.is_dir() or path.is_symlink() else path.read_bytes())
+    return found
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("where", ["記録", RECORD])
+def test_submit_does_not_go_through_a_link_to_the_record(company, where) -> None:
+    """記録/ か 記録/提出版.json が外への別名なら、提出版の一覧を読まず・書かずに断る（DESIGN 5章「会社のフォルダの外に
+    書かない・外を読まない」）。外のファイルは変わらず（書きかけの一時ファイルも残らない）、版も Git の印も増えない。
+    提出版を見る道具も、外の一覧を読まない。"""
+    edit_three_times(company)
+    outside = company.env.root / "外のフォルダ"
+    outside.mkdir()
+    other = {"番号": 1, "案件": "外の一覧の案件", "段階": vt.STAGE, "日時": "2026-11-01T10:00:00+09:00",
+             "版": "0" * 40, "印": "", "発言": "外の一覧", "ファイル": []}
+    text = json.dumps({"提出版": [other]}, ensure_ascii=False, indent=2) + "\n"
+    if where == "記録":
+        moved = outside / "記録"
+        (company.folder / "記録").rename(moved)
+        (company.folder / "記録").symlink_to(moved, target_is_directory=True)
+        (moved / "提出版.json").write_text(text, encoding="utf-8")
+    else:
+        (outside / "提出版.json").write_text(text, encoding="utf-8")
+        (company.folder / RECORD).symlink_to(outside / "提出版.json")
+    company.say("記録の置き場を置き換えました")
+    assert company.stop() is None
+    company.say(SUBMIT_WORDS)
+    count = len(company.versions())
+    outside_before = outside_tree(outside)
+    out = submit_refused(company)
+    assert "別名" in out and f"{where}" in out and "提出版を記録しました" not in out, out
+    assert "外の一覧の案件" not in out, out
+    assert outside_tree(outside) == outside_before
+    assert tags(company) == {}
+    for command in ("submissions", "show-submitted"):
+        out = refused(run_tool(company, command))
+        assert "別名" in out and "外の一覧の案件" not in out, (command, out)
+    assert not (company.folder / VIEW).exists()
+    assert outside_tree(outside) == outside_before
+    assert len(company.versions()) == count
+    assert (company.folder / where).is_symlink()
+
+
 def test_temporary_files_do_not_block_submission(company) -> None:
     """Word・Excel が開いている間だけ作るファイルや .DS_Store は、書類でないので、残っていても断らない。
     提出版にも入れない。"""

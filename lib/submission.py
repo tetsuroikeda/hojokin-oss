@@ -20,7 +20,9 @@
    ファイルとして残すので、別名の先の写し（フォルダなら中のすべて）が提出版に入らないため。段階のフォルダの中の
    別名、財務モデル.xlsx の別名、段階のフォルダやその上のフォルダの別名のどれも断る。
 3. そのときの版の印（40桁）と、提出するファイルごとの場所・大きさ・中身の印（sha256）を、
-   `記録/提出版.json`（版の一覧）に足し、その変更も版に残す。
+   `記録/提出版.json`（版の一覧）に足し、その変更も版に残す。`記録/` か `記録/提出版.json` が別名なら、
+   版の一覧を読まず・書かずに、何も残す前に断る（別名の先の、会社のフォルダの外を読み書きしないため。DESIGN 5章）。
+   提出版を見る・一覧を出すときも同じ。
 4. Git の印（`refs/tags/提出版/<案件>/<段階>/<番号>`）を、提出したときの版に付ける。名前に使えない文字があれば、
    案件と段階の印（sha256 の先頭）で名前を作る。印を付けられなくても、版の一覧の記録は残す。
 
@@ -42,7 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from lib import case_folder, company_init, dates, history, view_only
+from lib import case_folder, company_init, dates, history, places, view_only
 
 RECORD_FILE = "記録/提出版.json"
 FINANCIAL_MODEL = "財務モデル.xlsx"
@@ -139,8 +141,26 @@ def choose(folder: Path, case: Optional[str], stage: Optional[str]) -> Tuple[str
 
 # ---- 版の一覧（記録/提出版.json） ----
 
+def _check_place(folder: Path) -> None:
+    """版の一覧の置き場（記録/ と 記録/提出版.json）が、別名（シンボリックリンク）でないかを確かめる（lib/places.py）。
+
+    別名なら、読まずに・書かずに SubmissionError（別名の先の、会社のフォルダの外のファイルを読み書きしないため。
+    DESIGN 5章）。提出版を記録する・見る・一覧を出すのどれにも使うので、文はどの場面にも合う形にする。
+    """
+    try:
+        places.no_link_on_the_way(folder, RECORD_FILE)
+    except places.PlaceError as error:
+        what = RECORD_FILE if error.link == RECORD_FILE else f"{error.link}/"
+        raise SubmissionError(
+            f"{what} が別名（シンボリックリンク）になっているため、提出版の一覧（{RECORD_FILE}）を読まず、書きもしません"
+            "（別名の先の、会社のフォルダの外のファイルを読み書きしないため）。提出版の一覧は、会社のフォルダの中に"
+            "本物のファイルとして置きます。別名を本物のフォルダやファイルに置き換えてから、もう一度試してください"
+        ) from error
+
+
 def load(folder: Path) -> List[dict]:
     """記録した提出版の一覧（古い順）。ファイルがなければ空。読めなければ SubmissionError。"""
+    _check_place(folder)
     path = Path(folder) / RECORD_FILE
     try:
         text = path.read_text(encoding="utf-8")
@@ -172,6 +192,8 @@ def _valid(entry) -> bool:
 
 
 def _save(folder: Path, entries: List[dict]) -> None:
+    # 読んでから書くまでに別名へ置き換えられていないかを、書く直前にもう一度（別名なら何も書かない）
+    _check_place(folder)
     path = Path(folder) / RECORD_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     # 「~*.tmp」は .gitignore にあるので、書きかけが版に残らない
@@ -217,31 +239,9 @@ def _left_by_scene(folder: Path, result: history.Result, case: str, stage: str) 
 
 
 def _actual(folder: Path, rel: str) -> Optional[str]:
-    """会社のフォルダからの場所（NFC）の、実際の場所（名前が NFD のこともある）。なければ None。"""
-    current = str(folder)
-    for part in rel.split("/"):
-        try:
-            names = os.listdir(current)
-        except OSError:
-            return None
-        match = next((n for n in names if nfc(n) == part), None)
-        if match is None:
-            return None
-        current = os.path.join(current, match)
-    return current
-
-
-def _link_on_the_way(folder: Path, rel: str) -> Optional[str]:
-    """会社のフォルダからの場所（NFC）までの途中のフォルダか、その場所そのものが別名なら、その別名の場所。"""
-    parts = rel.split("/")
-    for i in range(1, len(parts) + 1):
-        prefix = "/".join(parts[:i])
-        actual = _actual(folder, prefix)
-        if actual is None:
-            return None
-        if os.path.islink(actual):
-            return prefix
-    return None
+    """会社のフォルダからの場所（NFC）の、実際の場所（名前が NFD のこともある）。なければ None（lib/places.py）。"""
+    found = places.actual(folder, rel)
+    return None if found is None else str(found)
 
 
 def _outside_history(folder: Path, case: str, stage: str, recorded: Set[str]) -> Dict[str, str]:
@@ -280,7 +280,7 @@ def _outside_history(folder: Path, case: str, stage: str, recorded: Set[str]) ->
         if where and not isinstance(error, (FileNotFoundError, NotADirectoryError)):
             found[rel_of(where) + "/"] = UNREADABLE_DIR
 
-    link = _link_on_the_way(folder, stage_dir(case, stage))
+    link = places.first_link(folder, stage_dir(case, stage))
     if link is not None:
         found[link] = LINK
     start = None if link is not None else _actual(folder, stage_dir(case, stage))

@@ -1,7 +1,9 @@
 """概要と流れ.docx を作る（SPEC F3・T3-9、DESIGN 4.5・4.6・6章、TASKS M2d）。
 
 案件ごとに `案件/<案件>/概要と流れ.docx` を書く。作り直すときも同じファイルを置き換える（「_v2」のような別のファイルを
-作らない。前の版は版の履歴に残る）。
+作らない。前の版は版の履歴に残る）。案件のフォルダや書き出す先が、別名（シンボリックリンク）などで会社のフォルダの外か
+`案件/` の外を指すとき、会社の記録・制度データ・案件の資料の一覧（`記録/` やその中のフォルダも）が外を指すときは、
+読まずに・書かずに断る（DESIGN 5章。確かめは lib/places.py）。
 
 役割の分け方（DESIGN 4.6・6章）
 - 数字・期限・一覧は、制度データ（`記録/制度データ/<略称>_<公募回>.json`）と会社の記録（`記録/会社の記録.json`）から、
@@ -52,6 +54,7 @@ Claude が渡す JSON の形
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from datetime import date, datetime
@@ -60,7 +63,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from lib import company, dates
+from lib import company, dates, places
 from lib.docx_min import Document, DocxError, clean_text
 
 FILE_NAME = "概要と流れ.docx"
@@ -863,9 +866,17 @@ def build(ctx: Context, data: Dict, case: str, today: date, notices: List[str]) 
 # ---- 読み込みと書き出し ----
 
 
+def _outside(what: str) -> GaiyouError:
+    return GaiyouError([f"{what}が、別名（シンボリックリンク）などで会社のフォルダの外を指しています。"
+                        "外のファイルは読まず、外にも書きません。別名を本物のフォルダやファイルに置き換えてから、"
+                        "もう一度試してください"])
+
+
 def load_record(folder: Path) -> Dict[str, Dict]:
-    """会社の記録の項目を id で引けるようにする。ファイルがなければ空。"""
+    """会社の記録の項目を id で引けるようにする。ファイルがなければ空。会社のフォルダの外を指すときは読まずに断る。"""
     path = folder / RECORDS_DIR / RECORD_FILE
+    if os.path.lexists(str(path)) and not places.is_inside(folder, path):
+        raise _outside(f"会社の記録（{RECORDS_DIR}/{RECORD_FILE}）")
     if not path.is_file():
         return {}
     try:
@@ -878,6 +889,27 @@ def load_record(folder: Path) -> Dict[str, Dict]:
     return {str(i["id"]): i for i in items if isinstance(i, dict) and "id" in i}
 
 
+def _check_read_place(folder: Path, path: Path, what: str) -> None:
+    """読む材料（資料の一覧・制度データと、その上のフォルダ）が、別名と「..」をたどった後も会社のフォルダの中にあるか
+    （lib/places.py）。外なら、読まずに GaiyouError。まだない場所も、別名をたどった先で比べる。"""
+    if not places.is_inside(folder, path):
+        raise _outside(what)
+
+
+def _check_out_place(folder: Path, path: Path, what: str) -> None:
+    """path が、別名と「..」をたどった後も、会社のフォルダの `案件/` の中にあるか（lib/places.py）。外なら GaiyouError。"""
+    from lib import case_folder
+
+    try:
+        rel = places.relative_inside(folder, path)
+    except places.PlaceError as e:
+        raise _outside(what) from e
+    if rel.split("/")[0] != case_folder.CASES_DIR:
+        raise GaiyouError([f"{what}が、別名（シンボリックリンク）などで {case_folder.CASES_DIR}/ の外（{rel}）を指しています。"
+                           f"概要と流れ.docx は {case_folder.CASES_DIR}/<案件>/ の中にだけ書きます。"
+                           "別名を本物のフォルダに置き換えてから、もう一度試してください"])
+
+
 def write(folder: Path, case: Optional[str], data: Any) -> Tuple[Path, str, Dict[str, Any]]:
     """`案件/<案件>/概要と流れ.docx` を書き、（パス、案件、まとめ）を返す。書けないときは何も書かずに GaiyouError。"""
     folder = Path(folder)
@@ -886,12 +918,22 @@ def write(folder: Path, case: Optional[str], data: Any) -> Tuple[Path, str, Dict
                            "社長の了承を得て会社のフォルダを作り、公式資料を取って制度データを作ってから、もう一度試してください"])
     # 制度データを読む道具は、同梱の pypdf まで読み込むので、ここで読み込む
     from lib import case_folder, seido_data, urakadori
+    from lib.official_docs import TEXT_DIR
 
+    # 読む材料（資料の一覧・制度データ）も、別名と「..」をたどった後に会社のフォルダの中にあるときだけ読む
+    # （外のフォルダの中の案件の一覧も見ない。DESIGN 5章）
+    _check_read_place(folder, folder / RECORDS_DIR / TEXT_DIR, f"資料の本文（{RECORDS_DIR}/{TEXT_DIR}/）")
+    _check_read_place(folder, urakadori.seido_dir(folder), f"制度データ（{RECORDS_DIR}/{urakadori.SEIDO_DIR}/）")
     try:
         case = urakadori.find_case(folder, case)
     except case_folder.CaseError as e:
         raise GaiyouError([f"案件を決められませんでした（{e}）"]) from e
+    listed_path = seido_data.doc_list_path(folder, case)
+    _check_read_place(folder, listed_path, f"案件の資料の一覧（{listed_path.relative_to(folder)}）")
     try:
+        # 置き場所は資料の一覧から決まる（上で確かめた）。制度データのファイルそのものも確かめてから読む
+        data_path = seido_data.seido_path(folder, case)
+        _check_read_place(folder, data_path, f"制度データ（{data_path.relative_to(folder)}）")
         path, seido = seido_data.load_data(folder, case)
         listed = seido_data.load_doc_list(folder, case)
     except (seido_data.DataMissing, seido_data.MergeError) as e:
@@ -902,15 +944,23 @@ def write(folder: Path, case: Optional[str], data: Any) -> Tuple[Path, str, Dict
         raise GaiyouError([f"制度データ（{rel}）の形が合いません（{len(errors)} か所）。"
                            "seido_data.py --check で確かめ、章を読ませ直してまとめ直してください"] + errors[:10])
     case_dir = folder / case_folder.CASES_DIR / case
+    out = case_dir / FILE_NAME
+    # 書き出す先は、別名をたどった後も `案件/` の中に限る（外や、原本/・記録/ などに書かない。DESIGN 5章）
+    _check_out_place(folder, case_dir, f"案件のフォルダ（{case_folder.CASES_DIR}/{case}/）")
     if not case_dir.is_dir():
         raise GaiyouError([f"案件のフォルダ（{case_folder.CASES_DIR}/{case}/）がありません。先に公式資料を取ってください"])
+    if os.path.lexists(str(out)):
+        _check_out_place(folder, out, f"書き出す先（{case_folder.CASES_DIR}/{case}/{FILE_NAME}）")
     record = load_record(folder)
     problems = validate(data, seido, record)
     if problems:
         raise GaiyouError(problems)
     notices = [n for n in listed.get("案内") or [] if isinstance(n, str)]
     doc, summary = build(Context(seido, record), data, case, dates.today(folder), notices)
-    out = case_dir / FILE_NAME
+    # 作る間に置き換えられていないかを、書く直前にもう一度
+    _check_out_place(folder, case_dir, f"案件のフォルダ（{case_folder.CASES_DIR}/{case}/）")
+    if os.path.lexists(str(out)):
+        _check_out_place(folder, out, f"書き出す先（{case_folder.CASES_DIR}/{case}/{FILE_NAME}）")
     try:
         doc.save(out)
     except DocxError as e:
