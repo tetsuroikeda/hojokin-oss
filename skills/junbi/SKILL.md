@@ -1,6 +1,10 @@
 ---
 name: junbi
 description: 申請する補助金を決めた後に使う。公募要領を取り込み、制度データ・概要と流れ・書類の一覧・日程を作る。制度の質問に答える。締切と今の状態、公募要領の改訂、採択後の次の手続きへの切り替えも扱う。「この補助金の準備をして」「締切はいつ？」「この経費は対象になる？」「採択された」と言われたときに使う。
+allowed-tools:
+  - Bash(python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/junbi/scripts/*)
+  - Bash(python3 -B ${CLAUDE_PLUGIN_ROOT}/skills/junbi/scripts/*)
+  - Read(/${CLAUDE_PLUGIN_ROOT}/skills/junbi/**)
 ---
 
 # 案件の準備と、制度の質問・期限・改訂（F3、F4、F6、F7、F12 の手続きの切り替え）
