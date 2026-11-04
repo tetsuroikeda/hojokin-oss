@@ -20,7 +20,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_JSON = REPO_ROOT / "hooks" / "hooks.json"
-EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop")
+EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SubagentStop")
 
 # 書き込み、Bash、ブラウザの道具（Python が動かないときに拒むもの。DESIGN 5章）
 GUARDED_TOOLS = (
@@ -105,6 +105,11 @@ def make_bin(bin_dir: Path, python: str, ran_marker: Path) -> str:
     return str(bin_dir)
 
 
+def match_name(payload: dict) -> str:
+    """matcher に当てる名前（道具の場面では道具の名前、SubagentStop では subagent の名前）。"""
+    return payload.get("tool_name") or payload.get("agent_type") or ""
+
+
 def hook_commands(event: str, tool_name: str = "") -> list:
     """hooks.json で、その場面（と道具）に当たるコマンドの一覧。matcher は Claude Code と同じ規則で照らす。"""
     config = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
@@ -151,6 +156,10 @@ def event_inputs(folder: Path) -> list:
         ("PostToolUse", {**base, "hook_event_name": "PostToolUse", "tool_name": "mcp__Claude_Browser__read_page",
                          "tool_input": {}, "tool_response": "button \"提出する\" [ref_12]"}),
         ("Stop", {**base, "hook_event_name": "Stop", "stop_hook_active": False}),
+        # 審査役の報告（default のモードは SubagentStop、auto モードは SubagentHandback の PreToolUse。M7）
+        ("SubagentStop", {**base, "hook_event_name": "SubagentStop", "agent_type": "hojokin:shinsa",
+                          "last_assistant_message": "```json\n{\"確かめの番号\": \"確かめ-0001\", \"指摘\": []}\n```"}),
+        tool("SubagentHandback", {"message": "```json\n{\"確かめの番号\": \"確かめ-0001\", \"指摘\": []}\n```"}),
     ]
 
 

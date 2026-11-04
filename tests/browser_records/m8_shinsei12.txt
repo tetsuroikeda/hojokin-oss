@@ -1,0 +1,89 @@
+# 模擬の申請画面（12画面版）の ⓬ 確認を、❹ を一時保存した後に、内蔵ブラウザの read_page（filter は all）で読んだ結果
+# （2026-11-04。TASKS M8）。いちばん下に「提出」（担当者が押すボタン）がある。
+note "模擬画面（実在のシステムではありません）。架空の練習用の画面で、入れた内容はこのパソコンの中にだけ記録されます。" [ref_1]
+main [ref_2]
+ heading "⓬ 確認" [ref_3]
+ generic "省力化投資補助金（一般型）第8回 応募申請の模擬画面（D11b・12画面版）" [ref_4]
+ navigation "進み具合" [ref_5]
+  list [ref_6]
+   listitem "❶ 宣誓・手引き" [ref_7]
+   listitem "❷ 基本情報" [ref_8]
+   listitem "❸ 要件" [ref_9]
+   listitem "❹ 加点項目" [ref_10]
+   listitem "❺ 事業計画名及び作成者情報" [ref_11]
+   listitem "❻ 最低賃金及び特例希望" [ref_12]
+   listitem "❼ 事業計画数値" [ref_13]
+   listitem "❽ 経費明細｜資金調達内訳" [ref_14]
+   listitem "❾ 書類添付" [ref_15]
+   listitem "❿ アンケート" [ref_16]
+   listitem "⓫ メールアドレス認証" [ref_17]
+   listitem "⓬ 確認" [ref_18]
+ generic "最後に保存した時刻：2026-11-04T19:31:45+09:00" [ref_19]
+ form [ref_20]
+  region [ref_21]
+   generic "一時保存した内容です。直すときは、段ごとの「修正」でその画面へ移ります。「提出」は担当者が押すボタンです（模擬なので、押してもどこにも送りません）。" [ref_22]
+   heading "❶ 宣誓・手引き 修正" [ref_23]
+    button "修正" [ref_24] type="submit"
+   table [ref_25]
+    generic "（保存した入力はありません）" [ref_26]
+   heading "❷ 基本情報 修正" [ref_27]
+    button "修正" [ref_28] type="submit"
+   table [ref_29]
+    generic "（保存した入力はありません）" [ref_30]
+   heading "❸ 要件 修正" [ref_31]
+    button "修正" [ref_32] type="submit"
+   table [ref_33]
+    generic "（保存した入力はありません）" [ref_34]
+   heading "❹ 加点項目 修正" [ref_35]
+    button "修正" [ref_36] type="submit"
+   table [ref_37]
+    generic "事業継続力強化計画加点：有効な期間の認定を受けている" [ref_38]
+    generic "チェックあり" [ref_39]
+    generic "受付番号（半角10桁）" [ref_40]
+    generic "2512345678" [ref_41]
+    generic "実施期間開始期（年）" [ref_42]
+    generic "2025" [ref_43]
+    generic "実施期間開始期（月）" [ref_44]
+    generic "実施期間終期（年）" [ref_45]
+    generic "2028" [ref_46]
+    generic "実施期間終期（月）" [ref_47]
+    generic "事業場内最低賃金引き上げ加点：加点の要件を満たす" [ref_48]
+    generic "チェックあり" [ref_49]
+    generic "省力化ナビ加点：省力化ナビで解決策のPDFを取得している" [ref_50]
+    generic "チェックあり" [ref_51]
+   heading "❺ 事業計画名及び作成者情報 修正" [ref_52]
+    button "修正" [ref_53] type="submit"
+   table [ref_54]
+    generic "（保存した入力はありません）" [ref_55]
+   heading "❻ 最低賃金及び特例希望 修正" [ref_56]
+    button "修正" [ref_57] type="submit"
+   table [ref_58]
+    generic "（保存した入力はありません）" [ref_59]
+   heading "❼ 事業計画数値 修正" [ref_60]
+    button "修正" [ref_61] type="submit"
+   table [ref_62]
+    generic "（保存した入力はありません）" [ref_63]
+   heading "❽ 経費明細｜資金調達内訳 修正" [ref_64]
+    button "修正" [ref_65] type="submit"
+   table [ref_66]
+    generic "（保存した入力はありません）" [ref_67]
+   heading "❾ 書類添付 修正" [ref_68]
+    button "修正" [ref_69] type="submit"
+   table [ref_70]
+    generic "（保存した入力はありません）" [ref_71]
+   heading "❿ アンケート 修正" [ref_72]
+    button "修正" [ref_73] type="submit"
+   table [ref_74]
+    generic "（保存した入力はありません）" [ref_75]
+   heading "⓫ メールアドレス認証 修正" [ref_76]
+    button "修正" [ref_77] type="submit"
+   table [ref_78]
+    generic "（保存した入力はありません）" [ref_79]
+   button "提出" [ref_80] type="submit"
+
+Viewport: 1024x768
+
+Tab Context:
+- Executed on tabId: tab-1
+- Available tabs:
+  • tabId tab-1: "【模擬画面】⓬ 確認（省力化・一般型）" ("http://127.0.0.1:8796/shinsei/12")

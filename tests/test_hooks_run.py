@@ -47,7 +47,7 @@ def run_all(tmp_path, python, plugin=None, extra_env=None, only=None):
         tool = payload.get("tool_name", "")
         if only is not None and (tool or event) not in only:
             continue
-        for command in hr.hook_commands(event, tool):
+        for command in hr.hook_commands(event, hr.match_name(payload)):
             role = command.split(event, 1)[1].strip()
             start = time.monotonic()
             r = hr.run(command, payload, plugin=plugin, folder=folder, path=path, home=home, data=data,
@@ -81,7 +81,8 @@ def test_read_matcher_covers_read_tools_only() -> None:
     for tool in hr.GUARDED_TOOLS + ("WebFetch", "mcp__x__Read", "ReadMcpResourceTool"):
         assert not hr.claude_matches(matcher, tool), tool
     config = json.loads(hr.HOOKS_JSON.read_text(encoding="utf-8"))
-    assert len(config["hooks"]["PreToolUse"]) == 2
+    # 3つ目は、審査役が報告を渡す道具（SubagentHandback）だけを受け取る（M7。tests/test_check_min.py）
+    assert len(config["hooks"]["PreToolUse"]) == 3
 
 
 def test_post_tool_use_only_for_browser() -> None:

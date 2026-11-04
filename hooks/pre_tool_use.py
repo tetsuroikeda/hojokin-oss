@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 import outside_read
+import shinsa_hooks
 import version_hooks
 from lib import browser_guard
 
@@ -57,6 +58,8 @@ def _outside_write(data: dict, folder: Path) -> Optional[dict]:
 
 def handle(data: dict, folder: Path) -> Optional[dict]:
     tool = data.get("tool_name")
+    if tool == "SubagentHandback":  # auto モードで審査役が報告を渡す道具。結果を保存する（M7。shinsa_hooks.py）
+        return shinsa_hooks.handback(data, folder)
     if browser_guard.is_browser_tool(tool):
         # 画面入力の守り（S4。lib/browser_guard.py）
         return browser_guard.pre_tool_use(data, folder)

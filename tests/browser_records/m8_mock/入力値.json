@@ -1,0 +1,1653 @@
+{
+  "screen": "省力化投資補助金（一般型）第8回 応募申請の模擬画面",
+  "note": "模擬画面の記録です。実在の申請システムとは関係ありません。",
+  "saved_at": "2026-11-04T19:31:45+09:00",
+  "submit_pressed": false,
+  "submit_times": [],
+  "auth_code": "",
+  "fields": {
+    "oath_1": {
+      "section": "❶ 宣誓・手引き",
+      "group": "1-2. 宣誓事項",
+      "label": "宣誓事項1：公募要領を理解し、申請者自身が計画を作って申請することに同意する",
+      "kind": "checkbox",
+      "who": "person",
+      "value": false
+    },
+    "oath_2": {
+      "section": "❶ 宣誓・手引き",
+      "group": "1-2. 宣誓事項",
+      "label": "宣誓事項2：補助の対象となる事業者と事業に当たることを確認した",
+      "kind": "checkbox",
+      "who": "person",
+      "value": false
+    },
+    "oath_3": {
+      "section": "❶ 宣誓・手引き",
+      "group": "1-2. 宣誓事項",
+      "label": "宣誓事項3：不正があったときは、交付の取消しや公表などの措置に従うことを誓約する",
+      "kind": "checkbox",
+      "who": "person",
+      "value": false
+    },
+    "oath_4": {
+      "section": "❶ 宣誓・手引き",
+      "group": "1-2. 宣誓事項",
+      "label": "宣誓事項4：計画の達成状況の報告と、求められた調査に協力することに同意する",
+      "kind": "checkbox",
+      "who": "person",
+      "value": false
+    },
+    "oath_5": {
+      "section": "❶ 宣誓・手引き",
+      "group": "1-2. 宣誓事項",
+      "label": "宣誓事項5：反社会的勢力に当たらないことを宣誓する",
+      "kind": "checkbox",
+      "who": "person",
+      "value": false
+    },
+    "org_type": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "組織形態",
+      "kind": "select",
+      "who": "tool",
+      "value": ""
+    },
+    "corp_number": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "法人番号",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "biz_name": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "事業者名（法人名／屋号・商号）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "biz_name_kana": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "事業者名（カナ）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "rep_title": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "法人代表者役職",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "rep_last": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "代表者氏名（姓）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "rep_first": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "代表者氏名（名）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "rep_last_kana": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "代表者氏名カナ（セイ）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "rep_first_kana": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "代表者氏名カナ（メイ）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "rep_tel": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "代表電話番号",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "biz_url": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "事業者HPのURL",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "employees": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "従業員数",
+      "kind": "number",
+      "who": "tool",
+      "value": ""
+    },
+    "capital": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "資本金（出資金）",
+      "kind": "number",
+      "who": "tool",
+      "value": ""
+    },
+    "founded": {
+      "section": "❷ 基本情報",
+      "group": "2-1. 事業者情報",
+      "label": "創業・設立日（西暦）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "hq_zip": {
+      "section": "❷ 基本情報",
+      "group": "2-2. 本店所在地",
+      "label": "郵便番号",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "hq_pref": {
+      "section": "❷ 基本情報",
+      "group": "2-2. 本店所在地",
+      "label": "都道府県",
+      "kind": "select",
+      "who": "tool",
+      "value": ""
+    },
+    "hq_city": {
+      "section": "❷ 基本情報",
+      "group": "2-2. 本店所在地",
+      "label": "市区町村",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "hq_town": {
+      "section": "❷ 基本情報",
+      "group": "2-2. 本店所在地",
+      "label": "町域",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "hq_street": {
+      "section": "❷ 基本情報",
+      "group": "2-2. 本店所在地",
+      "label": "番地等",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "hq_building": {
+      "section": "❷ 基本情報",
+      "group": "2-2. 本店所在地",
+      "label": "建物名",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "industry_code": {
+      "section": "❷ 基本情報",
+      "group": "2-3. 自身の該当する業種",
+      "label": "業種コード",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "staff_title": {
+      "section": "❷ 基本情報",
+      "group": "2-4. 担当者情報",
+      "label": "担当者の役職",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "staff_last": {
+      "section": "❷ 基本情報",
+      "group": "2-4. 担当者情報",
+      "label": "担当者氏名（姓）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "staff_first": {
+      "section": "❷ 基本情報",
+      "group": "2-4. 担当者情報",
+      "label": "担当者氏名（名）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "staff_last_kana": {
+      "section": "❷ 基本情報",
+      "group": "2-4. 担当者情報",
+      "label": "担当者氏名カナ（セイ）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "staff_first_kana": {
+      "section": "❷ 基本情報",
+      "group": "2-4. 担当者情報",
+      "label": "担当者氏名カナ（メイ）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "staff_email": {
+      "section": "❷ 基本情報",
+      "group": "2-4. 担当者情報",
+      "label": "担当者メールアドレス",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "staff_tel": {
+      "section": "❷ 基本情報",
+      "group": "2-4. 担当者情報",
+      "label": "担当者電話番号",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "small_business": {
+      "section": "❸ 要件",
+      "group": "3-1. 小規模企業者・小規模事業者・再生事業者",
+      "label": "小規模企業者・小規模事業者：該当する",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "revival": {
+      "section": "❸ 要件",
+      "group": "3-1. 小規模企業者・小規模事業者・再生事業者",
+      "label": "再生事業者：該当する",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "not_same_corp": {
+      "section": "❸ 要件",
+      "group": "3-2. みなし同一法人でないことの確認",
+      "label": "みなし同一法人でないことの確認：みなし同一法人による申請でないことを宣誓する",
+      "kind": "checkbox",
+      "who": "person",
+      "value": false
+    },
+    "not_large": {
+      "section": "❸ 要件",
+      "group": "3-3. みなし大企業でないことの確認",
+      "label": "みなし大企業でないことの確認：みなし大企業による申請でないことを宣誓する",
+      "kind": "checkbox",
+      "who": "person",
+      "value": false
+    },
+    "not_adult": {
+      "section": "❸ 要件",
+      "group": "3-4. 風俗営業等に関する確認",
+      "label": "風俗営業等に関する確認：風俗営業等の事業でないことを宣誓する",
+      "kind": "checkbox",
+      "who": "person",
+      "value": false
+    },
+    "ryoritsu_url": {
+      "section": "❸ 要件",
+      "group": "3-5. 「両立支援のひろば」に関する確認",
+      "label": "「両立支援のひろば」の企業データ詳細ページのURL",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "ryoritsu_oath": {
+      "section": "❸ 要件",
+      "group": "3-5. 「両立支援のひろば」に関する確認",
+      "label": "両立支援のひろば：交付申請時までに行動計画を公表することを宣誓する",
+      "kind": "checkbox",
+      "who": "person",
+      "value": false
+    },
+    "other_subsidy": {
+      "section": "❸ 要件",
+      "group": "3-6. 国の他の助成制度との重複確認",
+      "label": "国の他の助成制度との重複",
+      "kind": "radio",
+      "who": "tool",
+      "value": ""
+    },
+    "kasan_succession": {
+      "section": "❹ 加点項目",
+      "group": "①事業承継又はM&Aを実施した事業者",
+      "label": "事業承継又はM&A加点：過去3年以内に事業承継やM&Aで経営資源を引き継いだ",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "kasan_bcp": {
+      "section": "❹ 加点項目",
+      "group": "②事業継続力強化計画／連携事業継続力強化計画に対する加点",
+      "label": "事業継続力強化計画加点：有効な期間の認定を受けている",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": true
+    },
+    "bcp_number": {
+      "section": "❹ 加点項目",
+      "group": "②事業継続力強化計画／連携事業継続力強化計画に対する加点",
+      "label": "受付番号（半角10桁）",
+      "kind": "text",
+      "who": "tool",
+      "value": "2512345678"
+    },
+    "bcp_start_year": {
+      "section": "❹ 加点項目",
+      "group": "②事業継続力強化計画／連携事業継続力強化計画に対する加点",
+      "label": "実施期間開始期（年）",
+      "kind": "select",
+      "who": "tool",
+      "value": "2025"
+    },
+    "bcp_start_month": {
+      "section": "❹ 加点項目",
+      "group": "②事業継続力強化計画／連携事業継続力強化計画に対する加点",
+      "label": "実施期間開始期（月）",
+      "kind": "select",
+      "who": "tool",
+      "value": "4"
+    },
+    "bcp_end_year": {
+      "section": "❹ 加点項目",
+      "group": "②事業継続力強化計画／連携事業継続力強化計画に対する加点",
+      "label": "実施期間終期（年）",
+      "kind": "select",
+      "who": "tool",
+      "value": "2028"
+    },
+    "bcp_end_month": {
+      "section": "❹ 加点項目",
+      "group": "②事業継続力強化計画／連携事業継続力強化計画に対する加点",
+      "label": "実施期間終期（月）",
+      "kind": "select",
+      "who": "tool",
+      "value": "3"
+    },
+    "kasan_matching": {
+      "section": "❹ 加点項目",
+      "group": "③成長加速マッチングサービスに登録している事業者に対する加点",
+      "label": "成長加速マッチングサービス加点：挑戦課題を登録している",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "kasan_regional_wage": {
+      "section": "❹ 加点項目",
+      "group": "④地域別最低賃金引き上げに係る加点",
+      "label": "地域別最低賃金引き上げ加点：加点の要件を満たす",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "kasan_inhouse_wage": {
+      "section": "❹ 加点項目",
+      "group": "⑤事業場内最低賃金引き上げに係る加点",
+      "label": "事業場内最低賃金引き上げ加点：加点の要件を満たす",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": true
+    },
+    "kasan_eruboshi": {
+      "section": "❹ 加点項目",
+      "group": "⑥えるぼし加点",
+      "label": "えるぼし加点：えるぼし認定を受けている",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "kasan_kurumin": {
+      "section": "❹ 加点項目",
+      "group": "⑦くるみん加点",
+      "label": "くるみん加点：くるみん認定を受けている",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "kasan_navi": {
+      "section": "❹ 加点項目",
+      "group": "⑧省力化ナビ加点",
+      "label": "省力化ナビ加点：省力化ナビで解決策のPDFを取得している",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": true
+    },
+    "kasan_health": {
+      "section": "❹ 加点項目",
+      "group": "⑨健康経営優良法人加点",
+      "label": "健康経営優良法人加点：健康経営優良法人に認定されている",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "kasan_center": {
+      "section": "❹ 加点項目",
+      "group": "⑩生産性向上支援センター利用加点",
+      "label": "生産性向上支援センター利用加点：支援を受けて取組計画書を作った",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "plan_name": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-1. 事業計画名",
+      "label": "事業計画名（３０文字程度）",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "plan_industry": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-2. 事業計画の概要",
+      "label": "本事業で取り組む対象分野となる業種（日本標準産業分類、中分類）",
+      "kind": "select",
+      "who": "tool",
+      "value": ""
+    },
+    "plan_summary": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-2. 事業計画の概要",
+      "label": "事業計画の概要（１００字程度）",
+      "kind": "textarea",
+      "who": "tool",
+      "value": ""
+    },
+    "plan_equipment": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-2. 事業計画の概要",
+      "label": "導入予定の機械装置・システムの名称",
+      "kind": "textarea",
+      "who": "tool",
+      "value": ""
+    },
+    "no_equipment": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-2. 事業計画の概要",
+      "label": "機器装置の導入を含まない",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "uses_genai": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-2. 事業計画の概要",
+      "label": "生成AIの導入を含む",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "catalog_product": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-2. 事業計画の概要",
+      "label": "カタログ注文型のカテゴリに当たる製品を導入する",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "site_zip": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-3. 補助事業の主たる実施場所",
+      "label": "郵便番号",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "site_pref": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-3. 補助事業の主たる実施場所",
+      "label": "都道府県",
+      "kind": "select",
+      "who": "tool",
+      "value": ""
+    },
+    "site_city": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-3. 補助事業の主たる実施場所",
+      "label": "市区町村",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "site_town": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-3. 補助事業の主たる実施場所",
+      "label": "町域",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "site_street": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-3. 補助事業の主たる実施場所",
+      "label": "番地等",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "site_building": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-3. 補助事業の主たる実施場所",
+      "label": "建物名",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "site_office": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-3. 補助事業の主たる実施場所",
+      "label": "事業所名",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "multi_sites": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-3. 補助事業の主たる実施場所",
+      "label": "事業実施場所が2か所以上ある",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "innovation": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-4. イノベーション製品応援プログラムへの参加",
+      "label": "イノベーション製品応援プログラムへの参加：参加する",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "atotsugi": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-5. アトツギ甲子園への出場",
+      "label": "アトツギ甲子園への出場：ピッチ大会に出場したことがある",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "tariff": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-6. 関税影響事業者の申告",
+      "label": "関税影響事業者の申告：関税影響事業者である",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "no_supporter": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-7. 事業計画書作成支援者情報",
+      "label": "支援者なし",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "supporter_org": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-7. 事業計画書作成支援者情報",
+      "label": "支援機関名",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "supporter_fee": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-7. 事業計画書作成支援者情報",
+      "label": "支援報酬（予定）額",
+      "kind": "number",
+      "who": "tool",
+      "value": ""
+    },
+    "supporter_months": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-7. 事業計画書作成支援者情報",
+      "label": "契約期間",
+      "kind": "number",
+      "who": "tool",
+      "value": ""
+    },
+    "supporter_dept": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-7. 事業計画書作成支援者情報",
+      "label": "支援担当者部署名",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "supporter_name": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-7. 事業計画書作成支援者情報",
+      "label": "支援担当者名",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "supporter_tel": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-7. 事業計画書作成支援者情報",
+      "label": "支援者連絡先電話番号",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "supporter_email": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-7. 事業計画書作成支援者情報",
+      "label": "支援者メールアドレス",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "supporter_id": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-7. 事業計画書作成支援者情報",
+      "label": "認定経営革新等支援機関ID",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "fiscal_month": {
+      "section": "❺ 事業計画名及び作成者情報",
+      "group": "5-8. 直近決算期の決算月",
+      "label": "直近決算期の決算月",
+      "kind": "select",
+      "who": "tool",
+      "value": ""
+    },
+    "special_raise": {
+      "section": "❻ 最低賃金及び特例希望",
+      "group": "6-1. 大幅賃上げに係る補助上限額引き上げの特例",
+      "label": "大幅賃上げに係る補助上限額引き上げの特例：希望する",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "special_min_wage": {
+      "section": "❻ 最低賃金及び特例希望",
+      "group": "6-2. 最低賃金引き上げに係る補助率引き上げの特例",
+      "label": "最低賃金引き上げに係る補助率引き上げの特例：希望する",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "min_wage_month_year": {
+      "section": "❻ 最低賃金及び特例希望",
+      "group": "6-3. 事業場内の最低賃金",
+      "label": "直近月の事業場内の最低賃金（対象年月）（年）",
+      "kind": "select",
+      "who": "tool",
+      "value": ""
+    },
+    "min_wage_month_month": {
+      "section": "❻ 最低賃金及び特例希望",
+      "group": "6-3. 事業場内の最低賃金",
+      "label": "直近月の事業場内の最低賃金（対象年月）（月）",
+      "kind": "select",
+      "who": "tool",
+      "value": ""
+    },
+    "min_wage": {
+      "section": "❻ 最低賃金及び特例希望",
+      "group": "6-3. 事業場内の最低賃金",
+      "label": "事業場内最低賃金",
+      "kind": "number",
+      "who": "tool",
+      "value": ""
+    },
+    "plan_years": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "計画年数",
+      "kind": "select",
+      "who": "tool",
+      "value": ""
+    },
+    "plan_sales_y0": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上高（基準年度）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_sales_y1": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上高（1年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_sales_y2": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上高（2年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_sales_y3": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上高（3年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_sales_y4": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上高（4年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_sales_y5": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上高（5年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_cogs_y0": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上原価（製造原価）（基準年度）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_cogs_y1": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上原価（製造原価）（1年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_cogs_y2": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上原価（製造原価）（2年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_cogs_y3": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上原価（製造原価）（3年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_cogs_y4": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上原価（製造原価）（4年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_cogs_y5": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "売上原価（製造原価）（5年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_sga_y0": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "販売費及び一般管理費（人件費・減価償却費を含む）（基準年度）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_sga_y1": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "販売費及び一般管理費（人件費・減価償却費を含む）（1年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_sga_y2": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "販売費及び一般管理費（人件費・減価償却費を含む）（2年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_sga_y3": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "販売費及び一般管理費（人件費・減価償却費を含む）（3年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_sga_y4": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "販売費及び一般管理費（人件費・減価償却費を含む）（4年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_sga_y5": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "販売費及び一般管理費（人件費・減価償却費を含む）（5年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_personnel_y0": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "②人件費（基準年度）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_personnel_y1": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "②人件費（1年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_personnel_y2": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "②人件費（2年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_personnel_y3": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "②人件費（3年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_personnel_y4": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "②人件費（4年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_personnel_y5": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "②人件費（5年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_dep_existing_y0": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "（内訳）既存設備の減価償却費（基準年度）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_dep_existing_y1": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "（内訳）既存設備の減価償却費（1年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_dep_existing_y2": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "（内訳）既存設備の減価償却費（2年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_dep_existing_y3": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "（内訳）既存設備の減価償却費（3年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_dep_existing_y4": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "（内訳）既存設備の減価償却費（4年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_dep_existing_y5": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "（内訳）既存設備の減価償却費（5年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_dep_new_y1": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "本補助金で導入する設備の減価償却費（1年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_dep_new_y2": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "本補助金で導入する設備の減価償却費（2年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_dep_new_y3": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "本補助金で導入する設備の減価償却費（3年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_dep_new_y4": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "本補助金で導入する設備の減価償却費（4年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_dep_new_y5": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "本補助金で導入する設備の減価償却費（5年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_officers_y0": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち役員数（人）（基準年度）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_officers_y1": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち役員数（人）（1年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_officers_y2": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち役員数（人）（2年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_officers_y3": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち役員数（人）（3年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_officers_y4": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち役員数（人）（4年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_officers_y5": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち役員数（人）（5年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_employees_y0": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち常勤従業員数（人）（基準年度）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_employees_y1": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち常勤従業員数（人）（1年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_employees_y2": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち常勤従業員数（人）（2年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_employees_y3": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち常勤従業員数（人）（3年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_employees_y4": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち常勤従業員数（人）（4年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "plan_employees_y5": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "労働者数のうち常勤従業員数（人）（5年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "労働生産性の計画値"
+    },
+    "salary_salary_total_y0": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑤全月分の給与等の支給を受けた従業員の給与支給総額（基準年度）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "salary_salary_total_y1": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑤全月分の給与等の支給を受けた従業員の給与支給総額（1年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "salary_salary_total_y2": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑤全月分の給与等の支給を受けた従業員の給与支給総額（2年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "salary_salary_total_y3": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑤全月分の給与等の支給を受けた従業員の給与支給総額（3年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "salary_salary_total_y4": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑤全月分の給与等の支給を受けた従業員の給与支給総額（4年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "salary_salary_total_y5": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑤全月分の給与等の支給を受けた従業員の給与支給総額（5年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "salary_salary_count_y0": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑥全月分の給与等の支給を受けた従業員数（基準年度）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "salary_salary_count_y1": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑥全月分の給与等の支給を受けた従業員数（1年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "salary_salary_count_y2": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑥全月分の給与等の支給を受けた従業員数（2年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "salary_salary_count_y3": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑥全月分の給与等の支給を受けた従業員数（3年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "salary_salary_count_y4": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑥全月分の給与等の支給を受けた従業員数（4年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "salary_salary_count_y5": {
+      "section": "❼ 事業計画数値",
+      "group": "7-2. 会社全体の事業計画（単位：円）",
+      "label": "⑥全月分の給与等の支給を受けた従業員数（5年目計画）",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "従業員1人当たり給与支給総額の計画値"
+    },
+    "finance_lease": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "ファイナンス・リースによる共同申請",
+      "kind": "radio",
+      "who": "tool",
+      "value": ""
+    },
+    "expense_machine_a": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "機械装置・システム構築費（（A）事業に要する経費（税込みの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_machine_b": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "機械装置・システム構築費（（B）補助対象経費（税抜きの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_machine_c": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "機械装置・システム構築費（（C）積算基礎（（B）の内訳））",
+      "kind": "textarea",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_transport_a": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "運搬費（（A）事業に要する経費（税込みの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_transport_b": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "運搬費（（B）補助対象経費（税抜きの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_transport_c": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "運搬費（（C）積算基礎（（B）の内訳））",
+      "kind": "textarea",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_tech_a": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "技術導入費（（A）事業に要する経費（税込みの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_tech_b": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "技術導入費（（B）補助対象経費（税抜きの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_tech_c": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "技術導入費（（C）積算基礎（（B）の内訳））",
+      "kind": "textarea",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_ip_a": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "知的財産権等関連経費（（A）事業に要する経費（税込みの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_ip_b": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "知的財産権等関連経費（（B）補助対象経費（税抜きの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_ip_c": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "知的財産権等関連経費（（C）積算基礎（（B）の内訳））",
+      "kind": "textarea",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_outsourcing_a": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "外注費（（A）事業に要する経費（税込みの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_outsourcing_b": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "外注費（（B）補助対象経費（税抜きの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_outsourcing_c": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "外注費（（C）積算基礎（（B）の内訳））",
+      "kind": "textarea",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_expert_a": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "専門家経費（（A）事業に要する経費（税込みの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_expert_b": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "専門家経費（（B）補助対象経費（税抜きの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_expert_c": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "専門家経費（（C）積算基礎（（B）の内訳））",
+      "kind": "textarea",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_cloud_a": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "クラウドサービス利用費（（A）事業に要する経費（税込みの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_cloud_b": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "クラウドサービス利用費（（B）補助対象経費（税抜きの額））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "expense_cloud_c": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-1. 経費明細表",
+      "label": "クラウドサービス利用費（（C）積算基礎（（B）の内訳））",
+      "kind": "textarea",
+      "who": "tool",
+      "value": "",
+      "table": "経費明細表"
+    },
+    "fund_all_own_amount": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-3. 資金調達内訳",
+      "label": "自己資金（事業に要する経費（円））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "事業全体に要する経費調達一覧"
+    },
+    "fund_all_loan_amount": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-3. 資金調達内訳",
+      "label": "借入金（事業に要する経費（円））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "事業全体に要する経費調達一覧"
+    },
+    "fund_all_loan_source": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-3. 資金調達内訳",
+      "label": "借入金（資金の調達先）",
+      "kind": "text",
+      "who": "tool",
+      "value": "",
+      "table": "事業全体に要する経費調達一覧"
+    },
+    "fund_all_lease_amount": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-3. 資金調達内訳",
+      "label": "その他（ファイナンス・リース）（事業に要する経費（円））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "事業全体に要する経費調達一覧"
+    },
+    "fund_all_lease_source": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-3. 資金調達内訳",
+      "label": "その他（ファイナンス・リース）（資金の調達先）",
+      "kind": "text",
+      "who": "tool",
+      "value": "",
+      "table": "事業全体に要する経費調達一覧"
+    },
+    "fund_d_own_amount": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-3. 資金調達内訳",
+      "label": "自己資金（事業に要する経費（円））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "補助金申請額（D）の経費内訳"
+    },
+    "fund_d_loan_amount": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-3. 資金調達内訳",
+      "label": "借入金（事業に要する経費（円））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "補助金申請額（D）の経費内訳"
+    },
+    "fund_d_loan_source": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-3. 資金調達内訳",
+      "label": "借入金（資金の調達先）",
+      "kind": "text",
+      "who": "tool",
+      "value": "",
+      "table": "補助金申請額（D）の経費内訳"
+    },
+    "fund_d_lease_amount": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-3. 資金調達内訳",
+      "label": "その他（ファイナンス・リース）（事業に要する経費（円））",
+      "kind": "number",
+      "who": "tool",
+      "value": "",
+      "table": "補助金申請額（D）の経費内訳"
+    },
+    "fund_d_lease_source": {
+      "section": "❽ 経費明細｜資金調達内訳",
+      "group": "8-3. 資金調達内訳",
+      "label": "その他（ファイナンス・リース）（資金の調達先）",
+      "kind": "text",
+      "who": "tool",
+      "value": "",
+      "table": "補助金申請額（D）の経費内訳"
+    },
+    "succession_type": {
+      "section": "❾ 書類添付",
+      "group": "事業承継又はM&Aを実施した事業者に対する加点を受ける場合",
+      "label": "事業承継の形態",
+      "kind": "radio",
+      "who": "tool",
+      "value": ""
+    },
+    "other_comment_1": {
+      "section": "❾ 書類添付",
+      "group": "その他資料（任意）",
+      "label": "その他資料1 コメント",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "other_comment_2": {
+      "section": "❾ 書類添付",
+      "group": "その他資料（任意）",
+      "label": "その他資料2 コメント",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "other_comment_3": {
+      "section": "❾ 書類添付",
+      "group": "その他資料（任意）",
+      "label": "その他資料3 コメント",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "survey_issues": {
+      "section": "❿ アンケート",
+      "group": "本補助金申請時の経営課題・関心事項（複数選択可）",
+      "label": "経営課題・関心事項",
+      "kind": "checkboxes",
+      "who": "tool",
+      "value": []
+    },
+    "survey_policies": {
+      "section": "❿ アンケート",
+      "group": "本補助金申請時の関心施策（複数選択可）",
+      "label": "関心施策",
+      "kind": "checkboxes",
+      "who": "tool",
+      "value": []
+    },
+    "survey_other": {
+      "section": "❿ アンケート",
+      "group": "本補助金申請時の関心施策（複数選択可）",
+      "label": "その他の施策の内容",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "survey_source": {
+      "section": "❿ アンケート",
+      "group": "本補助金の情報の入手元（複数選択可）",
+      "label": "情報の入手元",
+      "kind": "checkboxes",
+      "who": "tool",
+      "value": []
+    },
+    "survey_source_other": {
+      "section": "❿ アンケート",
+      "group": "本補助金の情報の入手元（複数選択可）",
+      "label": "その他の入手元の内容",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "survey_funding": {
+      "section": "❿ アンケート",
+      "group": "本事業における資金の調達方法（複数選択可）",
+      "label": "資金の調達方法",
+      "kind": "checkboxes",
+      "who": "tool",
+      "value": []
+    },
+    "survey_funding_other": {
+      "section": "❿ アンケート",
+      "group": "本事業における資金の調達方法（複数選択可）",
+      "label": "その他の調達方法の内容",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    },
+    "survey_no_info": {
+      "section": "❿ アンケート",
+      "group": "中小機構の各種支援情報の提供",
+      "label": "中小機構の支援情報の提供：希望しない",
+      "kind": "checkbox",
+      "who": "tool",
+      "value": false
+    },
+    "auth_code": {
+      "section": "⓫ メールアドレス認証",
+      "group": "メールアドレス認証",
+      "label": "認証コード",
+      "kind": "text",
+      "who": "tool",
+      "value": ""
+    }
+  },
+  "files": {}
+}

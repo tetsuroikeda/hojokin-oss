@@ -1,0 +1,118 @@
+# 模擬の申請画面（mock/。D11b の12画面版）の ❹ 加点項目を、入れる前に、デスクトップアプリの内蔵ブラウザの
+# read_page（filter は all）で読んだ結果（2026-11-04。TASKS M8）。
+# 選択欄の選択肢の行（option。番号のない行）だけを抜いた。番号と形は、読んだときのまま。「#」で始まる行は読み飛ばされる。
+note "模擬画面（実在のシステムではありません）。架空の練習用の画面で、入れた内容はこのパソコンの中にだけ記録されます。" [ref_1]
+main [ref_2]
+ heading "❹ 加点項目" [ref_3]
+ generic "省力化投資補助金（一般型）第8回 応募申請の模擬画面（D11b・12画面版）" [ref_4]
+ navigation "進み具合" [ref_5]
+  list [ref_6]
+   listitem "❶ 宣誓・手引き" [ref_7]
+   listitem "❷ 基本情報" [ref_8]
+   listitem "❸ 要件" [ref_9]
+   listitem "❹ 加点項目" [ref_10]
+   listitem "❺ 事業計画名及び作成者情報" [ref_11]
+   listitem "❻ 最低賃金及び特例希望" [ref_12]
+   listitem "❼ 事業計画数値" [ref_13]
+   listitem "❽ 経費明細｜資金調達内訳" [ref_14]
+   listitem "❾ 書類添付" [ref_15]
+   listitem "❿ アンケート" [ref_16]
+   listitem "⓫ メールアドレス認証" [ref_17]
+   listitem "⓬ 確認" [ref_18]
+ form [ref_19]
+  button "戻る" [ref_20] type="submit"
+  button "一時保存" [ref_21] type="submit"
+  button "次へ" [ref_22] type="submit"
+  region [ref_23]
+   heading "①事業承継又はM&Aを実施した事業者" [ref_24]
+   label [ref_25]
+    checkbox "on" [ref_26] type="checkbox"
+    generic "事業承継又はM&A加点：過去3年以内に事業承継やM&Aで経営資源を引き継いだ" [ref_27]
+   heading "②事業継続力強化計画／連携事業継続力強化計画に対する加点" [ref_28]
+   generic "紙で認定を受けた場合、受付番号は「紙申請」と入れます。" [ref_29]
+   label [ref_30]
+    checkbox "on" [ref_31] type="checkbox"
+    generic "事業継続力強化計画加点：有効な期間の認定を受けている" [ref_32]
+   label [ref_33]
+    generic "受付番号（半角10桁）" [ref_34]
+    textbox [ref_35] type="text"
+   label [ref_36]
+    generic "実施期間開始期（年）" [ref_37]
+    combobox "--選択してください--" [ref_38]
+     generic "--選択してください--" [ref_39]
+     generic "2020" [ref_40]
+     generic "2021" [ref_41]
+     generic "2022" [ref_42]
+     generic "2023" [ref_43]
+     generic "2024" [ref_44]
+     generic "2025" [ref_45]
+     generic "2026" [ref_46]
+     generic "2027" [ref_47]
+     generic "2028" [ref_48]
+     generic "2029" [ref_49]
+     generic "2030" [ref_50]
+   label [ref_51]
+    generic "実施期間開始期（月）" [ref_52]
+    combobox "--選択してください--" [ref_53]
+     generic "--選択してください--" [ref_54]
+   label [ref_55]
+    generic "実施期間終期（年）" [ref_56]
+    combobox "--選択してください--" [ref_57]
+     generic "--選択してください--" [ref_58]
+     generic "2020" [ref_59]
+     generic "2021" [ref_60]
+     generic "2022" [ref_61]
+     generic "2023" [ref_62]
+     generic "2024" [ref_63]
+     generic "2025" [ref_64]
+     generic "2026" [ref_65]
+     generic "2027" [ref_66]
+     generic "2028" [ref_67]
+     generic "2029" [ref_68]
+     generic "2030" [ref_69]
+   label [ref_70]
+    generic "実施期間終期（月）" [ref_71]
+    combobox "--選択してください--" [ref_72]
+     generic "--選択してください--" [ref_73]
+   heading "③成長加速マッチングサービスに登録している事業者に対する加点" [ref_74]
+   label [ref_75]
+    checkbox "on" [ref_76] type="checkbox"
+    generic "成長加速マッチングサービス加点：挑戦課題を登録している" [ref_77]
+   heading "④地域別最低賃金引き上げに係る加点" [ref_78]
+   label [ref_79]
+    checkbox "on" [ref_80] type="checkbox"
+    generic "地域別最低賃金引き上げ加点：加点の要件を満たす" [ref_81]
+   heading "⑤事業場内最低賃金引き上げに係る加点" [ref_82]
+   label [ref_83]
+    checkbox "on" [ref_84] type="checkbox"
+    generic "事業場内最低賃金引き上げ加点：加点の要件を満たす" [ref_85]
+   heading "⑥えるぼし加点" [ref_86]
+   label [ref_87]
+    checkbox "on" [ref_88] type="checkbox"
+    generic "えるぼし加点：えるぼし認定を受けている" [ref_89]
+   heading "⑦くるみん加点" [ref_90]
+   label [ref_91]
+    checkbox "on" [ref_92] type="checkbox"
+    generic "くるみん加点：くるみん認定を受けている" [ref_93]
+   heading "⑧省力化ナビ加点" [ref_94]
+   label [ref_95]
+    checkbox "on" [ref_96] type="checkbox"
+    generic "省力化ナビ加点：省力化ナビで解決策のPDFを取得している" [ref_97]
+   heading "⑨健康経営優良法人加点" [ref_98]
+   label [ref_99]
+    checkbox "on" [ref_100] type="checkbox"
+    generic "健康経営優良法人加点：健康経営優良法人に認定されている" [ref_101]
+   heading "⑩生産性向上支援センター利用加点" [ref_102]
+   label [ref_103]
+    checkbox "on" [ref_104] type="checkbox"
+    generic "生産性向上支援センター利用加点：支援を受けて取組計画書を作った" [ref_105]
+  button "戻る" [ref_106] type="submit"
+  button "一時保存" [ref_107] type="submit"
+  button "次へ" [ref_108] type="submit"
+
+Viewport: 1024x768
+
+Tab Context:
+- Executed on tabId: tab-1
+- Available tabs:
+  • tabId tab-1: "【模擬画面】❹ 加点項目（省力化・一般型）" ("http://127.0.0.1:8796/shinsei/4")

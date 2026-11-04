@@ -77,7 +77,7 @@ def test_hooks_do_nothing_outside_company_folder(tmp_path, python, project_dir_e
     count = 0
     tools = set()
     for event, payload in hr.event_inputs(folder):
-        for command in hr.hook_commands(event, payload.get("tool_name", "")):
+        for command in hr.hook_commands(event, hr.match_name(payload)):
             tools.add(payload.get("tool_name", event))
             r = hr.run(command, payload, plugin=plugin, folder=folder, path=path, home=home, data=data,
                        project_dir_env=project_dir_env)
