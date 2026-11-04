@@ -33,6 +33,9 @@
    - 名前の参照（M2c の直し・波2）。書類の「手続き」が手続きの段階の id にないもの、手続きの段階の「様式」が様式の名前にないものを、
      当たらない名前ごとに数え、足りないに数える（仮）。「1_申請」のようなフォルダの名前を書いた書類は、段階の id で書類を引く道具
      （概要と流れ.docx の必要書類、段階ごとの書類の一覧）から落ちるため。読み直させるときに渡せるよう、当たる名前の一覧も出す。
+   - 欄も押してよいボタンもない申請画面（電子申請マニュアルの流れのページだけを読んだ形）。足りないに数える（波3）。
+     いちばん後ろの確認・提出の画面は数えない（提出のボタンしかなければ、空が正しい形）。
+     入力シートに欄ができず、画面入力の守りが一時保存も次へも拒むため。2つの章が申請画面を読んで画面が二重になったら、まとめの結果に書く。
 3. 段階のフォルダを作る（make_stage_folders）
    - 制度データの「手続きの段階」のうち「フォルダ」のある段階から作る（DESIGN 4.5）。中は「申請書」と「添付する書類」。
    - はじめは、いちばん前の段階（申請）だけを作る。採択後に次の段階へ進むときは、その段階の名前を渡して作る（M10）（仮）。
@@ -119,11 +122,12 @@ class CheckResult:
     question_missing: List[str] = field(default_factory=list)  # 読み取れない値のうち、同じ項目の問い合わせ文の案がないもの
     bad_refs: List[str] = field(default_factory=list)   # 手続きの段階の id・様式の名前に当たらない名前（足りないに数える）
     ref_known: List[str] = field(default_factory=list)  # そのときに当たる名前の一覧（読み直させるときに渡す）
+    empty_screens: List[str] = field(default_factory=list)  # 欄も押してよいボタンもない申請画面（足りないに数える）
 
     @property
     def ok(self) -> bool:
         return (not self.schema_errors and all(i.ok for i in self.important) and not self.unsourced
-                and not self.bad_refs)
+                and not self.bad_refs and not self.empty_screens)
 
 
 # ---- 場所 ----
@@ -359,6 +363,11 @@ def merge(company: Path, case: str) -> Tuple[Dict, MergeResult]:
             dup = _duplicates(key, full[key])
             if dup:
                 result.duplicates.append(dup)
+    screens = full.get("申請画面", {}).get("画面") if isinstance(full.get("申請画面"), dict) else None
+    if isinstance(screens, list):  # 2つの章が申請画面を読むと、画面がつながって二重になる
+        dup = _duplicates("申請画面の画面", screens)
+        if dup:
+            result.duplicates.append(dup)
 
     # 読み取れなかった項目：章が書いたもの、どの章も読んでいない項目、読み取れないの値
     unread = list(full.get("読み取れなかった項目") or [])
@@ -525,8 +534,29 @@ def reference_problems(data: Dict) -> Tuple[List[str], List[str]]:
     return problems, known
 
 
+def empty_screens(data: Dict) -> List[str]:
+    """欄も押してよいボタンもない申請画面の名前（電子申請マニュアルの流れのページだけを読んだときの形）。
+
+    このままでは、入力シートに欄ができず、画面入力の守りが一時保存も次へも拒む（F10、DESIGN 5章）。
+    画面が1つもないのは、流れが「読み取れない」なら読み取れなかった項目に回し、読めているなら足りないに数える。
+    いちばん後ろの画面（確認・提出の画面）は数えない。提出のボタンしかない画面は、提出を押してよいボタンに入れないので、
+    欄もボタンも空になるのが正しい形のため（数えると、読み直しても直らない）。
+    """
+    part = data.get("申請画面")
+    if not isinstance(part, dict):
+        return []
+    screens = [s for s in part.get("画面") or [] if isinstance(s, dict)]
+    flow = part.get("流れ")
+    if not screens:
+        read = isinstance(flow, dict) and flow.get("状態") != UNREADABLE
+        return ["（画面が1つもありません）"] if read else []
+    last = max(screens, key=lambda s: s.get("順番") if isinstance(s.get("順番"), int) else 0)
+    return [str(s.get("名前") or f"{s.get('順番')}つ目の画面") for s in screens
+            if s is not last and not s.get("欄") and not s.get("押してよいボタン")]
+
+
 def check(data: Any) -> CheckResult:
-    """制度データの全体を確かめる（形、重要な項目、出典のない値、名前の参照）。"""
+    """制度データの全体を確かめる（形、重要な項目、出典のない値、名前の参照、欄もボタンもない申請画面）。"""
     result = CheckResult()
     if not isinstance(data, dict):
         result.schema_errors = ["（全体）：いちばん外側を { } の形にしてください"]
@@ -566,8 +596,9 @@ def check(data: Any) -> CheckResult:
                     result.unsourced.append(f"資料どうしの食い違い「{entry.get('項目')}」の{j + 1}つ目の値：{p}")
 
     result.bad_refs, result.ref_known = reference_problems(data)
+    result.empty_screens = empty_screens(data)
 
-    listed = [u for u in data.get("読み取れなかった項目") or [] if isinstance(u, dict)]
+    listed =[u for u in data.get("読み取れなかった項目") or [] if isinstance(u, dict)]
     result.unread_listed = len(listed)
     result.unread_with_question = sum(1 for u in listed if _has_question(u))
     # 読み取れない値の場所と、まとめの道具が「読み取れなかった項目」に書く項目の名前は、同じ書き方（urakadori.readable）
@@ -669,6 +700,9 @@ def check_report(result: CheckResult, rel: str) -> str:
     if len(result.bad_refs) > 30:
         lines.append(f"  - ほかに {len(result.bad_refs) - 30} か所")
     lines += [f"  - 当たる名前（{k}）" for k in result.ref_known]
+    lines.append(f"- 欄も押してよいボタンもない申請画面：{len(result.empty_screens)}")
+    if result.empty_screens:
+        lines.append(f"  - {'・'.join(result.empty_screens)}（電子申請マニュアルの、その画面のページを読み取り役に読ませる）")
     lines += ["", "重要な項目（締切・補助上限・補助率・数値の要件・必須書類・補助の対象にならない経費）：", "",
               "| 項目 | 件数 | 値 | 値か要確認で埋まった値 | 埋まっていない値 | 任意の欄で読み取れない値（数えない） |",
               "|---|---|---|---|---|---|"]
