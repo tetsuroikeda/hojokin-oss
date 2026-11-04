@@ -14,6 +14,9 @@
 - 書類フォルダができる：`案件/2026_省力化（一般型）第9回/公式資料/`。段階のフォルダは、制度データの手続きの段階から作れる
 - 未公表なら「直近回の資料に基づく」と示す：申請する回（第9回）の資料がなく、第8回の資料で作ったときは、結果と資料の一覧に示す。
   回が同じなら示さない
+- 一部だけ公表されたとき（第9回の公募要領だけが出た。TASKS M14）：第9回の公募要領は第9回のものを使い、まだのもの
+  （応募申請の手引きなど）は直近回の第8回のものを使うと、資料を並べて示す。前の回の公募要領は「前の回の資料」に移り、
+  ファイルと資料の本文は残る（変わったページを見つけるのに使う）
 - 会社のフォルダでなければ、何も書かずに断る。会社のフォルダの外（プラグインの場所など）には何も書かない
 
 道具は、Claude が Bash で動かすのと同じく、社長の Mac と同じ /usr/bin/python3 で、プラグインの写しから動かす。
@@ -46,13 +49,17 @@ DOWNLOADS = REPO_ROOT / "downloads"
 SCRIPT = Path("skills") / "junbi" / "scripts" / "fetch_documents.py"
 LISTS = REPO_ROOT / "skills" / "junbi" / "取る資料"
 SHORYOKUKA_LIST = LISTS / "省力化_一般型_第8回.json"
+SHORYOKUKA_9_LIST = LISTS / "省力化_一般型_第9回.json"
+GUIDELINES_9 = DOWNLOADS / "shoryokuka_ippan" / "application_guidelines_ippan_09.pdf"
 JIZOKUKA_LIST = LISTS / "持続化_通常枠_第20回.json"
 ANSWER = REPO_ROOT / "testdata" / "正解" / "省力化_第8回.json"
 SCHEMA = REPO_ROOT / "schema" / "制度データ.schema.json"
 TODAY = "2026-11-04"
 SHORYOKUKA_CASE = "2026_省力化（一般型）第9回"
 JIZOKUKA_CASE = "2026_持続化（一般型・通常枠）第20回"
-LATEST_NOTICE = "第9回の資料はまだ公表されていないため、直近回である第8回の資料に基づいています"
+LATEST_NOTICE = "第9回の資料ではなく、直近回である第8回の資料に基づいています"
+PARTIAL_NOTICE = ("第9回の資料のうち、第9回のものがまだない資料（「応募申請の手引き」・「電子申請マニュアル（応募申請）」・"
+                  "「事業計画書 その1・その2（参考様式）」・「事業計画書 その3（指定様式）」）は、直近回である第8回の資料に基づいています")
 
 # DESIGN 9章の注：持続化の公募要領・操作手引き・補助事業の手引きは、印刷された番号が PDF のページより1つ小さく、Q&A は5つ小さい
 JIZOKUKA_OFFSETS = {"要領20": 1, "操作手引き19": 1, "補助事業の手引き19": 1, "Q&A20": 5}
@@ -345,17 +352,71 @@ def test_documents_and_case_folder_latest_round(tmp_path, site) -> None:
     assert company.env.outside() == before_outside
 
 
+def test_partly_published_round(tmp_path, site) -> None:
+    """第9回の公募要領だけが出たとき（TASKS M14）。第8回の資料で始めた案件で、第9回の一覧を取り直す。
+
+    公募要領は第9回のものを使い、まだのものは直近回の第8回のものを使うと、資料を並べて示す。前の回の公募要領と
+    スケジュールのページは「前の回の資料」に移り、ファイルと資料の本文は残る。一部の資料だけを取り直しても、案内は消えない。
+    """
+    if not GUIDELINES_9.is_file():
+        pytest.skip("第9回の公募要領（downloads/shoryokuka_ippan/application_guidelines_ippan_09.pdf）がありません")
+    data9 = load(SHORYOKUKA_9_LIST)
+    site.put(urlsplit(data9["資料"][0]["URL"]).path, GUIDELINES_9.read_bytes(), "application/pdf")
+    company = Company(tmp_path)
+    assert company.fetch(local_list(site, SHORYOKUKA_LIST), "--case-round", "第9回").returncode == 0
+
+    r = company.fetch(local_list(site, SHORYOKUKA_9_LIST))
+    text = out(r)
+    assert r.returncode == 0, (text, r.stderr.decode("utf-8"))
+    assert "資料はすべてそろいました" in text
+    assert PARTIAL_NOTICE in text
+    assert "「交付申請の手引き」は、第6回の資料に基づいています" in text
+    assert LATEST_NOTICE not in text and "まだ公表されていないため" not in text
+    assert "「公募要領」（第8回、要領8）" in text  # 置き換えた前の回の資料を示す
+
+    listed = company.doc_list(SHORYOKUKA_CASE)
+    assert listed["直近回の資料に基づく"] is False
+    assert any(PARTIAL_NOTICE in n for n in listed["案内"])
+    validate_doc_list(listed["資料"])
+    ids = [e["id"] for e in listed["資料"]]
+    # 新しい回の資料は、前の回の資料の場所に並ぶ（制度データの章の並びを変えない）
+    assert ids == [d["id"] for d in data9["資料"]]
+    assert [e["id"] for e in listed["前の回の資料"]] == ["要領8", "スケジュール"]
+    assert listed["資料"][0]["ハッシュ"] == sha256(GUIDELINES_9)
+    # 前の回のファイルと資料の本文は残る（変わったページを見つけるのに使う）
+    files = official_files(company, SHORYOKUKA_CASE)
+    assert {"公募要領_第8回", "公募要領_第9回", "スケジュール（一般型）のページ_第8回",
+            "スケジュール（一般型）のページ_第9回"} <= set(files)
+    for doc_id in ("要領8", "要領9", "スケジュール", "スケジュール9"):
+        assert (company.texts(SHORYOKUKA_CASE) / doc_id / "ページの対応.json").is_file(), doc_id
+    assert set(listed["置き場所"]) >= {"要領8", "要領9", "スケジュール", "スケジュール9"}
+    # 第9回の要領の印刷されたページ番号（第8回の改訂履歴のページがなくなり、番号が1つずつ前にずれる）
+    assert load(company.texts(SHORYOKUKA_CASE) / "要領9" / "ページの対応.json")["ページのずれ"] == 0
+
+    # 公募要領だけを取り直しても、案内は一覧の全体で決まる（消えない）。前の回の資料もそのまま
+    only = dict(data9, 資料=[d for d in local_list(site, SHORYOKUKA_9_LIST)["資料"] if d["id"] == "要領9"])
+    r = company.fetch(only)
+    assert r.returncode == 0, out(r)
+    assert PARTIAL_NOTICE in out(r)
+    again = company.doc_list(SHORYOKUKA_CASE)
+    assert [e["id"] for e in again["資料"]] == ids
+    assert [e["id"] for e in again["前の回の資料"]] == ["要領8", "スケジュール"]
+
+
 def test_same_round_and_printed_page_offsets(tmp_path, site) -> None:
-    """持続化 第20回は、回が同じなので直近回とは示さない。印刷された番号のずれは DESIGN 9章の注のとおり。"""
+    """持続化 第20回は、回が同じなので「第20回の資料ではなく」とは示さない。第19回版の資料は、資料を並べて示す。
+    印刷された番号のずれは DESIGN 9章の注のとおり。"""
     company = Company(tmp_path)
     data = local_list(site, JIZOKUKA_LIST)
     r = company.fetch(data)
     text = out(r)
     assert r.returncode == 0, text
-    assert "直近回" not in text
-    assert "「申請システム操作手引き」は、第19回の資料に基づいています" in text
+    assert "第20回の資料ではなく" not in text
+    assert ("第20回の資料のうち、第20回のものがまだない資料（「申請システム操作手引き」・「補助事業の手引き」）は、"
+            "直近回である第19回の資料に基づいています") in text
     listed = company.doc_list(JIZOKUKA_CASE)
     assert listed["直近回の資料に基づく"] is False
+    assert "前の回の資料" not in listed
     validate_doc_list(listed["資料"])
     files = official_files(company, JIZOKUKA_CASE)
     assert len(files) == len(data["資料"])

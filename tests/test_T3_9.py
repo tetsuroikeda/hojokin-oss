@@ -48,7 +48,7 @@ DATA_REL = Path("記録") / "制度データ" / "テスト補助金_第3回.json
 RECORD_REL = Path("記録") / "会社の記録.json"
 OUT_REL = Path("案件") / CASE / "概要と流れ.docx"
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-NOTICE = "第4回の資料はまだ公表されていないため、直近回である第3回の資料に基づいています。"
+NOTICE = "第4回の資料ではなく、直近回である第3回の資料に基づいています。"  # lib/official_docs.round_notices の文
 
 SEIDO_SCHEMA = json.loads((REPO_ROOT / "schema" / "制度データ.schema.json").read_text(encoding="utf-8"))
 RECORD_SCHEMA = json.loads((REPO_ROOT / "schema" / "会社の記録.schema.json").read_text(encoding="utf-8"))
