@@ -23,6 +23,9 @@
      空は null・空白だけの文字・[]・{}・中の値がどれも空のもの。読み取り役が「読み取れない」にせず空の値を返したときに、
      確認済みの空欄のまま社長に渡さないため）。
    - 出典のない値の数。読み取れないでない値のうち、出典か根拠の文がないもの、出典の資料が「資料」にないもの。
+   - 名前の参照（M2c の直し・波2）。書類の「手続き」が手続きの段階の id にないもの、手続きの段階の「様式」が様式の名前にないものを、
+     当たらない名前ごとに数え、足りないに数える（仮）。「1_申請」のようなフォルダの名前を書いた書類は、段階の id で書類を引く道具
+     （概要と流れ.docx の必要書類、段階ごとの書類の一覧）から落ちるため。読み直させるときに渡せるよう、当たる名前の一覧も出す。
 3. 段階のフォルダを作る（make_stage_folders）
    - 制度データの「手続きの段階」のうち「フォルダ」のある段階から作る（DESIGN 4.5）。中は「申請書」と「添付する書類」。
    - はじめは、いちばん前の段階（申請）だけを作る。採択後に次の段階へ進むときは、その段階の名前を渡して作る（M10）（仮）。
@@ -101,10 +104,13 @@ class CheckResult:
     unreadable_items: List[str] = field(default_factory=list)
     unread_listed: int = 0       # 「読み取れなかった項目」の件数
     unread_with_question: int = 0  # そのうち、問い合わせ文の案があるもの
+    bad_refs: List[str] = field(default_factory=list)   # 手続きの段階の id・様式の名前に当たらない名前（足りないに数える）
+    ref_known: List[str] = field(default_factory=list)  # そのときに当たる名前の一覧（読み直させるときに渡す）
 
     @property
     def ok(self) -> bool:
-        return not self.schema_errors and all(i.ok for i in self.important) and not self.unsourced
+        return (not self.schema_errors and all(i.ok for i in self.important) and not self.unsourced
+                and not self.bad_refs)
 
 
 # ---- 場所 ----
@@ -441,8 +447,53 @@ def _source_problems(item: Dict, doc_ids: set) -> List[str]:
     return problems
 
 
+def _names(items: Any, key: str) -> List[str]:
+    out: List[str] = []
+    for item in items if isinstance(items, list) else []:
+        if isinstance(item, dict) and isinstance(item.get(key), str) and item[key] not in out:
+            out.append(item[key])
+    return out
+
+
+def _known_line(what: str, names: List[str]) -> str:
+    return f"{what}：{'・'.join(names) if names else '（ありません）'}"
+
+
+def reference_problems(data: Dict) -> Tuple[List[str], List[str]]:
+    """名前の参照を照らす。返すのは（当たらない名前の一覧、当たる名前の一覧（当たらなかった種類の分だけ））。
+
+    - 書類の「手続き」は、手続きの段階の id（スキーマの説明「使う手続きの段階の id」）。
+    - 手続きの段階の「様式」は、制度データの「様式」の名前。
+    当たらない名前1つごとに1件。
+    """
+    problems: List[str] = []
+    known: List[str] = []
+    stages = data.get("手続きの段階") if isinstance(data.get("手続きの段階"), list) else []
+    stage_ids = _names(stages, "id")
+    found = 0
+    for i, doc in enumerate(data.get("書類") if isinstance(data.get("書類"), list) else []):
+        names = doc.get("手続き") if isinstance(doc, dict) else None
+        for name in names if isinstance(names, list) else []:
+            if name not in stage_ids:
+                problems.append(f"{urakadori.readable(['書類', i, '手続き'], data)}「{name}」が、手続きの段階の id にありません")
+                found += 1
+    if found:
+        known.append(_known_line("手続きの段階の id", stage_ids))
+    form_names = _names(data.get("様式"), "名前")
+    found = 0
+    for i, stage in enumerate(stages):
+        names = stage.get("様式") if isinstance(stage, dict) else None
+        for name in names if isinstance(names, list) else []:
+            if name not in form_names:
+                problems.append(f"{urakadori.readable(['手続きの段階', i, '様式'], data)}「{name}」が、様式の名前にありません")
+                found += 1
+    if found:
+        known.append(_known_line("様式の名前", form_names))
+    return problems, known
+
+
 def check(data: Any) -> CheckResult:
-    """制度データの全体を確かめる（形、重要な項目、出典のない値）。"""
+    """制度データの全体を確かめる（形、重要な項目、出典のない値、名前の参照）。"""
     result = CheckResult()
     if not isinstance(data, dict):
         result.schema_errors = ["（全体）：いちばん外側を { } の形にしてください"]
@@ -480,6 +531,8 @@ def check(data: Any) -> CheckResult:
             if isinstance(item, dict):
                 for p in _source_problems(item, doc_ids):
                     result.unsourced.append(f"資料どうしの食い違い「{entry.get('項目')}」の{j + 1}つ目の値：{p}")
+
+    result.bad_refs, result.ref_known = reference_problems(data)
 
     listed = [u for u in data.get("読み取れなかった項目") or [] if isinstance(u, dict)]
     result.unread_listed = len(listed)
@@ -565,6 +618,11 @@ def check_report(result: CheckResult, rel: str) -> str:
                  f"要確認のうち、裏取りで外れた値 {result.downgraded}")
     lines.append(f"- 出典のない値：{len(result.unsourced)}")
     lines += [f"  - {u}" for u in result.unsourced[:20]]
+    lines.append(f"- 手続きの段階・様式に当たらない名前：{len(result.bad_refs)}")
+    lines += [f"  - {u}" for u in result.bad_refs[:30]]
+    if len(result.bad_refs) > 30:
+        lines.append(f"  - ほかに {len(result.bad_refs) - 30} か所")
+    lines += [f"  - 当たる名前（{k}）" for k in result.ref_known]
     lines += ["", "重要な項目（締切・補助上限・補助率・数値の要件・必須書類・補助の対象にならない経費）：", "",
               "| 項目 | 件数 | 値 | 値か要確認で埋まった値 | 埋まっていない値 |", "|---|---|---|---|---|"]
     for item in result.important:
@@ -580,7 +638,8 @@ def check_report(result: CheckResult, rel: str) -> str:
     lines += ["", f"読み取れなかった項目：{result.unread_listed}（問い合わせ文の案があるもの {result.unread_with_question}）"]
     lines.append("")
     if result.ok:
-        lines.append("結果：形が合い、重要な項目はすべて値か「要確認」で埋まり、出典のない値は0件です。")
+        lines.append("結果：形が合い、重要な項目はすべて値か「要確認」で埋まり、出典のない値は0件です。"
+                     "書類の手続きと段階の様式は、どれも手続きの段階の id・様式の名前に当たります。")
     else:
         lines.append("結果：まだ足りないところがあります（上の一覧）。")
     return "\n".join(lines) + "\n"
@@ -610,5 +669,6 @@ def merge_report(case: str, merged: MergeResult, verified: urakadori.Result, rel
 
 __all__ = [
     "IMPORTANT", "CheckResult", "DataMissing", "ImportantItem", "MergeError", "MergeResult", "check", "check_report",
-    "data_round", "load_data", "make_stage_folders", "merge", "merge_and_save", "merge_report", "seido_path",
+    "data_round", "load_data", "make_stage_folders", "merge", "merge_and_save", "merge_report", "reference_problems",
+    "seido_path",
 ]
