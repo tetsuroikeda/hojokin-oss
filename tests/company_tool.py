@@ -130,7 +130,9 @@ repo = Repo(sys.argv[1])
 rows = []
 for entry in repo.get_walker():
     c = entry.commit
-    files = sorted({(ch.new.path or ch.old.path).decode("utf-8") for ch in entry.changes()})
+    # 消したものは new が None になる（フォルダを別名に置き換えたときなど）
+    files = sorted({((ch.new.path if ch.new is not None else None) or ch.old.path).decode("utf-8")
+                    for ch in entry.changes()})
     rows.append({"author": c.author.decode("utf-8"), "committer": c.committer.decode("utf-8"),
                  "message": c.message.decode("utf-8"), "files": files})
 print(json.dumps(rows, ensure_ascii=False))

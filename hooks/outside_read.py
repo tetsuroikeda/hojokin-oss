@@ -17,6 +17,7 @@
 - 比べる前に、名前の文字の形を NFC（濁点の付いた1文字の形）にそろえる。macOS のファイルの仕組みは
   NFD（濁点が分かれた形。Finder で作った名前など。実験 E5）と NFC を同じものとして開くが、
   os.path.realpath は形をそろえないため、そろえないと会社のフォルダの中の書類まで拒んでしまう。
+  別名のたどり方と比べ方は、ほかの道具と同じ共通の関数（lib/places.py）を使う。
 
 hooks.json の matcher で、読む道具だけを受け取る（Python が動かないときは拒まない。設定が止める）。
 """
@@ -24,9 +25,10 @@ hooks.json の matcher で、読む道具だけを受け取る（Python が動�
 from __future__ import annotations
 
 import os
-import unicodedata
 from pathlib import Path
 from typing import List, Optional
+
+from lib import places
 
 # 道具の名前と、場所を受け取る欄
 READ_TOOLS = {
@@ -50,17 +52,13 @@ def _deny(reason: str) -> dict:
 
 
 def real_path(path) -> Path:
-    """別名（シンボリックリンク）と「..」をたどり、名前の文字の形を NFC にそろえた場所。"""
-    return Path(unicodedata.normalize("NFC", os.path.realpath(str(path))))
+    """別名（シンボリックリンク）と「..」をたどり、名前の文字の形を NFC にそろえた場所（lib/places.py）。"""
+    return places.real(path)
 
 
 def is_inside(path: Path, folder: Path) -> bool:
-    """path が folder か、その下か（どちらも real_path を通した場所で渡す）。"""
-    try:
-        path.relative_to(folder)
-        return True
-    except ValueError:
-        return False
+    """path が folder か、その下か（どちらも real_path を通した場所で渡す。lib/places.py）。"""
+    return places.is_under(path, folder)
 
 
 def tool_cwd(data: dict, folder: Path) -> Path:

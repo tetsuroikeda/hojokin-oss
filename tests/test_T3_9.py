@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import shutil
 import subprocess
 import unicodedata
@@ -960,6 +961,68 @@ def test_refuses_input_file_outside_company_folder(company: Company) -> None:
         assert "外のファイルは読みません" in out, (where, out)
         assert SECRET not in out and "秘密の欄" not in out, (where, out)
         assert company.listing() == before and not company.out.exists(), where
+
+
+def tree(folder: Path) -> dict:
+    """フォルダの中のすべて（場所 → 中身。フォルダは None）。別名はたどらない。"""
+    found = {}
+    for dirpath, dirnames, filenames in os.walk(str(folder)):
+        for name in dirnames + filenames:
+            path = Path(dirpath) / name
+            rel = str(path.relative_to(folder))
+            found[rel] = None if path.is_dir() or path.is_symlink() else path.read_bytes()
+    return found
+
+
+def all_docx_text(folder: Path) -> str:
+    """フォルダの中の Word（別名の先も含む）の文字をすべてつないだもの。"""
+    texts = []
+    for dirpath, _dirnames, filenames in os.walk(str(folder), followlinks=True):
+        for name in filenames:
+            if name.endswith(".docx"):
+                texts.append(Word(Path(dirpath) / name).text)
+    return "\n".join(texts)
+
+
+@pytest.mark.parametrize("where", ["案件のフォルダ", "案件/", "概要と流れ.docx"])
+def test_case_folder_link_to_outside_writes_nothing_outside(company: Company, where: str) -> None:
+    """案件のフォルダ（か、その上の 案件/、書き出す先のファイル）が外への別名なら、外に何も書かない。"""
+    outside = company.env.folder("外のフォルダ")
+    if where == "概要と流れ.docx":
+        target = outside / "外の書類.docx"
+        target.write_bytes(b"PK outside")
+        company.out.symlink_to(target)
+    else:
+        place = company.folder / "案件" / CASE if where == "案件のフォルダ" else company.folder / "案件"
+        moved = outside / "移した中身"
+        place.rename(moved)
+        place.symlink_to(moved, target_is_directory=True)
+    outside_before = tree(outside)
+    before = tree(company.folder)
+    out = refused(company.run(INPUT))
+    assert "会社のフォルダの外" in out, out
+    # 外には何もできない（書きかけの一時ファイルも）。会社のフォルダも変わらない
+    assert tree(outside) == outside_before
+    assert tree(company.folder) == before
+    assert not company.out.exists() or company.out.is_symlink()
+
+
+def test_company_record_link_to_outside_is_not_read(company: Company) -> None:
+    """会社の記録が外のファイルへの別名なら、外を読まない（外の中身は、出力にも Word にも出ない）。"""
+    outside = company.env.folder("外のフォルダ")
+    data = record()
+    for item in data["項目"]:
+        item["名前"] = "外のファイルの名前"
+    secret = outside / "会社の記録.json"
+    secret.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    (company.folder / RECORD_REL).unlink()
+    (company.folder / RECORD_REL).symlink_to(secret)
+    before = tree(company.folder)
+    out = refused(company.run(INPUT))
+    assert "会社のフォルダの外" in out, out
+    assert "外のファイルの名前" not in out
+    assert tree(company.folder) == before and not company.out.exists()
+    assert "外のファイルの名前" not in all_docx_text(company.folder) + all_docx_text(outside)
 
 
 def test_refuses_input_file_when_not_company_folder(company: Company) -> None:

@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from lib import case_folder, company_init, dates, history, view_only
+from lib import case_folder, company_init, dates, history, places, view_only
 
 RECORD_FILE = "記録/提出版.json"
 FINANCIAL_MODEL = "財務モデル.xlsx"
@@ -217,31 +217,9 @@ def _left_by_scene(folder: Path, result: history.Result, case: str, stage: str) 
 
 
 def _actual(folder: Path, rel: str) -> Optional[str]:
-    """会社のフォルダからの場所（NFC）の、実際の場所（名前が NFD のこともある）。なければ None。"""
-    current = str(folder)
-    for part in rel.split("/"):
-        try:
-            names = os.listdir(current)
-        except OSError:
-            return None
-        match = next((n for n in names if nfc(n) == part), None)
-        if match is None:
-            return None
-        current = os.path.join(current, match)
-    return current
-
-
-def _link_on_the_way(folder: Path, rel: str) -> Optional[str]:
-    """会社のフォルダからの場所（NFC）までの途中のフォルダか、その場所そのものが別名なら、その別名の場所。"""
-    parts = rel.split("/")
-    for i in range(1, len(parts) + 1):
-        prefix = "/".join(parts[:i])
-        actual = _actual(folder, prefix)
-        if actual is None:
-            return None
-        if os.path.islink(actual):
-            return prefix
-    return None
+    """会社のフォルダからの場所（NFC）の、実際の場所（名前が NFD のこともある）。なければ None（lib/places.py）。"""
+    found = places.actual(folder, rel)
+    return None if found is None else str(found)
 
 
 def _outside_history(folder: Path, case: str, stage: str, recorded: Set[str]) -> Dict[str, str]:
@@ -280,7 +258,7 @@ def _outside_history(folder: Path, case: str, stage: str, recorded: Set[str]) ->
         if where and not isinstance(error, (FileNotFoundError, NotADirectoryError)):
             found[rel_of(where) + "/"] = UNREADABLE_DIR
 
-    link = _link_on_the_way(folder, stage_dir(case, stage))
+    link = places.first_link(folder, stage_dir(case, stage))
     if link is not None:
         found[link] = LINK
     start = None if link is not None else _actual(folder, stage_dir(case, stage))

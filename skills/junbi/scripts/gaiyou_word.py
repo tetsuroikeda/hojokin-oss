@@ -7,7 +7,8 @@
   （--input - も標準入力。--input <ファイル> は、会社のフォルダの中のファイルだけ読む。外のファイルは読まずに断る。
    相対の場所は会社のフォルダから解き、別名と「..」をたどった後で比べる。DESIGN 5章）
 
-- 書くのは `案件/<案件>/概要と流れ.docx` だけ。ほかのファイルは作らない。
+- 書くのは `案件/<案件>/概要と流れ.docx` だけ。ほかのファイルは作らない。案件のフォルダや書き出す先、会社の記録が、
+  別名（シンボリックリンク）などで会社のフォルダの外（書き出す先は `案件/` の外）を指すときは、読まずに・書かずに断る。
 - 数字・期限・一覧は、制度データ（記録/制度データ/）と会社の記録（記録/会社の記録.json）から道具が入れる。
   補助額の見込みも道具が計算する。渡す JSON には、説明の文と判定、区分・特例の名前、会社の記録の id だけを書く。
 - --case：案件の名前（`記録/資料の本文/` の下のフォルダの名前）。案件が1つなら、渡さなくてよい。
@@ -16,7 +17,7 @@
   0 書いた。
   2 書かなかった（会社のフォルダでない、案件を決められない、制度データがない・形が合わない、
     渡した JSON の形や名前が制度データ・会社の記録と合わない、--input のファイルが会社のフォルダの外にある、
-    Word を正しく作れない）。前の概要と流れ.docx はそのまま残る。
+    案件のフォルダ・書き出す先・会社の記録が会社のフォルダの外を指す、Word を正しく作れない）。前の概要と流れ.docx はそのまま残る。
   3 補助プログラムが動かない、または途中で止まった。
 """
 
@@ -27,8 +28,6 @@ sys.dont_write_bytecode = True
 
 import argparse  # noqa: E402
 import json  # noqa: E402
-import os  # noqa: E402
-import unicodedata  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
@@ -55,31 +54,20 @@ class NotCompanyFolder(ValueError):
     """--input にファイルを渡したが、--folder が会社のフォルダでない（中を確かめられないので読まない）。"""
 
 
-def real(path: Path) -> Path:
-    """別名（シンボリックリンク）と「..」をたどり、名前の文字の形を NFC にそろえた場所（DESIGN 5章 (b)）。"""
-    return Path(unicodedata.normalize("NFC", os.path.realpath(str(path))))
+def read_input(where, folder: Path, company, places) -> str:
+    """渡された JSON の文字。ファイルは、会社のフォルダの中のものだけを読む（外のものは開かずに OutsideInput）。
 
-
-def inside(path: Path, folder: Path) -> bool:
-    try:
-        real(path).relative_to(real(folder))
-        return True
-    except ValueError:
-        return False
-
-
-def read_input(where, folder: Path, company) -> str:
-    """渡された JSON の文字。ファイルは、会社のフォルダの中のものだけを読む（外のものは開かずに OutsideInput）。"""
+    相対の場所は会社のフォルダから解き、別名と「..」をたどった後に比べる（lib/places.py。DESIGN 5章 (b)）。
+    """
     if not where or where == "-":
         return sys.stdin.read()
     path = Path(where).expanduser()
-    if not path.is_absolute():
-        path = folder / path
     # 会社のフォルダでない所のファイルも、外のファイルと同じく開かない
     if not company.is_company_folder(folder):
         raise NotCompanyFolder(where)
-    if not inside(path, folder):
+    if not places.is_inside(folder, path):
         raise OutsideInput(where)
+    path = path if path.is_absolute() else folder / path
     return path.read_text(encoding="utf-8")
 
 
@@ -115,7 +103,7 @@ def main(argv) -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     args = parse(argv)
     try:
-        from lib import company, gaiyou
+        from lib import company, gaiyou, places
     except Exception as e:  # 同梱のファイルが欠けた・壊れた、Python が古いなど
         print(f"{NOT_DONE}補助プログラムを読み込めませんでした（{type(e).__name__}: {e}）。"
               "プラグインを入れ直してから、もう一度試してください。")
@@ -123,7 +111,7 @@ def main(argv) -> int:
 
     folder = Path(args.folder).expanduser() if args.folder else company.project_dir()
     try:
-        data = json.loads(read_input(args.input, folder, company))
+        data = json.loads(read_input(args.input, folder, company, places))
     except OutsideInput:
         print(f"{NOT_DONE}説明の文と判定のファイル（{args.input}）が、会社のフォルダ（{folder}）の外にあります。"
               "外のファイルは読みません。JSON を、標準入力（--input - か、--input なし）で渡してください。")

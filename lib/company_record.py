@@ -26,7 +26,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from lib import dates, schema_check
+from lib import dates, places, schema_check
 
 RECORDS_DIR = "記録"
 RECORD_FILE = f"{RECORDS_DIR}/会社の記録.json"
@@ -98,11 +98,13 @@ def empty() -> dict:
 
 
 def _check_place(folder: Path) -> None:
-    """記録の置き場が、会社のフォルダの中の本物のファイルか（別名で外を指していないか）を確かめる。"""
-    for path, what in ((Path(folder) / RECORDS_DIR, f"{RECORDS_DIR}/"), (record_path(folder), RECORD_FILE)):
-        if path.is_symlink():
-            raise RecordError(f"{what} が別名（シンボリックリンク）になっています。会社の記録は、会社のフォルダの中に"
-                              "本物のファイルとして置きます。別名を消してから、もう一度試してください")
+    """記録の置き場が、会社のフォルダの中の本物のファイルか（別名で外を指していないか）を確かめる（lib/places.py）。"""
+    try:
+        places.no_link_on_the_way(folder, RECORD_FILE)
+    except places.PlaceError as e:
+        what = RECORD_FILE if e.link == RECORD_FILE else f"{e.link}/"
+        raise RecordError(f"{what} が別名（シンボリックリンク）になっています。会社の記録は、会社のフォルダの中に"
+                          "本物のファイルとして置きます。別名を消してから、もう一度試してください") from e
     path = record_path(folder)
     if path.exists() and not path.is_file():
         raise RecordError(f"{RECORD_FILE} がファイルではありません")
@@ -196,15 +198,17 @@ def inside_path(folder: Path, raw: str) -> str:
     if not text:
         raise RecordError("出典の書類（--file）を指してください")
     given = Path(text).expanduser()
-    base = unicodedata.normalize("NFC", os.path.realpath(str(folder)))
-    target = unicodedata.normalize("NFC", os.path.realpath(str(given if given.is_absolute() else Path(folder) / given)))
-    if not target.startswith(base.rstrip(os.sep) + os.sep):
+    try:
+        relative = places.relative_inside(folder, given)
+    except places.PlaceError:
+        relative = "."
+    if relative == ".":  # 外か、会社のフォルダそのもの
         raise RecordError(f"出典の書類（{raw}）が会社のフォルダの外にあります。外のファイルは、取り込みの道具で"
                           "会社のフォルダに写してから指してください")
-    rel = Path(target[len(base.rstrip(os.sep)) + 1:])
+    rel = Path(relative)
     if any(part.startswith(".") for part in rel.parts):
         raise RecordError(f"出典の書類（{raw}）が、ツールの置き場（「.」で始まるフォルダ）の中にあります")
-    if not Path(target).is_file():
+    if not (places.real(folder) / rel).is_file():
         raise RecordError(f"出典の書類（{raw}）が会社のフォルダにありません。場所を確かめてください")
     return rel.as_posix()
 

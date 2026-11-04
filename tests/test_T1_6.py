@@ -420,9 +420,34 @@ def test_outside_company_folder_writes_nothing(tmp_path) -> None:
 
 
 def test_input_file_option(tmp_path) -> None:
+    """--input のファイルは、会社のフォルダの中のものを読む（相対の場所は会社のフォルダから解く）。"""
     folder = make_company(tmp_path)
-    source = tmp_path / "候補.json"
+    source = folder / "候補.json"
     source.write_text(json.dumps(SAMPLE, ensure_ascii=False), encoding="utf-8")
-    r = run_tool(folder, "", "--input", str(source))
-    assert r.returncode == 0, r.stdout
-    assert_word_matches(folder / "補助金の候補.docx", SAMPLE)
+    for where in (str(source), "候補.json"):
+        (folder / "補助金の候補.docx").unlink(missing_ok=True)
+        r = run_tool(folder, "", "--input", where)
+        assert r.returncode == 0, r.stdout
+        assert_word_matches(folder / "補助金の候補.docx", SAMPLE)
+
+
+def test_input_file_outside_company_folder_is_not_read(tmp_path) -> None:
+    """--input のファイルが会社のフォルダの外（外の絶対の場所、../、外を指す別名）なら、読まずに断る
+    （DESIGN 5章「会社のフォルダの外に書かない・外を読まない」。lib/places.py）。"""
+    folder = make_company(tmp_path)
+    secret = tmp_path / "候補.json"
+    secret.write_text(json.dumps(dict(SAMPLE, 会社名="外のファイルの会社名"), ensure_ascii=False), encoding="utf-8")
+    (folder / "外へのリンク.json").symlink_to(secret)
+    for where in (str(secret), "../候補.json", "外へのリンク.json", str(folder / "外へのリンク.json")):
+        # 標準入力には正しい一覧を流す（--input を無視して標準入力を読めば、書いてしまうので分かる）
+        r = run_tool(folder, SAMPLE, "--input", where)
+        assert r.returncode == 2, (where, r.stdout)
+        assert "外のファイルは読みません" in r.stdout, (where, r.stdout)
+        assert "外のファイルの会社名" not in r.stdout
+        assert not (folder / "補助金の候補.docx").exists(), where
+    # 会社のフォルダでない所では、ファイルを読まずに断る
+    other = tmp_path / "ふつうのフォルダ"
+    other.mkdir()
+    r = run_tool(other, SAMPLE, "--input", str(secret))
+    assert r.returncode == 2 and "会社のフォルダではありません" in r.stdout and "読んでいません" in r.stdout
+    assert list(other.iterdir()) == []
