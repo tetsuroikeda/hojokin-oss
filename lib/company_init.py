@@ -14,7 +14,9 @@
   残すと、hooks を止める設定や、原本を履歴から外す行などが、気づかないうちに残るため。
   .claude/settings.local.json は、「次から聞かない」を選ぶと Claude Code が作るので、守りを弱める項目があるときだけ断る。
 - 同期されるフォルダ（Google ドライブ、iCloud Drive、Dropbox など）は、版の持ち方を経営者に選んでもらうために断る。
-  ここに Git の形で作ると、版の履歴ごとクラウドに上がる。同期されるフォルダの形（版をファイルで残す）は M0c で作る。
+  ここに Git の形で作ると、版の履歴ごとクラウドに上がる。経営者が同期されるフォルダの形（版をファイルで残す形。
+  lib/history_files.py。TASKS M0c）を選んだときは、init(folder, form=FILES) で、.git を作らずに `記録/版/` を用意する
+  （同期されるフォルダでも断らない）。経営者の選び方を道具の引数で受けるのは、init_company.py の後のタスク。
   すでに Git の形の会社のフォルダ（目印と .git がある）が後から移されていたときも、何も書き足さずに断り、
   同期されない場所へフォルダごと移すよう案内する（経営者が同期の形を選んでいないため。扱いは作者の決定待ち）。
 - 送り先のある .git は、目印があっても断る（T0-8）。
@@ -33,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from lib import common_rules, company, sync_folder
+from lib import common_rules, company, history_form, sync_folder
 
 INBOX_DIR = "入れ口"
 ORIGINALS_DIR = "原本"
@@ -57,6 +59,7 @@ DENY_RULES = (
     f"Edit(/{company.MARKER_DIR}/**)",
     "Edit(/.claude/**)",
     "Edit(/.git/**)",
+    f"Edit(/{history_form.STORE_DIR}/**)",
     "Edit(/**/*.docx)",
     "Edit(/**/*.doc)",
     "Edit(/**/*.xlsx)",
@@ -107,6 +110,7 @@ class InitResult:
     added: List[str] = field(default_factory=list)
     existing_files: int = 0
     commits: List[str] = field(default_factory=list)
+    form: str = history_form.GIT  # 版の持ち方（GIT・FILES。lib/history_form.py）
 
 
 # ---- 設定と .gitignore の組み立て（標準のライブラリだけ） ----
@@ -325,11 +329,88 @@ def _write_text(path: Path, text: str, undo: _Undo, added: List[str], name: str)
     added.append(name)
 
 
-def init(folder: Path) -> InitResult:
-    """会社のフォルダを用意する。できないときは Refused（何も書いていない）。"""
+FILES_EXISTING_REASON = "会社のフォルダにする前からあったファイル"
+FILES_INIT_REASON = "会社のフォルダを用意した"
+
+
+def _init_files(folder: Path) -> InitResult:
+    """版のファイルの形（同期されるフォルダの形。TASKS M0c）で会社のフォルダを用意する。.git は作らない。
+
+    同期されるフォルダでも断らない（経営者がこの形を選んだため）。ホーム・ディスクの根、前からある .git などは、
+    Git の形と同じく断る。前からあったファイルは「社長」、用意したものは「ツール」の版にする。
+    """
+    from lib import history, history_files  # 同梱の dulwich を sys.path に入れるので、使うときだけ読み込む
+
+    reasons = check(folder, remotes_of=_remotes_of)
+    if (folder / ".git").exists() and company.is_company_folder(folder):
+        reasons.append("このフォルダは、すでに版の履歴（.git）を持つ会社のフォルダです。版をファイルで残す形には変えません。")
+    if reasons:
+        raise Refused(reasons)
+
+    result = InitResult(folder=folder, already=company.is_company_folder(folder), form=history_form.FILES)
+    undo = _Undo()
+    try:
+        gitignore = folder / GITIGNORE
+        current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+        _write_text(gitignore, merged_gitignore(current), undo, result.added, GITIGNORE)
+        prepared = (GITIGNORE, CLAUDE_SETTINGS, MARKER_SETTINGS)
+        fresh = not history_form.is_files(folder)
+        existing: List[str] = []
+        if fresh:
+            # 用意したものを書く前に、前からあったファイルを数える（.gitignore にあるものは除く）
+            found, _unreadable = history._work_files(folder, None, (history_form.STORE_DIR,))
+            existing = sorted(p for p in found if p not in prepared)
+
+        for name in FOLDERS:
+            _make_dir(folder / name, undo, result.added, name)
+        claude_dir = folder / ".claude"
+        _make_dir(claude_dir, undo, result.added, ".claude")
+        settings_file = folder / CLAUDE_SETTINGS
+        settings = merged_settings(_read_settings(settings_file))
+        _write_text(settings_file, json.dumps(settings, ensure_ascii=False, indent=2) + "\n", undo, result.added,
+                    CLAUDE_SETTINGS)
+        marker = folder / company.MARKER_DIR
+        if not marker.is_dir():
+            marker.mkdir()
+            undo.tree(marker)
+            result.added.append(company.MARKER_DIR + "/（会社のフォルダの目印）")
+        marker_settings = folder / MARKER_SETTINGS
+        if not marker_settings.exists():
+            _write_text(marker_settings, "{}\n", undo, result.added, MARKER_SETTINGS)
+
+        # 版のファイルの置き場は、目印の後に作る（置き場ができると、hook が版を残し始めるため）
+        if fresh:
+            undo.tree(folder / history_form.STORE_DIR)
+        if history_files.init_store(folder):
+            result.added.append(f"{history_form.STORE_DIR}/（版のファイル。版を1つずつファイルで残す形）")
+        if existing:
+            done = history_files.record_scene(folder, history.OWNER, FILES_EXISTING_REASON, only=existing)
+            if done.recorded:
+                result.existing_files = len(done.recorded)
+                result.commits.append(f"前からあったファイル {len(done.recorded)} 件（社長）")
+        done = history_files.record_scene(folder, history.TOOL, FILES_INIT_REASON, only=list(prepared))
+        if done.recorded:
+            result.commits.append("用意したもの（ツール）")
+    except BaseException:
+        undo.run()
+        raise
+    return result
+
+
+def init(folder: Path, form: Optional[str] = None) -> InitResult:
+    """会社のフォルダを用意する。できないときは Refused（何も書いていない）。
+
+    form は版の持ち方（lib/history_form.py の GIT・FILES）。省くと、版のファイルの形の会社のフォルダ（.git がなく
+    `記録/版/` がある）なら FILES で補い、ほかは GIT。
+    """
+    folder = folder.resolve()
+    if form is None:
+        form = history_form.FILES if (company.is_company_folder(folder) and history_form.is_files(folder)) \
+            else history_form.GIT
+    if form == history_form.FILES:
+        return _init_files(folder)
     from lib import history  # 同梱の dulwich を sys.path に入れるので、使うときだけ読み込む
 
-    folder = folder.resolve()
     synced = sync_folder.synced(folder) if folder.is_dir() else None
     reasons = check(folder, remotes_of=_remotes_of, synced=synced)
     if reasons:
@@ -417,6 +498,29 @@ def report(result: InitResult) -> str:
             lines.append("足りなかったものを補いました：" + "、".join(result.added))
         else:
             lines.append("足りないものはありませんでした。")
+    elif result.form == history_form.FILES:
+        kinds = "、".join(ORIGINAL_KINDS)
+        lines += [
+            f"会社のフォルダを用意しました（{result.folder}）。版は1つずつファイルで残す形（同期されるフォルダの形）です。",
+            "",
+            "用意したもの：",
+            f"- 目印：{company.MARKER_DIR}/",
+            f"- フォルダ：{INBOX_DIR}/、{ORIGINALS_DIR}/（{kinds} の6つの区分）、{CASES_DIR}/、{RECORDS_DIR}/",
+            f"- 設定：{CLAUDE_SETTINGS}（{SETTINGS_SUMMARY}）。"
+            "Claude Code をこのフォルダで開いていれば、この設定は今のセッションからすぐ効きます。",
+            f"- 版の履歴：{history_form.STORE_DIR}/（版を1つずつ丸ごとのファイルで残す。Git は使わない）。"
+            + ("残した版：" + "、".join(result.commits) if result.commits else ""),
+            "",
+            "社長に伝えること：",
+            f"- 受け取った書類は「{INBOX_DIR}」フォルダに入れてください（ほかの場所でもかまいません）。"
+            f"ツールが「{ORIGINALS_DIR}」に整理します。",
+            "- 書類と版のファイルは、選んでいただいた同期先（クラウド）にも上がります。"
+            "同じ会社のフォルダを、2台のパソコンから同時に使わないでください（壊れやすくなります）。",
+            f"- 前の版は {history_form.STORE_DIR}/ に読み取り専用で残り、Finder でも見られます。"
+            "見たいときや戻したいときは、頼んでください。",
+            "- デスクトップアプリのモードの選択で「auto」を選ぶと、会社のフォルダの中の読み取りと書き込みで、"
+            "確認を求められなくなります。",
+        ]
     else:
         kinds = "、".join(ORIGINAL_KINDS)
         lines += [

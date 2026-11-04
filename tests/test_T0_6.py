@@ -12,6 +12,10 @@ SPEC：申請書を3回直し、「提出した」と伝える。
 - 前の版も、同じく `見るだけ/` に出せる。
 
 中身は、Word・Excel・PDF の形に見立てた、文字でないバイトを含む中身にする（1バイトでも違えば分かるように）。
+
+版の持ち方は2つ（DESIGN 10章。TASKS M0c）。fixture の company で、Git の形と、版のファイルの形（同期されるフォルダの
+形。版を丸ごとのファイルとして 記録/版/<書類>/ に残す）の両方で、同じ合格ラインを確かめる。提出版の記録は、Git の形は
+Git の印（タグ）、版のファイルの形は版の一覧（ファイルごとの版のファイル。印は空）。
 """
 
 from __future__ import annotations
@@ -49,9 +53,10 @@ def blob(kind: str, n: int) -> bytes:
     return heads[kind] + f"{kind} の {n} 版目".encode("utf-8") + b"\r\n\x00\xff\xfe" + bytes([n]) * 64
 
 
-@pytest.fixture
-def company(tmp_path) -> vt.Company:
-    return vt.Company(tmp_path)
+@pytest.fixture(params=vt.FORMS)
+def company(request, tmp_path) -> vt.Company:
+    """Git の形と、版のファイルの形（同期されるフォルダの形）の両方。"""
+    return vt.Company(tmp_path, form=request.param)
 
 
 def run_tool(company: vt.Company, command: str, *args: str, folder: Path = None) -> subprocess.CompletedProcess:
@@ -72,11 +77,11 @@ def refused(r: subprocess.CompletedProcess) -> str:
 
 
 def working_files(folder: Path) -> dict:
-    """作業のファイル（会社のフォルダからの場所 → 中身）。版の履歴とその場限りの置き場は除く。"""
+    """作業のファイル（会社のフォルダからの場所 → 中身）。版の履歴（.git、版のファイルの置き場）とその場限りの置き場は除く。"""
     found = {}
     for path in folder.rglob("*"):
         rel = path.relative_to(folder).as_posix()
-        if rel.startswith((".git/", ".hojokin/一時/")) or not path.is_file():
+        if rel.startswith((".git/", ".hojokin/一時/", vt.STORE + "/")) or not path.is_file():
             continue
         found[rel] = path.read_bytes()
     return found
@@ -112,11 +117,35 @@ def submissions(company: vt.Company) -> list:
 
 
 def tags(company: vt.Company) -> dict:
+    """Git の印（タグ）の一覧。版のファイルの形には Git の印がない（.git を作らない）ので、いつも空。"""
+    if company.form == vt.FILES:
+        assert not (company.folder / ".git").exists()
+        return {}
     code = ("from dulwich.repo import Repo\n"
             "repo = Repo(sys.argv[1])\n"
             "print(json.dumps({'refs/tags/' + k.decode('utf-8'): v.decode('ascii') "
             "for k, v in repo.refs.as_dict(b'refs/tags').items()}, ensure_ascii=False))")
     return ct.py_json(code, str(company.folder))
+
+
+def assert_submission_mark(company: vt.Company, entry: dict, at_submit: dict) -> None:
+    """提出版の記録（Git の印、または版の一覧）が、提出したときの版と中身を指す。
+
+    Git の形：Git の印（タグ）が、提出したときの版を指す。
+    版のファイルの形：版の一覧（ファイルごとの版のファイル）が 記録/版/ の中にあり、読み取り専用で、中身が提出したときと
+    同じ（sha256）。版の印（40桁）は、版の履歴にある版を指す。"""
+    if company.form == vt.GIT:
+        assert tags(company).get(entry["印"]) == entry["版"]
+        assert entry["印"].startswith("refs/tags/提出版/")
+        return
+    assert entry["印"] == ""
+    assert entry["版"] in {r["版"] for r in company.log()}
+    for f in entry["ファイル"]:
+        rel = f["版のファイル"]
+        assert rel.startswith(f"{vt.STORE}/{f['書類']}/"), f
+        path = company.folder / rel
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == f["sha256"] == hashlib.sha256(at_submit[f["書類"]]).hexdigest()
+        assert stat.S_IMODE(path.stat().st_mode) & 0o222 == 0, rel
 
 
 def edit_three_times(company: vt.Company) -> None:
@@ -207,9 +236,8 @@ def test_T0_6_three_edits_then_submitted_version(company) -> None:
         p: hashlib.sha256(data).hexdigest() for p, data in at_submit.items()
     }
     assert {f["書類"]: f["大きさ"] for f in entry["ファイル"]} == {p: len(d) for p, d in at_submit.items()}
-    # Git の印（タグ）が、提出したときの版を指す
-    assert tags(company).get(entry["印"]) == entry["版"]
-    assert entry["印"].startswith("refs/tags/提出版/")
+    # 提出版の記録（Git の印、または版の一覧）が、提出したときの版と中身を指す
+    assert_submission_mark(company, entry, at_submit)
 
     # 提出の後も直す（差し戻しへの対応など）。今の中身は提出したときと違う
     company.say("差し戻しに合わせて、その1と写しと財務モデルを直して")
@@ -278,7 +306,16 @@ def test_resubmission_keeps_both_submitted_versions(company) -> None:
     out = submit(company, "直して出し直しました")
     assert "2回目" in out
     assert [e["番号"] for e in submissions(company)] == [1, 2]
-    assert len({e["印"] for e in submissions(company)}) == 2
+    first_entry, second_entry = submissions(company)
+    if company.form == vt.GIT:
+        assert len({e["印"] for e in submissions(company)}) == 2
+    else:
+        # 版の一覧：1回目と2回目は別の版を指し、写しは別の版のファイルになる（ほかは同じ版のファイル）
+        assert first_entry["版"] != second_entry["版"]
+        files = [{f["書類"]: f["版のファイル"] for f in e["ファイル"]} for e in (first_entry, second_entry)]
+        assert [p for p in files[0] if files[0][p] != files[1][p]] == [COPY]
+    assert_submission_mark(company, first_entry, first)
+    assert_submission_mark(company, second_entry, second)
 
     ct.ok(run_tool(company, "show-submitted"))
     assert from_view(view_files(company.folder)) == second
@@ -521,7 +558,10 @@ def test_submit_does_not_go_through_a_link_to_the_record(company, where) -> None
     company.say("記録の置き場を置き換えました")
     assert company.stop() is None
     company.say(SUBMIT_WORDS)
-    count = len(company.versions())
+    # 版のファイルの形で 記録/ を外への別名にすると、版のファイルの置き場（記録/版/）も外になる。版の記録は止まり
+    # （読みも書きもしない）、外のフォルダ（置き場を含む）が変わらないことで、版が増えないことを確かめる
+    store_outside = company.form == vt.FILES and where == "記録"
+    count = None if store_outside else len(company.versions())
     outside_before = outside_tree(outside)
     out = submit_refused(company)
     assert "別名" in out and f"{where}" in out and "提出版を記録しました" not in out, out
@@ -533,7 +573,10 @@ def test_submit_does_not_go_through_a_link_to_the_record(company, where) -> None
         assert "別名" in out and "外の一覧の案件" not in out, (command, out)
     assert not (company.folder / VIEW).exists()
     assert outside_tree(outside) == outside_before
-    assert len(company.versions()) == count
+    if count is not None:
+        assert len(company.versions()) == count
+    else:
+        assert "別名" in vt.start_context(company.start()) and outside_tree(outside) == outside_before
     assert (company.folder / where).is_symlink()
 
 

@@ -8,6 +8,11 @@
 
 dulwich はプラグインに同梱している（lib/vendor/。Python だけの形）。通信も venv の準備もなしに、
 /usr/bin/python3（3.9）で動く。プラグインの場所に __pycache__ を書かないよう、python3 は -B で動かす。
+
+版の持ち方は2つある（DESIGN 10章。見分けは lib/history_form.py）。同期されるフォルダの形（版のファイルの形）では、
+Git を使わず、版を丸ごとのファイルとして `記録/版/<書類>/` に残す（lib/history_files.py。TASKS M0c）。
+このモジュールの入口（enabled・locked・record_scene・record・pending_changes・log・content_at・tracked_documents・
+version_list）は、どちらの形でも同じに使える。版のファイルの形では、最初に lib/history_files.py に渡す。
 """
 
 from __future__ import annotations
@@ -234,7 +239,7 @@ from dulwich.index import ConflictedIndexEntry, IndexEntry, cleanup_mode  # noqa
 from dulwich.object_store import tree_lookup_path  # noqa: E402
 from dulwich.objects import Blob, Commit  # noqa: E402
 
-from lib import case_folder, company  # noqa: E402
+from lib import case_folder, company, history_form  # noqa: E402
 
 ADDED = "足した"
 MODIFIED = "変えた"
@@ -273,6 +278,11 @@ _TREE_KIND = {"add": ADDED, "modify": MODIFIED, "delete": DELETED}
 
 class HistoryBusy(Exception):
     """ほかの処理が、同じ会社のフォルダの版を残しているところ。"""
+
+
+class HistoryDamaged(ValueError):
+    """版のファイルの形で、版のファイルの中身が、残したときの印（sha256）と合わない、または置き場に別名がある。
+    文は、そのまま社長への説明に使える形にする。"""
 
 
 @dataclass
@@ -332,8 +342,22 @@ def nfc(text: str) -> str:
 
 
 def enabled(folder: Path) -> bool:
-    """会社のフォルダに Git の形の版の履歴があるか（ないときは、hook は何も書かない）。"""
-    return git_dir(folder).is_dir()
+    """会社のフォルダに版の履歴があるか（Git の形でも、版のファイルの形でも。ないときは、hook は何も書かない）。"""
+    return history_form.enabled(folder)
+
+
+def is_git(folder: Path) -> bool:
+    """Git の形の版の履歴か（.git の中を直接使う処理は、これを確かめてから使う）。"""
+    return history_form.form(folder) == history_form.GIT
+
+
+def _files(folder: Path):
+    """版のファイルの形なら lib/history_files.py（使うときだけ読み込む）。Git の形などでは None。"""
+    if history_form.form(folder) != history_form.FILES:
+        return None
+    from lib import history_files
+
+    return history_files
 
 
 def case_and_stage(path: str) -> Tuple[str, str]:
@@ -442,8 +466,12 @@ def locked(folder: Path) -> Iterator[None]:
 
     錠（.git/hojokin-record.lock）には、持っている処理の番号（pid）を書く。その処理がもう動いていなければ
     （hook の見張りに止められたときなど）、すぐに外し、その処理が残した dulwich の錠も片付ける。
+    版のファイルの形では、錠は `.hojokin/一時/版の記録/hojokin-record.lock` に置き、片付けるのは書きかけの版の
+    ファイル（lib/history_files.py）。
     """
-    path = git_dir(folder) / LOCK_NAME
+    files_form = _files(folder)
+    path = files_form.lock_path(folder) if files_form is not None else git_dir(folder) / LOCK_NAME
+    clear = files_form.clear_leftovers if files_form is not None else clear_leftovers
     deadline = time.monotonic() + LOCK_WAIT_SECONDS
     holder_gone = False
     while True:
@@ -467,7 +495,7 @@ def locked(folder: Path) -> Iterator[None]:
             time.sleep(0.05)
     try:
         os.write(fd, f"{os.getpid()}\n".encode("ascii"))
-        clear_leftovers(folder, 0.0 if holder_gone else LEFTOVER_SECONDS)
+        clear(folder, 0.0 if holder_gone else LEFTOVER_SECONDS)
         yield
     finally:
         os.close(fd)
@@ -516,10 +544,14 @@ class _WalkIgnore(IgnoreFilterManager):
             raise _UnreadableDir(path, error) from error
 
 
-def _work_files(folder: Path, repo: Repo) -> Tuple[Dict[str, str], List[str]]:
+def _work_files(folder: Path, repo: Optional[Repo],
+                extra_skipped: Sequence[str] = ()) -> Tuple[Dict[str, str], List[str]]:
     """作業のファイルの一覧（NFC の場所 → 実際の場所）と、中を読めないフォルダの一覧（NFC の場所）。
-    .gitignore にあるものと、履歴に入れない場所は除く。会社のフォルダそのものを読めなければ、場面ごと止める。"""
-    ignore = _WalkIgnore.from_repo(repo)
+    .gitignore にあるものと、履歴に入れない場所は除く。会社のフォルダそのものを読めなければ、場面ごと止める。
+
+    repo が None のとき（版のファイルの形）は、会社のフォルダの .gitignore だけで除く（Git の形と同じ決まり）。
+    extra_skipped は、ほかに入れない場所（版のファイルの形の `記録/版`）。"""
+    ignore = _WalkIgnore.from_repo(repo) if repo is not None else _WalkIgnore(str(folder), [], False)
     root = str(folder)
     found: Dict[str, str] = {}
     unreadable: List[str] = []
@@ -536,6 +568,8 @@ def _work_files(folder: Path, repo: Repo) -> Tuple[Dict[str, str], List[str]]:
         for name in sorted(dirnames):
             rel = _rel(dirpath, root, name)
             full = os.path.join(dirpath, name)
+            if rel in extra_skipped:
+                continue
             if os.path.islink(full):
                 # 別名のフォルダは、Git と同じく、別名そのものを1つのファイルとして扱う（先はたどらない）
                 if not ignore.is_ignored(rel):
@@ -780,6 +814,9 @@ def _compare(folder: Path, repo: Repo, index,
 
 def pending_changes(folder: Path) -> List[Change]:
     """最後の版から変わったファイル（読むだけ。何も書かない）。読めないファイルも含む（unreadable）。"""
+    files_form = _files(folder)
+    if files_form is not None:
+        return files_form.pending_changes(folder)
     repo = Repo(str(folder))
     try:
         changes, _, _ = _compare(folder, repo, repo.open_index())
@@ -931,6 +968,9 @@ def record_scene(folder: Path, who: str, reason: str, when: Optional[datetime] =
     """
     from lib import history_carry  # history_carry がこのモジュールを読み込むので、使うときに読む
 
+    files_form = _files(folder)
+    if files_form is not None:
+        return files_form.record_scene(folder, who, reason, when=when, budget=budget)
     if who not in IDENTITIES:
         raise ValueError(f"だれ（{who}）が分かりません")
     deadline = None if budget is None else time.monotonic() + budget
@@ -1039,6 +1079,9 @@ def log(folder: Path, document: Optional[str] = None, limit: Optional[int] = Non
     M0a より前の版（会社のフォルダを用意したときの版など。メッセージに書類ごとの項目がない）は、
     件名を理由とし、案件と段階は場所から出す。
     """
+    files_form = _files(folder)
+    if files_form is not None:
+        return files_form.log(folder, document, limit)
     target = nfc(document) if document is not None else None
     records: List[Record] = []
     repo = Repo(str(folder))
@@ -1083,7 +1126,12 @@ def log(folder: Path, document: Optional[str] = None, limit: Optional[int] = Non
 
 
 def content_at(folder: Path, version: str, document: str) -> Optional[bytes]:
-    """その版の、その書類の中身。その版になければ None。"""
+    """その版の、その書類の中身。その版になければ None。
+
+    版のファイルの形では、版のファイルの中身が残したときの印と合わなければ HistoryDamaged。"""
+    files_form = _files(folder)
+    if files_form is not None:
+        return files_form.content_at(folder, version, document)
     repo = Repo(str(folder))
     try:
         commit_obj = repo[version.encode("ascii")]
@@ -1097,3 +1145,57 @@ def content_at(folder: Path, version: str, document: str) -> Optional[bytes]:
         return None
     finally:
         repo.close()
+
+
+# ---- どちらの形でも使える読み方（TASKS M0c） ----
+
+def tracked_documents(folder: Path) -> List[str]:
+    """版の履歴にある今の書類の一覧（会社のフォルダからの場所）。.git や `記録/版/` を作らない。"""
+    files_form = _files(folder)
+    if files_form is not None:
+        return files_form.tracked_documents(folder)
+    repo = Repo(str(folder))
+    try:
+        return tracked_paths(repo)
+    finally:
+        repo.close()
+
+
+def version_list(folder: Path) -> List[dict]:
+    """新しい順の版の一覧（作者「ツール <…>」、メッセージ、変わった書類）。人が版を数えるとき・確かめるときに使う。"""
+    files_form = _files(folder)
+    if files_form is not None:
+        return files_form.version_list(folder)
+    repo = Repo(str(folder))
+    rows = []
+    try:
+        if not has_commits(repo):
+            return []
+        for entry in repo.get_walker():
+            c = entry.commit
+            names = set()
+            for ch in entry.changes():
+                new_path = getattr(ch.new, "path", None)
+                names.add((new_path if new_path is not None else ch.old.path).decode("utf-8", "surrogateescape"))
+            rows.append({"author": c.author.decode("utf-8", "replace"), "message": c.message.decode("utf-8", "replace"),
+                         "files": sorted(names)})
+    finally:
+        repo.close()
+    return rows
+
+
+def quick_changes(folder: Path) -> Tuple[List[Change], Set[str]]:
+    """最後の版から変わったファイルを、中身の印を計算せずに出す（時刻だけ変わったものも変わったものに入れる）。
+    (変わったもの, 前の版にあったフォルダ) を返す。錠を持たずに読むだけ（lib/history_carry.py の控え）。"""
+    files_form = _files(folder)
+    if files_form is not None:
+        return files_form.quick_changes(folder)
+    repo = Repo(str(folder))
+    try:
+        index = repo.open_index()
+        known_dirs = _dirs_of(index)
+        # 過ぎた時刻を上限にして、中身の印を計算しない
+        changes, _refresh, _unreadable_dirs = _compare(folder, repo, index, time.monotonic() - 1)
+    finally:
+        repo.close()
+    return changes, known_dirs

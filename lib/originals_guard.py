@@ -371,7 +371,7 @@ def find_content(folder: Path, target: Target) -> Optional[bytes]:
 
     if not history.enabled(folder):
         return None
-    if target.blob:
+    if target.blob and history.is_git(folder):
         from dulwich.repo import Repo
 
         repo = Repo(str(folder))

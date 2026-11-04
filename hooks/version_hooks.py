@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import outside_read
-from lib import company, dates, version_names
+from lib import company, dates, history_form, version_names
 
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 STATE_DIR = "版の記録"
@@ -182,7 +182,7 @@ def _record(folder: Path, role: str, reason: Optional[str], event: str):
 
 
 def _enabled(folder: Path) -> bool:
-    return (Path(folder) / ".git").is_dir()
+    return history_form.enabled(folder)  # Git の形か、版のファイルの形（TASKS M0c。lib/history_form.py）
 
 
 # ---- 版の名前のファイル（Stop で伝えるもの） ----

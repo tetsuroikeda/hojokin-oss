@@ -5,6 +5,9 @@
 - hook は、hooks.json のコマンド（run.sh → /usr/bin/python3 -B main.py）から、Claude Code と同じ入力で動かす。
 - 履歴は、同じ /usr/bin/python3 と同梱の dulwich で、lib/history.py の log から読む
   （テストの Python では dulwich を読み込まない。tests/company_tool.py の説明）。
+- 版の持ち方は2つ（DESIGN 10章。TASKS M0c）。Company(form="files") は、版のファイルの形（同期されるフォルダの形）の
+  会社のフォルダを、lib/company_init.py の init(form=FILES) で用意する（道具の引数で選ぶ形は、init_company.py の
+  後のタスク）。履歴を読む道具（log・content・pending・tracked・versions）は、どちらの形でも同じ入口で読む。
 """
 
 from __future__ import annotations
@@ -12,6 +15,8 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -23,17 +28,37 @@ CASE = "2026_省力化（一般型）第9回"
 STAGE = "1_申請"
 CASE_DIR = f"案件/{CASE}"
 APPLICATION = f"{CASE_DIR}/{STAGE}/申請書"
+GIT = "git"
+FILES = "files"
+FORMS = (GIT, FILES)
+# 版のファイルの形の置き場（lib/history_form.py・lib/history_files.py と同じ）
+STORE = "記録/版"
+STATE = ".hojokin/一時/版の記録"
+WORK = f"{STATE}/書きかけ"
+LOCK_NAME = "hojokin-record.lock"
+
+INIT_FILES_CODE = (
+    "from pathlib import Path\n"
+    "from lib import company_init\n"
+    "result = company_init.init(Path(sys.argv[1]), form='files')\n"
+    "print(json.dumps(company_init.report(result), ensure_ascii=False))"
+)
 
 
 class Company:
-    """道具で用意した会社のフォルダと、そこで hook を動かす道具。"""
+    """道具で用意した会社のフォルダと、そこで hook を動かす道具。form は版の持ち方（"git"・"files"）。"""
 
-    def __init__(self, tmp_path: Path, name: str = "山田 製作所", before_init=None) -> None:
+    def __init__(self, tmp_path: Path, name: str = "山田 製作所", before_init=None, form: str = GIT) -> None:
+        assert form in FORMS, form
+        self.form = form
         self.env = ct.Env(tmp_path)
         self.folder = self.env.folder(name)
         if before_init is not None:
             before_init(self.folder)
-        ct.ok(self.env.run(self.folder))
+        if form == FILES:
+            ct.py_json(INIT_FILES_CODE, str(self.folder))
+        else:
+            ct.ok(self.env.run(self.folder))
         self.plugin = hr.copy_plugin(tmp_path / "hook-plugin")
         self.data = tmp_path / "plugin-data"
         self.data.mkdir()
@@ -107,13 +132,55 @@ class Company:
         return ct.py_json(code, str(self.folder))
 
     def tracked(self) -> list:
-        code = ("repo = history.open_or_init(__import__('pathlib').Path(sys.argv[1]))\n"
-                "print(json.dumps(history.tracked_paths(repo), ensure_ascii=False))")
+        """版の履歴にある今の書類（どちらの形でも。.git も `記録/版/` も作らない）。"""
+        code = ("print(json.dumps(history.tracked_documents(__import__('pathlib').Path(sys.argv[1])), "
+                "ensure_ascii=False))")
         return ct.py_json(code, str(self.folder))
 
     def versions(self) -> list:
         """新しい順の版の一覧（作者、メッセージ、変わったファイル）。"""
+        if self.form == FILES:
+            code = ("print(json.dumps(history.version_list(__import__('pathlib').Path(sys.argv[1])), "
+                    "ensure_ascii=False))")
+            return ct.py_json(code, str(self.folder))
         return ct.git_log(self.folder)
+
+    def store_problems(self) -> list:
+        """版の置き場が壊れていないか（Git の形は本物の git の fsck、版のファイルの形は lib/history_files.py の verify）。
+        見つかった問題の一覧。手元に git がなければ、Git の形は空。"""
+        if self.form == FILES:
+            code = ("from lib import history_files\n"
+                    "print(json.dumps(history_files.verify(__import__('pathlib').Path(sys.argv[1])), ensure_ascii=False))")
+            return ct.py_json(code, str(self.folder))
+        git = shutil.which("git")
+        if git is None:
+            return []
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(self.env.home), "GIT_CONFIG_NOSYSTEM": "1",
+               "GIT_CONFIG_GLOBAL": os.devnull}
+        r = subprocess.run([git, "fsck", "--no-progress", "--strict"], cwd=self.folder, env=env, capture_output=True,
+                           timeout=120)
+        return [] if r.returncode == 0 else [r.stderr.decode("utf-8")]
+
+    def lock_path(self) -> Path:
+        """版の錠の場所（Git の形は .git の中、版のファイルの形は .hojokin/一時/版の記録/ の中）。"""
+        if self.form == FILES:
+            place = self.folder / STATE
+            place.mkdir(parents=True, exist_ok=True)
+            return place / LOCK_NAME
+        return self.folder / ".git" / LOCK_NAME
+
+    def store_dir(self) -> Path:
+        """版を書く置き場（書けなくすると、版を残す処理が落ちる）。Git の形は .git/objects、版のファイルの形は 記録/版。"""
+        return self.folder / (STORE if self.form == FILES else ".git/objects")
+
+    def leftovers(self) -> list:
+        """途中で止まった処理の残り（錠と書きかけ）。"""
+        if self.form == FILES:
+            found = [f"{WORK}/{p.name}" for p in (self.folder / WORK).iterdir()] if (self.folder / WORK).is_dir() else []
+            if (self.folder / STATE / LOCK_NAME).exists():
+                found.append(f"{STATE}/{LOCK_NAME}")
+            return sorted(found)
+        return git_leftovers(self.folder)
 
 
 def denied_reason(output) -> str:
@@ -138,8 +205,13 @@ def held_lock(folder: Path) -> Iterator[Path]:
     """ほかのセッションの hook が版を残している間（版の錠を、動いている処理が持っている）にする。
 
     錠には、このテストの処理（動いている）の番号を書く。hook は5秒待っても錠を取れず、その場面では版を残せない。
+    版のファイルの形（.git がない）では、錠は .hojokin/一時/版の記録/ の中。
     """
-    lock = folder / ".git" / "hojokin-record.lock"
+    if (folder / ".git").is_dir():
+        lock = folder / ".git" / LOCK_NAME
+    else:
+        (folder / STATE).mkdir(parents=True, exist_ok=True)
+        lock = folder / STATE / LOCK_NAME
     lock.write_text(f"{os.getpid()}\n", encoding="ascii")
     try:
         yield lock

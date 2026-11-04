@@ -12,7 +12,9 @@
 - 書類は、会社のフォルダからの場所で指す。場所でなく名前（「その1.docx」「その1」）だけでも、
   版の履歴の中で1つに決まれば、それにする。
 
-版の履歴は lib/history.py が扱う（Git の形。同期されるフォルダの形は M0c で、同じ入口から動かす）。
+版の履歴は lib/history.py が扱う。Git の形でも、同期されるフォルダの形（版のファイルの形。lib/history_files.py）
+でも、同じ入口から動く（TASKS M0c）。版のファイルの形で、版のファイルの中身が残したときの印と合わなければ、
+取り出さずに断る（社長が Finder で版のファイルを直してしまったときなど）。版のファイルの置き場（`記録/版/`）は戻さない。
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from lib import case_folder, dates, history, places, view_only
 # 戻さない場所（会社のフォルダからの場所の始まり）。提出版の記録は、戻すと記録した提出版が消えるので戻さない
 # （壊れたか消えたときだけ、直すために戻せる。revert）
 SUBMISSION_RECORD = "記録/提出版.json"
-PROTECTED_TOP = ("原本", ".hojokin", ".claude", ".git", "見るだけ", "記録/審査役の結果", SUBMISSION_RECORD)
+PROTECTED_TOP = ("原本", ".hojokin", ".claude", ".git", "見るだけ", "記録/審査役の結果", "記録/版", SUBMISSION_RECORD)
 PENDING_REASON = "前の版に戻す前の変更"
 VERSION_PREFIX = re.compile(r"^[0-9a-f]{7,40}$")
 CANDIDATES_MAX = 10
@@ -143,7 +145,10 @@ def view_names(record: history.Record) -> List[str]:
 
 
 def _content(folder: Path, record: history.Record) -> bytes:
-    data = history.content_at(Path(folder), record.version, record.document)
+    try:
+        data = history.content_at(Path(folder), record.version, record.document)
+    except history.HistoryDamaged as error:
+        raise VersionError(f"{shown(record)} の版を取り出せません：{error}") from error
     if data is None:
         raise VersionError(f"{shown(record)} の版では、{record.document} は消されています")
     return data
@@ -220,7 +225,7 @@ def revert(folder: Path, document: str, version: Optional[str] = None, back: Opt
     """前の版に戻す。(戻した版, 中身を変えたか) を返す。今の中身がその版と同じなら、何も変えない。"""
     folder = Path(folder)
     if not history.enabled(folder):
-        raise VersionError("この会社のフォルダには版の履歴（Git の形）がないため、戻せません")
+        raise VersionError("この会社のフォルダには版の履歴がないため、戻せません")
     doc = resolve_document(folder, document)
     if doc == SUBMISSION_RECORD:
         if _record_usable(folder):

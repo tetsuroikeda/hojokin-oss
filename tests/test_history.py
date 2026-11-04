@@ -21,6 +21,11 @@
   次の場面のだれ）。応答の終わりで錠が取れなくても、版の名前のファイルはその応答の終わりに伝える。
 
 hook は hooks.json のコマンドから、Claude Code と同じ入力で動かす（tests/version_tool.py）。
+
+版の持ち方は2つ（DESIGN 10章。TASKS M0c）。fixture の company は、Git の形と、版のファイルの形（同期されるフォルダの
+形。lib/history_files.py）の両方で、同じテストを流す。Git の中身にかかわるテスト（本物の git で読む、.git の錠、
+_write_blob）は git_company で Git の形だけを流し、版のファイルの形の同じ確かめは tests/test_history_files.py に置く。
+時間のかかる多くのファイル・大きなファイルのテストは、版のファイルの形の側を slow にする（Git の形の側は今までどおり）。
 """
 
 from __future__ import annotations
@@ -49,9 +54,20 @@ BIG_BYTES = 160 * 1024 * 1024
 PYTHON_MISSING = ("補助プログラム（Python）が動かない", "xcode-select")
 
 
+@pytest.fixture(params=vt.FORMS)
+def company(request, tmp_path) -> vt.Company:
+    """Git の形と、版のファイルの形（同期されるフォルダの形）の両方。"""
+    return vt.Company(tmp_path, form=request.param)
+
+
 @pytest.fixture
-def company(tmp_path) -> vt.Company:
+def git_company(tmp_path) -> vt.Company:
+    """Git の形だけ（.git の中身にかかわるテスト）。"""
     return vt.Company(tmp_path)
+
+
+# 時間のかかるテストは、版のファイルの形の側を slow にする（開発用の Stop hook の速いテストを数分に収める）
+HEAVY = pytest.mark.parametrize("company", [vt.GIT, pytest.param(vt.FILES, marks=pytest.mark.slow)], indirect=True)
 
 
 def newest(company: vt.Company, n: int = 1) -> list:
@@ -394,7 +410,8 @@ def test_nfd_names_are_recorded_as_nfc(company) -> None:
     assert [r["変更"] for r in company.log(f"{vt.APPLICATION}/{name}")] == ["変えた", "足した"]
 
 
-def test_nfd_names_from_before_are_renamed_to_nfc_when_changed(tmp_path) -> None:
+@pytest.mark.parametrize("form", vt.FORMS)
+def test_nfd_names_from_before_are_renamed_to_nfc_when_changed(tmp_path, form) -> None:
     """会社のフォルダにする前からあった NFD の名前は、変わったときに NFC の名前にして残す（同じ書類の「変えた」1件）。"""
     name = "ガイドブック.txt"
     nfd = unicodedata.normalize("NFD", name)
@@ -402,7 +419,7 @@ def test_nfd_names_from_before_are_renamed_to_nfc_when_changed(tmp_path) -> None
     def before(folder):
         (folder / nfd).write_text("前から", encoding="utf-8")
 
-    company = vt.Company(tmp_path, before_init=before)
+    company = vt.Company(tmp_path, before_init=before, form=form)
     company.write(nfd, "直した")
     company.say("確かめて")
     (record,) = newest(company)
@@ -443,10 +460,14 @@ def test_dates_follow_the_substituted_today(company) -> None:
 
 
 def test_remotes_stay_zero(company) -> None:
-    """版を残しても、送り先は0件のまま。"""
+    """版を残しても、送り先は0件のまま（版のファイルの形では、Git の履歴そのものを作らない）。"""
     company.say("書いて")
     company.write(SONO1, "x")
     company.stop()
+    if company.form == vt.FILES:
+        assert not (company.folder / ".git").exists()
+        assert newest(company)[0]["書類"] == SONO1
+        return
     remotes = ct.py_json("repo = history.open_or_init(__import__('pathlib').Path(sys.argv[1]))\n"
                          "print(json.dumps(history.remotes(repo)))", str(company.folder))
     assert remotes == []
@@ -469,8 +490,9 @@ def test_many_files_are_recorded_well_within_the_watch(company) -> None:
     assert len(newest(company)) == 301
 
 
-def test_real_git_reads_the_history(company) -> None:
+def test_real_git_reads_the_history(git_company) -> None:
     """dulwich で残した履歴を、本物の git でも壊れずに読める（手元に git があるときだけ）。"""
+    company = git_company
     git = shutil.which("git")
     if git is None:
         pytest.skip("git がありません")
@@ -514,17 +536,12 @@ def dead_pid() -> int:
 
 
 def fsck(company: vt.Company) -> None:
-    """本物の git で、履歴が壊れていないかを確かめる（手元に git があるときだけ）。"""
-    git = shutil.which("git")
-    if git is None:
-        return
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(company.env.home), "GIT_CONFIG_NOSYSTEM": "1",
-           "GIT_CONFIG_GLOBAL": os.devnull}
-    r = subprocess.run([git, "fsck", "--no-progress", "--strict"], cwd=company.folder, env=env, capture_output=True,
-                       timeout=120)
-    assert r.returncode == 0, r.stderr.decode("utf-8")
+    """履歴が壊れていないかを確かめる（Git の形は本物の git の fsck。手元に git があるときだけ。
+    版のファイルの形は、版のファイルがあり、読み取り専用で、中身が記録の印と同じこと）。"""
+    assert company.store_problems() == []
 
 
+@HEAVY
 def test_photos_in_bulk_are_recorded_well_within_the_watch(company) -> None:
     """写真をまとめて入れたように、大きなファイルが多くても、送ったときの見張り（25秒）より十分早く残す。"""
     for i in range(50):
@@ -537,11 +554,13 @@ def test_photos_in_bulk_are_recorded_well_within_the_watch(company) -> None:
     fsck(company)
 
 
-def test_leftover_locks_of_a_stopped_hook_are_cleared(company) -> None:
+def test_leftover_locks_of_a_stopped_hook_are_cleared(git_company) -> None:
     """見張りに止められた hook が .git に残した錠（版の錠、dulwich の錠、書きかけの中身）は、次の場面で片付けて残す。
 
     版の錠を持っていた処理がもう動いていなければ、120秒を待たずにすぐ外す。同じ中身の錠が残っていても残せる。
+    （版のファイルの形の同じ確かめは tests/test_history_files.py）
     """
+    company = git_company
     data = b"photo-" * 2000
     company.write("入れ口/写真/IMG_0001.jpg", data)
     git = company.folder / ".git"
@@ -566,6 +585,7 @@ def test_leftover_locks_of_a_stopped_hook_are_cleared(company) -> None:
     fsck(company)
 
 
+@HEAVY
 def test_record_recovers_after_the_watch_kills_it(company) -> None:
     """見張りが本当に止めても（kill -9）、次の場面で錠を片付け、残っていたものをすべて残す。"""
     for i in range(12000):
@@ -577,7 +597,7 @@ def test_record_recovers_after_the_watch_kills_it(company) -> None:
     assert company.say("続けて") is None
     assert time.monotonic() - start < 20
     assert company.pending() == []
-    assert vt.git_leftovers(company.folder) == []
+    assert company.leftovers() == []
     assert len([r for r in company.log() if r["書類"].startswith("記録/資料の本文/")]) == 12000
     assert company.start() is None
     fsck(company)
@@ -586,7 +606,7 @@ def test_record_recovers_after_the_watch_kills_it(company) -> None:
 def test_lock_of_a_running_process_is_respected(company) -> None:
     """版の錠を持つ処理がまだ動いていれば、待って、何も書かずに次の場面に回す（何も伝えない）。古すぎる錠は外す。"""
     company.write(SONO1, "x")
-    lock = company.folder / ".git" / "hojokin-record.lock"
+    lock = company.lock_path()
     lock.write_text(f"{os.getpid()}\n", encoding="ascii")
     count = len(company.versions())
     assert company.say("書いて") is None
@@ -690,7 +710,7 @@ def test_who_is_kept_when_recording_fails_at_stop(company) -> None:
     依頼の文で、応答の後に社長が手で変えた分は「社長」として残す。"""
     company.say("その1を書いて")
     company.write(SONO1, "ツールが書いた")
-    objects = company.folder / ".git" / "objects"
+    objects = company.store_dir()  # Git の形は .git/objects、版のファイルの形は 記録/版
     objects.chmod(0o500)
     try:
         assert company.stop() is None
@@ -778,7 +798,7 @@ def test_files_cut_off_twice_are_treated_as_too_large(company) -> None:
             "r = history.record_scene(Path(sys.argv[1]), history.OWNER, history.OWNER_REASON, budget=0.000001)\n"
             "print(json.dumps([len(r.recorded), len(r.deferred), len(r.too_large)]))")
     assert ct.py_json(code, str(company.folder)) == [0, 1, 0]
-    assert vt.git_leftovers(company.folder) == []
+    assert company.leftovers() == []
     leftovers = json.loads((company.folder / ".hojokin/一時/版の記録/残り.json").read_text(encoding="utf-8"))
     assert leftovers == {"書類": {"入れ口/動画.mov": {"だれ": "社長", "理由": OWNER_REASON, "大きさ": 3 * 1024 * 1024,
                                                     "止めた回数": 1}}}
@@ -793,8 +813,10 @@ def test_files_cut_off_twice_are_treated_as_too_large(company) -> None:
     assert (record["書類"], record["だれ"]) == ("入れ口/動画.mov", "社長")
 
 
-def test_writing_stops_midway_at_the_deadline(company) -> None:
-    """中身を書く途中で時間の上限を過ぎたら、やめて、書きかけのファイルも錠も残さない。"""
+def test_writing_stops_midway_at_the_deadline(git_company) -> None:
+    """中身を書く途中で時間の上限を過ぎたら、やめて、書きかけのファイルも錠も残さない。
+    （版のファイルの形の同じ確かめは tests/test_history_files.py）"""
+    company = git_company
     company.write("入れ口/a.bin", b"x" * (3 * 1024 * 1024))
     code = ("import time\nfrom dulwich.repo import Repo\n"
             "repo = Repo(sys.argv[1])\n"
@@ -808,7 +830,7 @@ def test_record_failure_is_told_at_session_start_not_as_python_missing(company) 
     """版を残す処理が落ちても hook は落とさず（書き込みの守りも続く）、開いたときに版の記録が止まったことを伝える。
     「Python が動かない」の案内にはしない。次に残せたら、知らせは消える。"""
     company.write(SONO1, "x")
-    objects = company.folder / ".git" / "objects"
+    objects = company.store_dir()  # Git の形は .git/objects、版のファイルの形は 記録/版
     objects.chmod(0o500)
     try:
         context = vt.start_context(company.start())
@@ -853,7 +875,7 @@ def test_unreadable_file_is_skipped_and_the_rest_is_recorded(company) -> None:
         assert (record["書類"], record["だれ"], record["理由"]) == (f"{vt.APPLICATION}/その1_v2.md", "ツール",
                                                                   "その1を直して")
         assert company.stop(active=True) is None
-        assert vt.git_leftovers(company.folder) == []
+        assert company.leftovers() == []
         assert not (company.folder / ".hojokin" / "一時" / "版の記録" / "止まった.json").exists()
         context = vt.start_context(company.start())
         assert "読めないため" in context and "入れ口/読めない.pdf" in context, context
@@ -973,24 +995,28 @@ def test_files_that_vanish_while_recording_are_skipped(company) -> None:
     company.write(SONO1, "二版目")
     company.write("記録/消える.md", "x")
     company.write("記録/残る.md", "x")
+    # 中身を書く関数（Git の形は lib/history.py の _write_blob、版のファイルの形は lib/history_files.py の _write_version）
+    writer = ("history._write_blob" if company.form == vt.GIT else
+              "__import__('lib.history_files', fromlist=['x'])._write_version")
+    module = "history" if company.form == vt.GIT else "__import__('lib.history_files', fromlist=['x'])"
     code = ("import os\nfrom pathlib import Path\n"
             "folder = Path(sys.argv[1])\n"
             "work_files = history._work_files\n"
-            "def listed(folder_, repo):\n"
-            "    found = work_files(folder_, repo)\n"
+            "def listed(*args):\n"
+            "    found = work_files(*args)\n"
             "    (folder / sys.argv[2]).unlink()  # 一覧を作った後、比べる前に消えた（履歴にあるファイル）\n"
             "    return found\n"
             "history._work_files = listed\n"
-            "write_blob = history._write_blob\n"
-            "def write(repo, fs_path, deadline):\n"
+            f"write_blob = {writer}\n"
+            "def write(where, fs_path, deadline):\n"
             "    if fs_path.endswith('消える.md'):\n"
             "        os.unlink(fs_path)  # 中身を書く前に消えた（足したファイル）\n"
-            "    return write_blob(repo, fs_path, deadline)\n"
-            "history._write_blob = write\n"
+            "    return write_blob(where, fs_path, deadline)\n"
+            f"setattr({module}, write_blob.__name__, write)\n"
             "r = history.record_scene(folder, history.TOOL, '書いて')\n"
             "print(json.dumps([sorted(c.path for c in r.recorded), [c.path for c in r.unreadable]], ensure_ascii=False))")
     assert ct.py_json(code, str(company.folder), SONO1) == [["記録/残る.md"], []]
-    assert vt.git_leftovers(company.folder) == []
+    assert company.leftovers() == []
     assert company.pending() == [[SONO1, "消した"]]
     company.say("確かめて")
     (record,) = newest(company)
@@ -1001,6 +1027,8 @@ def test_read_error_midway_skips_only_that_file(company) -> None:
     """読む途中の失敗（同期の途中のファイルなど）も、そのファイルだけを飛ばし、書きかけの中身を残さない。"""
     company.write("入れ口/同期中.pdf", b"%PDF-1.4 " * 1000)
     company.write("入れ口/メモ.txt", "社長のメモ")
+    # 作業のファイルを開く所（Git の形は lib/history.py、版のファイルの形は lib/history_files.py の open）
+    module = "history" if company.form == vt.GIT else "__import__('lib.history_files', fromlist=['x'])"
     code = ("import errno, io\nfrom pathlib import Path\n"
             "class Broken(io.FileIO):\n"
             "    def read(self, size=-1):\n"
@@ -1010,11 +1038,11 @@ def test_read_error_midway_skips_only_that_file(company) -> None:
             "    if str(path).endswith('同期中.pdf'):\n"
             "        return Broken(path, 'rb')\n"
             "    return real_open(path, mode, *args, **kwargs)\n"
-            "history.open = fake_open\n"
+            f"{module}.open = fake_open\n"
             "r = history.record_scene(Path(sys.argv[1]), history.OWNER, history.OWNER_REASON)\n"
             "print(json.dumps([sorted(c.path for c in r.recorded), [c.path for c in r.unreadable]], ensure_ascii=False))")
     assert ct.py_json(code, str(company.folder)) == [["入れ口/メモ.txt"], ["入れ口/同期中.pdf"]]
-    assert vt.git_leftovers(company.folder) == []
+    assert company.leftovers() == []
     company.say("見て")
     (record,) = newest(company)
     assert (record["書類"], record["だれ"]) == ("入れ口/同期中.pdf", "社長")

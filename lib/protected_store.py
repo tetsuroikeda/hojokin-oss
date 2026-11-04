@@ -118,8 +118,8 @@ def store(folder: Path, path: Path) -> str:
     """
     from lib import history  # 同梱の dulwich を読み込む（使うときだけ）
 
-    if not history.enabled(folder):
-        return ""
+    if not history.is_git(folder):
+        return ""  # 版のファイルの形（TASKS M0c）では、hook が残す版から探す
     from dulwich.objects import Blob
     from dulwich.repo import Repo
 
