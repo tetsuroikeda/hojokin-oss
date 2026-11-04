@@ -31,6 +31,10 @@
    - はじめは、いちばん前の段階（申請）だけを作る。採択後に次の段階へ進むときは、その段階の名前を渡して作る（M10）（仮）。
    - 段階のフォルダの名前が、段階の順に 1 から数えた「1_申請」「2_交付申請」…でなければ、どのフォルダも作らない（仮）。
      読み取り役が申請の段階を落とすと、いちばん前のフォルダが「2_採択発表」のようになるため。
+
+場所の確かめ（DESIGN 5章。確かめは lib/places.py）：読む材料（案件の資料の一覧、章ごとの読み取りの結果とそのフォルダ、
+制度データ）は、別名と「..」をたどった後に会社のフォルダの中にあるときだけ読む。外なら読まずに、MergeError か DataMissing で
+断る（何も書かない）。段階のフォルダは、作る先の途中に別名があれば作らない（lib/case_folder.py）。
 """
 
 from __future__ import annotations
@@ -41,7 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from lib import case_folder, urakadori
+from lib import case_folder, place_text, urakadori
 from lib.official_docs import LIST_FILE, RECORDS_DIR, TEXT_DIR, round_number
 
 SCHEMA_VERSION = 1
@@ -124,8 +128,16 @@ def doc_list_path(company: Path, case: str) -> Path:
     return company / RECORDS_DIR / TEXT_DIR / case_folder.safe_name(case) / LIST_FILE
 
 
+def _outside_problem(company: Path, path: Path, what: str) -> Optional[str]:
+    """path が、別名と「..」をたどった後も会社のフォルダの中なら None。外なら断る文（lib/places.py。DESIGN 5章）。"""
+    return place_text.read_problem(company, path, f"{what}（{path.relative_to(company).as_posix()}）")
+
+
 def load_doc_list(company: Path, case: str) -> Dict:
     path = doc_list_path(company, case)
+    problem = _outside_problem(company, path, "案件の資料の一覧")
+    if problem:  # 外の一覧は読まない（制度データの置き場所も、外の一覧で決めない）
+        raise MergeError(problem)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
@@ -186,11 +198,17 @@ def _first_page(chapter: Dict, order: Dict[str, int]) -> Tuple[int, int]:
 
 def load_chapters(company: Path, case: str, order: Dict[str, int], result: MergeResult) -> List[Dict]:
     base = reading_dir(company, case)
+    problem = _outside_problem(company, base, "章ごとの読み取りの結果")
+    if problem:
+        raise MergeError(problem)
     if not base.is_dir():
         raise MergeError(f"章ごとの読み取りの結果（{base.relative_to(company)}/）がありません。"
                          "先に、読み取り役に章ごとに読ませ、裏取りの道具に通してください")
     chapters = []
     for path in sorted(base.glob("*.json")):
+        problem = _outside_problem(company, path, "章ごとの読み取りの結果")
+        if problem:  # 1つでも外を指すものがあれば、どれもまとめない（外の結果を、まとめた制度データに入れない）
+            raise MergeError(problem)
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -552,7 +570,11 @@ def check(data: Any) -> CheckResult:
 
 
 def load_data(company: Path, case: str) -> Tuple[Path, Any]:
+    """この案件の制度データ（場所、中身）。ない・読めない・会社のフォルダの外を指すときは DataMissing（外は読まない）。"""
     path = seido_path(company, case)
+    problem = _outside_problem(company, path, "制度データ")
+    if problem:
+        raise DataMissing(problem)
     if not path.is_file():
         raise DataMissing(f"制度データ（{path.relative_to(company)}）がありません。先に章ごとの読み取りをまとめてください")
     try:

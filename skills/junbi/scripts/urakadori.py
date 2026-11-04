@@ -19,7 +19,8 @@
 - 終了コード：0 形が合い、どの値も裏取りで外れなかった（結果を置いた）。
   1 形は合ったが、裏取りで外れた値がある（「要確認」にして、結果を置いた）。
   2 動かさなかった（会社のフォルダでない、形が合わない、案件を決められない、入力が外にある、
-    名前に版の名前の語がある、前の結果が読めない）。何も書いていない。
+    名前に版の名前の語がある、前の結果が読めない、資料の本文・資料の一覧・置き場所が別名などで会社のフォルダの外を指す）。
+    何も書いていない。
   3 補助プログラムが動かない、または裏取りの途中で止まった。
 """
 
@@ -113,6 +114,9 @@ def main(argv) -> int:
         result, saved = urakadori.run(folder, case, data)
     except urakadori.InputError as e:
         print(urakadori.error_report(e.errors), end="")
+        return 2
+    except urakadori.OutsideError as e:  # 資料の本文・資料の一覧が、別名などで会社のフォルダの外を指す（読んでいない）
+        print(f"{NOT_DONE}{e}")
         return 2
     except (urakadori.PlaceError, case_folder.CaseError) as e:  # 版の名前の語、外になる置き場所、読めない前の結果、使えない名前
         print(f"{NOT_DONE}置き場所を決められませんでした。{e}")
