@@ -8,7 +8,7 @@
 - 会社のフォルダの直下の「財務モデル.xlsx」（あれば）。提出した案件の数字は、提出版に入れた財務モデルで固定し、
   計画書との照合にも使うため（DESIGN 8.3）。
 
-記録の仕方（Git の形。同期されるフォルダの形は M0c で、同じ入口から動かす）：
+記録の仕方（Git の形。同期されるフォルダの形（版のファイルの形）も同じ入口から動かす。下の 5. TASKS M0c）：
 1. 最後の版から変わったものを、先に版に残す（「ツール」。理由は社長の発言）。提出するものに残しきれないものが
    あれば、提出版を記録しない（取り出しても同じ中身にならないため）。残しきれないものは、版に残す処理の結果
    （読めないファイル・中を読めないフォルダ・大きすぎるもの・次に回したもの）と、残した後もまだ変わっているもので見る。
@@ -25,6 +25,9 @@
    提出版を見る・一覧を出すときも同じ。
 4. Git の印（`refs/tags/提出版/<案件>/<段階>/<番号>`）を、提出したときの版に付ける。名前に使えない文字があれば、
    案件と段階の印（sha256 の先頭）で名前を作る。印を付けられなくても、版の一覧の記録は残す。
+5. 版のファイルの形（lib/history_files.py）では、Git の印の代わりに、提出するファイルごとに、そのときの版のファイルの
+   場所（`記録/版/<書類>/…`）を版の一覧に書く（「印」は空）。版の一覧の sha256 は、版のファイルを読んで、残したときの
+   印と合うことを確かめてから書く。別名・.gitignore で除かれた写し・読めないものを断る決まりは、Git の形と同じ。
 
 同じ案件・段階を出し直したとき（差し戻しの後など）は、番号を1つ増やして足す。前の提出版も残る。
 `記録/提出版.json` は、前の版に戻す道具でも戻さない（記録した提出版が消えないように。壊れたか消えたときだけ、
@@ -313,6 +316,49 @@ def _refuse_left(left: Dict[str, str]) -> SubmissionError:
     )
 
 
+def _files_entry(folder: Path, case: str, stage: str, moment: datetime, words: str, entries: List[dict]) -> dict:
+    """版のファイルの形で、そのときの版から提出版の1件を作る（版の一覧：ファイルごとの版のファイルと中身の印）。"""
+    from lib import history_files
+
+    base = stage_dir(case, stage)
+    with history.locked(folder):
+        version, docs = history_files.head(folder)
+        if not version:
+            raise SubmissionError("版の履歴がまだないため、提出版を記録できません")
+        files = []
+        links: Dict[str, str] = {}
+        for path in sorted(docs):
+            item = docs[path]
+            if item["別名"] and (in_submission(path, case, stage) or _related_dir(path, base)):
+                # 別名は、版に指す先の名前しか残らない（先の写しが提出版から抜ける）ので、提出版に入れずに断る
+                links[path] = LINK
+                continue
+            if not in_submission(path, case, stage):
+                continue
+            try:
+                data = history_files.read_version(folder, item)
+            except history.HistoryDamaged as error:
+                raise SubmissionError(f"{path} の版のファイルを読めないため、提出版を記録していません：{error}") from error
+            files.append({"書類": path, "大きさ": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+                          "版のファイル": item["版のファイル"]})
+        outside = _outside_history(folder, case, stage, {f["書類"] for f in files} | set(links))
+        if links or outside:
+            raise _refuse_left({**outside, **links})
+        if not any(f["書類"].startswith(base + "/") for f in files):
+            raise SubmissionError(f"{base}/ に書類がないため、提出版を記録していません")
+    number = 1 + max((e["番号"] for e in entries if (e["案件"], e["段階"]) == (case, stage)), default=0)
+    return {
+        "番号": number,
+        "案件": case,
+        "段階": stage,
+        "日時": moment.isoformat(timespec="seconds"),
+        "版": version,
+        "印": "",
+        "発言": words,
+        "ファイル": files,
+    }
+
+
 def record(folder: Path, case: str, stage: str, reason: Optional[str] = None,
            when: Optional[datetime] = None) -> dict:
     """「提出した」と伝えられたときに、提出版を記録する。記録した1件を返す。"""
@@ -322,7 +368,7 @@ def record(folder: Path, case: str, stage: str, reason: Optional[str] = None,
 
     folder = Path(folder)
     if not history.enabled(folder):
-        raise SubmissionError("この会社のフォルダには版の履歴（Git の形）がないため、提出版を記録できません")
+        raise SubmissionError("この会社のフォルダには版の履歴がないため、提出版を記録できません")
     case, stage = choose(folder, case, stage)
     base = stage_dir(case, stage)
     moment = (when or _now(folder)).astimezone(dates.JST)
@@ -333,6 +379,13 @@ def record(folder: Path, case: str, stage: str, reason: Optional[str] = None,
     left = _left_by_scene(folder, history.record_scene(folder, history.TOOL, words, when=moment), case, stage)
     if left:
         raise _refuse_left(left)
+
+    if not history.is_git(folder):
+        # 5. 版のファイルの形（同期されるフォルダの形）
+        entry = _files_entry(folder, case, stage, moment, words, entries)
+        _save(folder, entries + [entry])
+        history.record_scene(folder, history.TOOL, f"{words}（提出版 {entry['番号']}回目を記録）", when=moment)
+        return entry
 
     # 2. そのときの版から、提出するファイルの一覧と中身の印を作る
     with history.locked(folder):
@@ -427,6 +480,8 @@ def contents(folder: Path, entry: dict) -> List[Tuple[str, bytes]]:
     for f in entry["ファイル"]:
         try:
             data = history.content_at(Path(folder), entry["版"], f["書類"])
+        except history.HistoryDamaged as error:
+            raise SubmissionError(f"{f['書類']} の提出版を取り出せません：{error}") from error
         except (KeyError, ValueError) as error:
             raise SubmissionError(f"提出版の版（{entry['版'][:10]}）が版の履歴にありません（{error}）") from error
         if data is None:

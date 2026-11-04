@@ -154,3 +154,59 @@ def no_link_on_the_way(folder: PathLike, rel: PathLike) -> None:
     link = first_link(folder, rel)
     if link is not None:
         raise PlaceError(f"{link} が別名（シンボリックリンク）になっています", path=str(rel), link=link)
+
+
+class LinkChecker:
+    """同じ場面で、多くの場所に no_link_on_the_way を当てるときの道具（版のファイルの形の書き出しなど。TASKS M0c）。
+
+    確かめは no_link_on_the_way と同じ（途中のフォルダと、そのもの自体に別名があれば PlaceError）。
+    フォルダの中の一覧は1回だけ読み、一度確かめた途中のフォルダは確かめ直さない（何千もの書類を1つの場面で
+    書き出しても、同じフォルダを何度も読まないため）。この場面で作ったフォルダは、一覧に出てこなくても別名ではない
+    （まだない所から先は見ない、と同じ扱い）。
+
+        checker = places.LinkChecker(folder)
+        checker.no_link_on_the_way("記録/版/案件/…/その1.docx")
+    """
+
+    def __init__(self, folder: PathLike) -> None:
+        self.folder = str(folder)
+        self._names: dict = {}  # フォルダの実際の場所 → {NFC の名前: 実際の名前}（読めなければ None）
+        self._checked: dict = {}  # 確かめた途中の場所（NFC、「/」区切り） → 実際の場所
+
+    def _lookup(self, current: str, part: str) -> Optional[str]:
+        if current not in self._names:
+            try:
+                self._names[current] = {nfc(n): n for n in os.listdir(current)}
+            except OSError:
+                self._names[current] = None
+        names = self._names[current]
+        if names is None:
+            direct = os.path.join(current, part)
+            return direct if os.path.lexists(direct) else None
+        match = names.get(part)
+        return None if match is None else os.path.join(current, match)
+
+    def first_link(self, rel: PathLike) -> Optional[str]:
+        """first_link と同じ（いちばん手前の別名の場所。なければ None）。"""
+        parts = _parts(rel)
+        current = self.folder
+        for i, part in enumerate(parts):
+            prefix = "/".join(parts[: i + 1])
+            known = self._checked.get(prefix)
+            if known is not None:
+                current = known
+                continue
+            found = self._lookup(current, part)
+            if found is None:
+                return None
+            if os.path.islink(found):
+                return prefix
+            self._checked[prefix] = found
+            current = found
+        return None
+
+    def no_link_on_the_way(self, rel: PathLike) -> None:
+        """no_link_on_the_way と同じ（別名があれば PlaceError。e.link が別名の場所）。"""
+        link = self.first_link(rel)
+        if link is not None:
+            raise PlaceError(f"{link} が別名（シンボリックリンク）になっています", path=str(rel), link=link)

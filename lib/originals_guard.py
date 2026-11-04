@@ -23,6 +23,8 @@ DESIGN 4.7 の2・5章「原本・公式資料を1バイトも変えない」・
   あればそれを先に見て、なければ、その場所の版を新しい方からさかのぼる（社長が送ったときに、書き換わった中身が
   先に版になっていることがあるため、いちばん新しい版とは限らない）。見つからなければ戻さずに知らせる。
   原本と公式資料は、道具が置く前に中身を版の履歴の置き場に入れ、版の印を台帳・資料の一覧・控えに残す。
+  版のファイルの形（TASKS M0c）では、置く前に預けた中身（`記録/版/_預け/`）と、すべての版のファイルから、
+  入れたときのハッシュと同じものを探す（lib/history_files.py の find_by_sha256）。
 - 戻した原本と公式資料は、読み取り専用にする。中身が同じで書き込めるようになっていたものも、読み取り専用に戻す。
 - 版の記録より先に動かす（hooks/originals_hooks.py）。書き換わった中身を版に残さず、原本と公式資料の版が
   入れたときの1版のままになるようにするため（DESIGN 10章）。
@@ -391,6 +393,9 @@ def find_content(folder: Path, target: Target) -> Optional[bytes]:
 
     if not history.enabled(folder):
         return None
+    if not history.is_git(folder):
+        # 版のファイルの形（TASKS M0c）：置く前に預けた中身と、すべての版のファイルから、sha256 で探す
+        return history.find_by_sha256(folder, target.sha256, target.path)
     if target.blob:
         from dulwich.repo import Repo
 

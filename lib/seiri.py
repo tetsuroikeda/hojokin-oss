@@ -375,6 +375,8 @@ def _store_blob(folder: Path, path: Path) -> bool:
         return bool(protected_store.store(folder, path))
     except protected_store.Busy as e:
         raise SeiriError("ほかの処理が版の履歴を使っているところです。移していません。少し待ってから、もう一度動かしてください") from e
+    except ValueError as e:  # 版のファイルの形で、預ける所が別名など（lib/history_files.py の HistoryDamaged。TASKS M0c）
+        raise SeiriError(f"中身を版の履歴の置き場に預けられませんでした（{e}）。移していません") from e
 
 
 def _move_without_overwrite(src: Path, dest: Path) -> None:

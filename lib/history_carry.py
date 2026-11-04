@@ -18,6 +18,7 @@ inode）を、その場面のだれ・理由とともに控える。読むだけ
 控えは `.hojokin/一時/版の記録/錠待ち/` に1件1ファイルで置く（錠を持たずに書くので、ほかの処理と書き合わない
 ように。名前は書いた時刻の順）。版を残せた場面が、読んだ控えだけを消す（残しきれずに回したものは、決めた
 だれ・理由で 残り.json に移る）。版の履歴には入れない（.hojokin/一時/ の中）。
+Git の形でも、版のファイルの形（同期されるフォルダの形。lib/history_files.py）でも、同じ控えを使う（TASKS M0c）。
 """
 
 from __future__ import annotations
@@ -114,17 +115,11 @@ def take(folder: Path, who: str, reason: str) -> Optional[history.Result]:
     hook を落とさないよう、失敗はすべてここで受け止める。
     """
     try:
-        repo = history.Repo(str(folder))
-        try:
-            index = repo.open_index()
-            known_dirs = history._dirs_of(index)
-            earlier = load(folder)
-            leftovers = history.load_leftovers(folder)
-            # 過ぎた時刻を上限にして、中身の印を計算しない（時刻だけが変わったものも、変わったものとして控える。
-            # 次の場面で中身が同じと分かれば、版にはならない）
-            changes, _refresh, _unreadable_dirs = history._compare(folder, repo, index, time.monotonic() - 1)
-        finally:
-            repo.close()
+        earlier = load(folder)
+        leftovers = history.load_leftovers(folder)
+        # 中身の印を計算しない（時刻だけが変わったものも、変わったものとして控える。次の場面で中身が同じと分かれば、
+        # 版にはならない）。Git の形でも版のファイルの形でも、同じ入口で読む（TASKS M0c）
+        changes, known_dirs = history.quick_changes(folder)
         claimed = attribute(changes, earlier)
         mine: List[history.Change] = []
         documents: Dict[str, object] = {}

@@ -116,12 +116,14 @@ def blob_id(path: Path) -> str:
 def store(folder: Path, path: Path) -> str:
     """版の履歴があれば、path の中身を版の履歴の置き場（.git）に入れ、版の印を返す。版の履歴がなければ空。
 
+    版のファイルの形（TASKS M0c）では、`記録/版/_預け/<sha256>` に読み取り専用で預け、Git の形と同じ求め方の
+    版の印を返す（戻すときは、版の印ではなく中身の sha256 で探す。lib/history_files.py）。
     ほかの処理が版の履歴を使っているときは Busy（何も入れていない）。
     """
     from lib import history  # 同梱の dulwich を読み込む（使うときだけ）
 
-    if not history.enabled(folder):
-        return ""
+    if not history.is_git(folder):
+        return blob_id(path) if history.deposit(folder, path) else ""
     from dulwich.objects import Blob
     from dulwich.repo import Repo
 

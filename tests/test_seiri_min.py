@@ -5,6 +5,7 @@
   Claude が読み取って引数で渡すものとして、テストが渡す。
 - 会社のフォルダは、会社のフォルダを作る道具で用意し、hook は hooks.json のコマンドで動かす（tests/version_tool.py）。
 - 書類は、デモの会社の書類（testdata/デモの会社/書類/。F14）を、名前を変えて入れ口に入れる。
+- 版の持ち方の2つ（Git の形と、版のファイルの形。DESIGN 10章・TASKS M0c）の両方で流す。
 
 確かめること：
 - 入れ口（下のフォルダも）の書類を中身のハッシュで見つける。同じ中身のものは分けて知らせ、動かさない。
@@ -64,9 +65,10 @@ def blob_id(data: bytes) -> str:
     return hashlib.sha1(b"blob %d\x00" % len(data) + data).hexdigest()
 
 
-@pytest.fixture
-def company(tmp_path) -> vt.Company:
-    c = vt.Company(tmp_path)
+@pytest.fixture(params=vt.FORMS)
+def company(request, tmp_path) -> vt.Company:
+    """Git の形と、版のファイルの形（同期されるフォルダの形。TASKS M0c）の両方。"""
+    c = vt.Company(tmp_path, form=request.param)
     settings = c.folder / ".hojokin" / "設定.json"
     data = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
     data["今日の日付"] = TODAY
@@ -116,32 +118,20 @@ def ledger(company: vt.Company) -> dict:
 
 
 def files_and_ledger(company: vt.Company) -> dict:
-    """会社のフォルダのファイル（版の履歴とその場限りの置き場を除く）の中身と、読み書きの権限。"""
+    """会社のフォルダのファイル（版の履歴とその場限りの置き場を除く）の中身と、読み書きの権限。
+    版の履歴は、Git の形は .git/、版のファイルの形は 記録/版/（預けた中身を含む）。"""
     found = {}
     for p in sorted(company.folder.rglob("*")):
         rel = p.relative_to(company.folder).as_posix()
-        if rel.startswith((".git/", ".hojokin/一時/")) or not p.is_file():
+        if rel.startswith((".git/", ".hojokin/一時/", f"{vt.STORE}/")) or not p.is_file():
             continue
         found[rel] = (p.read_bytes(), stat.S_IMODE(p.stat().st_mode))
     return found
 
 
-LATEST_CODE = """
-from dulwich.repo import Repo
-repo = Repo(sys.argv[1])
-entry = next(iter(repo.get_walker()))
-files = set()
-for ch in entry.changes():
-    for side in (ch.old, ch.new):
-        if side is not None and getattr(side, "path", None) is not None:
-            files.add(side.path.decode("utf-8"))
-print(json.dumps({"author": entry.commit.author.decode("utf-8"), "files": sorted(files)}, ensure_ascii=False))
-"""
-
-
 def latest_version(company: vt.Company) -> dict:
-    """いちばん新しい版の作者と、変わったファイル（消したものも含む）。"""
-    return ct.py_json(LATEST_CODE, str(company.folder))
+    """いちばん新しい版の作者と、変わったファイル（消したものも含む）。どちらの形でも同じ入口で読む。"""
+    return company.versions()[0]
 
 
 def put_three(company: vt.Company) -> dict:
@@ -223,9 +213,16 @@ def test_three_documents_are_organized(company) -> None:
 
 
 def test_original_bytes_are_in_history_store_before_stop(company) -> None:
-    """移す前に、中身を版の履歴の置き場に入れておく（同じ応答の中で書き換えられても戻せるように）。"""
+    """移す前に、中身を版の履歴の置き場に入れておく（同じ応答の中で書き換えられても戻せるように）。
+    Git の形は .git に、版のファイルの形は `記録/版/_預け/<sha256>` に読み取り専用で預ける。"""
     data = put(company, "入れ口/決算書18.pdf", "決算書_第18期.pdf")
     entry = organize(company, "入れ口/決算書18.pdf", "決算・税", "決算書", "2025-04-01")["台帳"]
+    assert entry["版の印"] == blob_id(data)
+    if company.form == vt.FILES:
+        kept = company.folder / vt.STORE / "_預け" / sha256(data)
+        assert kept.read_bytes() == data and stat.S_IMODE(kept.stat().st_mode) == 0o444
+        assert company.store_problems() == []
+        return
     code = ("from dulwich.repo import Repo\n"
             "repo = Repo(sys.argv[1])\n"
             "print(json.dumps(repo.object_store[sys.argv[2].encode()].as_raw_string().hex()))")
@@ -361,7 +358,7 @@ def test_refuses_hidden_places_in_any_case(company) -> None:
     put(company, "入れ口/決算書18.pdf", "決算書_第18期.pdf")
     put(company, "入れ口/.隠し.pdf", "見積書_ほしみ機工.pdf")
     company.say("書類を入れたので整理して")
-    watched = (".claude/settings.json", ".git/HEAD", ".hojokin/設定.json")
+    watched = (".claude/settings.json", ".hojokin/設定.json") + ((".git/HEAD",) if company.form == vt.GIT else ())
     snapshot = {rel: (company.folder / rel).read_bytes() for rel in watched}
     before = files_and_ledger(company)
     places = (".Claude/settings.json", ".GIT/HEAD", ".Hojokin/設定.json", ".CLAUDE/settings.json",
