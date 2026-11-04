@@ -724,12 +724,12 @@ def verify(folder: Path) -> List[str]:
         for item in scene["書類"]:
             if item["変更"] == history.DELETED:
                 continue
+            path = Path(folder) / item["版のファイル"]
+            with contextlib.suppress(OSError):
+                if stat_mode.S_IMODE(os.lstat(str(path)).st_mode) & 0o222:
+                    problems.append(f"版のファイル（{item['版のファイル']}）が書き込める形になっています")
             try:
                 read_version(Path(folder), item, checker)
             except (history.HistoryDamaged, OSError) as error:
                 problems.append(str(error))
-                continue
-            path = Path(folder) / item["版のファイル"]
-            if stat_mode.S_IMODE(os.lstat(str(path)).st_mode) & 0o222:
-                problems.append(f"版のファイル（{item['版のファイル']}）が書き込める形になっています")
     return problems

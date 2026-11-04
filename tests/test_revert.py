@@ -21,9 +21,10 @@ from test_T0_6 import (COPY, RECORD, SONO1, blob, edit_three_times, refused, run
                        working_files)
 
 
-@pytest.fixture
-def company(tmp_path) -> vt.Company:
-    return vt.Company(tmp_path)
+@pytest.fixture(params=vt.FORMS)
+def company(request, tmp_path) -> vt.Company:
+    """Git の形と、版のファイルの形（同期されるフォルダの形。TASKS M0c）の両方。"""
+    return vt.Company(tmp_path, form=request.param)
 
 
 def sha(data: bytes) -> str:
