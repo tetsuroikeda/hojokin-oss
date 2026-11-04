@@ -44,9 +44,13 @@ def parse(argv):
     return parser.parse_args(argv)
 
 
-def read_list(where: str) -> object:
-    text = sys.stdin.read() if where == "-" else Path(where).expanduser().read_text(encoding="utf-8")
-    return json.loads(text)
+def read_list(where: str, folder: Path) -> object:
+    """取る資料の一覧。相対の場所（記録/一時/取る資料.json など）は会社のフォルダから解く。同梱の一覧は絶対の場所で渡る。"""
+    if where == "-":
+        return json.loads(sys.stdin.read())
+    path = Path(where).expanduser()
+    path = path if path.is_absolute() else folder / path
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def main(argv) -> int:
@@ -68,7 +72,7 @@ def main(argv) -> int:
               "先に、社長の了承を得て会社のフォルダを作ってください。")
         return 2
     try:
-        data = read_list(args.list)
+        data = read_list(args.list, folder)
         if args.case_round and isinstance(data, dict) and isinstance(data.get("制度"), dict):
             data["制度"] = dict(data["制度"], 公募回=args.case_round)
         if args.case is not None and isinstance(data, dict):

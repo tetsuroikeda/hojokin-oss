@@ -585,6 +585,7 @@ def test_leftover_locks_of_a_stopped_hook_are_cleared(git_company) -> None:
     fsck(company)
 
 
+@pytest.mark.slow  # 見張りの時間切れに頼るので、負荷が高いと落ちることがある（開発の Stop hook では流さない）
 @HEAVY
 def test_record_recovers_after_the_watch_kills_it(company) -> None:
     """見張りが本当に止めても（kill -9）、次の場面で錠を片付け、残っていたものをすべて残す。"""

@@ -72,6 +72,8 @@ ALLOW_RULES = (
     "WebSearch",
     "WebFetch(domain:*.go.jp)",
     "WebFetch(domain:*.lg.jp)",
+    # 持続化の公式サイト（go.jp でない。A15。default のモードで効く見込み）
+    "WebFetch(domain:*.jizokukahojokin.info)",
 )
 BLOCK_KEYS = ("blockReadsOutsideWorkingDirectories", "blockWritesOutsideWorkingDirectories")
 
@@ -80,6 +82,8 @@ GITIGNORE_LINES = (
     f"/{company.MARKER_DIR}/{company.TEMP_DIR}/",
     f"/{VIEW_DIR}/",
     "/.claude/settings.local.json",
+    "# 道具に渡す JSON・文と、その場の計算のコード（Claude が決まった名前で上書きする。DESIGN 4.1）",
+    f"/{RECORDS_DIR}/一時/",
     "# 今の状態の画面と Excel（見るだけ。開くたびにツールが作り直すので、版に残さない。TASKS M3 の仮）",
     "/今の状態.html",
     "/今の状態.xlsx",

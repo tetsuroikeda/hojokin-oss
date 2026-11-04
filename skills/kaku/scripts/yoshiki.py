@@ -91,6 +91,7 @@ def parse(argv):
     p.add_argument("--item", required=True, help="制度データの様式の項目の名前")
     p.add_argument("--form", help="制度データの様式の名前（項目の名前が2つの様式にあるとき）")
     p.add_argument("--text", help="書く文（省くか - なら標準入力）。改行で段落を分ける")
+    p.add_argument("--input", help="書く文のファイル（会社のフォルダの中の .txt。記録/一時/書く文.txt など）")
     p = sub.add_parser("sheet", help="入力シートの欄に書く")
     common(p, stage=True, source=False)
     p.add_argument("--field", help="入力シートの欄の名前（制度データの申請画面の欄の名前）")
@@ -362,7 +363,16 @@ def do_write(folder: Path, args, yw) -> int:
     if not isinstance(position, dict) or not position.get("範囲"):
         raise Refused(f"項目「{args.item}」の書き込む位置が、まだ様式と対応づけられていません。outline の一覧を読み取り役に"
                       "渡して対応づけ、map で制度データに書いてから、もう一度試してください")
-    text = read_text_arg(args.text)
+    if args.input and args.text is not None:
+        raise Refused("--input と --text は一緒に使えません")
+    if args.input:
+        real = inside(folder, args.input, "書く文のファイル")
+        try:
+            text = real.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            raise Refused(f"書く文のファイル（{args.input}）を読めませんでした（{e}）")
+    else:
+        text = read_text_arg(args.text)
     target = application_file(folder, case, stage, WORD_FILE)
     first = not os.path.lexists(str(target))
     if first:

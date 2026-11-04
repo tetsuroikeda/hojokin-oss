@@ -192,13 +192,26 @@ def test_apply_replaces_only_named_items(company) -> None:
         "消す件": {"数値でない要件": ["郵送の申請はできない"]},
         "メモ": ["事業の期間が 12か月 → 10か月"],
     }
-    text = out(company.run("--apply", "-", data=fixed), 0)
+    # Claude が Write で置いたファイルを渡す形（SKILL.md の手順。標準入力の heredoc は使わない）
+    tmp = company.folder / "記録" / "一時" / "読み直し.json"
+    tmp.parent.mkdir(parents=True)
+    tmp.write_text(json.dumps(fixed, ensure_ascii=False), encoding="utf-8")
+    text = out(company.run("--apply", "記録/一時/読み直し.json"), 0)
     got = items(company.reading())
     assert set(got) == {"電子申請で申請する", "事業の期間", "事業者の登録"}
     assert got["事業の期間"]["内容"]["状態"] == "確認済み"
     assert got["電子申請で申請する"]["内容"]["状態"] == "確認済み"  # 渡さなかった件は残る
     assert "足した件：数値でない要件「事業者の登録」" in text
     assert "消した件：数値でない要件「郵送の申請はできない」" in text
+
+
+def test_apply_reads_only_inside_the_company_folder(company, tmp_path) -> None:
+    outside = tmp_path / "外.json"
+    outside.write_text(json.dumps({"読み取り": {"章": CHAPTER, "読んだページ": []}, "制度データ": {}}), encoding="utf-8")
+    before = (company.folder / READING).read_bytes()
+    text = out(company.run("--apply", str(outside)), 2)
+    assert "会社のフォルダの中のファイルを渡してください" in text
+    assert before == (company.folder / READING).read_bytes()
 
 
 def test_apply_needs_the_previous_chapter(company) -> None:

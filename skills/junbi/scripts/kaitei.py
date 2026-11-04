@@ -5,8 +5,8 @@
      python3 -B <この場所>/kaitei.py --folder "${CLAUDE_PROJECT_DIR}" [--case <案件>] --pages
   2. 章ごとの読み取りを引き継ぐ（出典を今の資料に付け替え、今の資料の本文で裏取りし直す）。読み直す値の一覧が出る
      python3 -B <この場所>/kaitei.py --folder "${CLAUDE_PROJECT_DIR}" [--case <案件>] --carry
-  3. 読み取り役が読み直した件（変わったページの件だけ）を、同じ章に差し替える（標準入力で JSON を渡す）
-     python3 -B <この場所>/kaitei.py --folder "${CLAUDE_PROJECT_DIR}" [--case <案件>] --apply - <<'EOF' … EOF
+  3. 読み取り役が読み直した件（変わったページの件だけ）を、同じ章に差し替える（JSON は会社のフォルダの中のファイルで渡す。- なら標準入力）
+     python3 -B <この場所>/kaitei.py --folder "${CLAUDE_PROJECT_DIR}" [--case <案件>] --apply 記録/一時/読み直し.json
   4. 前と後の制度データの差と、自社の申請で影響するところを出す（書き換えない）
      python3 -B <この場所>/kaitei.py --folder "${CLAUDE_PROJECT_DIR}" [--case <案件>] --diff [--old <場所> --new <場所>] [--json]
 
@@ -46,7 +46,7 @@ def parse(argv):
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--pages", action="store_true", help="前の回の資料と今の資料の、変わったページを出す")
     action.add_argument("--carry", action="store_true", help="章ごとの読み取りの出典を今の資料に付け替え、裏取りし直す")
-    action.add_argument("--apply", metavar="-", help="読み直した件の JSON（標準入力は -）を、同じ章に差し替える")
+    action.add_argument("--apply", metavar="ファイル", help="読み直した件の JSON（会社のフォルダの中のファイル。- なら標準入力）を、同じ章に差し替える")
     action.add_argument("--diff", action="store_true", help="前と後の制度データの差と、自社で影響するところを出す")
     parser.add_argument("--old", help="--diff：前の制度データ（会社のフォルダからの場所）")
     parser.add_argument("--new", help="--diff：後の制度データ（会社のフォルダからの場所）")
@@ -106,12 +106,22 @@ def apply_report(r) -> str:
     return "\n".join(out) + "\n"
 
 
+def read_input(where: str, folder: Path):
+    """読み直した件の JSON。ファイルは、別名と「..」をたどった後も会社のフォルダの中にあるものだけ読む（lib/places.py）。"""
+    from lib import places
+    if where == "-":
+        return json.loads(sys.stdin.read())
+    real = places.resolve_inside(folder, Path(where).expanduser())
+    return json.loads(real.read_text(encoding="utf-8"))
+
+
 def main(argv) -> int:
     # 環境の文字コードによらず、日本語の結果を UTF-8 で返す
     sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdin.reconfigure(encoding="utf-8")
     args = parse(argv)
     try:
-        from lib import case_folder, company, kaitei, urakadori
+        from lib import case_folder, company, kaitei, places, urakadori
     except Exception as e:  # 同梱のファイルが欠けた・壊れた、Python が古いなど
         print(f"{NOT_DONE}補助プログラムを読み込めませんでした（{type(e).__name__}: {e}）。"
               "プラグインを入れ直してから、もう一度試してください。")
@@ -142,13 +152,13 @@ def main(argv) -> int:
             print(carry_report(kaitei, carried, todo), end="")
             return 1 if any(t["読み直す値"] for t in todo) else 0
         if args.apply is not None:
-            if args.apply != "-":
-                print(f"{NOT_DONE}--apply には - を渡し、JSON を標準入力で渡してください（会社のフォルダの外のファイルは読みません）。")
-                return 2
             try:
-                data = json.loads(sys.stdin.read())
+                data = read_input(args.apply, folder)
+            except (places.PlaceError, OSError) as e:
+                print(f"{NOT_DONE}読み直した件のファイル（{args.apply}）を読めません。会社のフォルダの中のファイルを渡してください（{e}）。")
+                return 2
             except ValueError as e:
-                print(f"{NOT_DONE}標準入力が JSON として読めません（{e}）。")
+                print(f"{NOT_DONE}読み直した件が JSON として読めません（{e}）。")
                 return 2
             try:
                 r = kaitei.apply_items(folder, case, data)
