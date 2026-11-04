@@ -188,10 +188,36 @@ def _walk_documents(folder: Path, top: str) -> List[Path]:
     return found
 
 
+def _forbidden_top(real_folder: str, top: str) -> bool:
+    """会社のフォルダの直下の名前 top が、書類を持ってこない場所（FORBIDDEN_TOPS）か。
+
+    大文字・小文字と文字の形（NFC）をそろえて比べ、さらに実際に同じフォルダを指していないかも確かめる
+    （大文字・小文字や濁点の形を区別しないディスクでは、違う名前で同じフォルダを指せるため）。
+    """
+    key = nfc(top).casefold()
+    if key in {nfc(name).casefold() for name in FORBIDDEN_TOPS}:
+        return True
+    given = os.path.join(real_folder, top)
+    if not os.path.isdir(given):
+        return False
+    for name in FORBIDDEN_TOPS:
+        candidate = os.path.join(real_folder, name)
+        try:
+            if os.path.isdir(candidate) and os.path.samefile(given, candidate):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def resolve_document(folder: Path, given: str) -> Tuple[Path, str]:
     """渡された場所（会社のフォルダからの場所か、中の絶対の場所）を、(実際のファイル, 会社のフォルダからの場所) にする。
 
     会社のフォルダの外、ツールの置き場・案件・見るだけの中、別名、ふつうのファイルでないものは断る。
+    「.」で始まる名前（`.git/`・`.hojokin/`・`.claude/` や隠しファイル）が場所のどこかにあるものも断る。
+    Mac の既定のディスクは大文字と小文字を区別しないため、`.Claude/settings.json` も `.claude/settings.json` を
+    指してしまう。名前の文字を比べるだけでは足りないので、「.」で始まる名前をすべて断り、始まりのフォルダも
+    大文字・小文字をそろえて比べ、同じフォルダを指していないかも確かめる（DESIGN 5章）。
     """
     folder = Path(folder)
     raw = Path(given)
@@ -203,8 +229,12 @@ def resolve_document(folder: Path, given: str) -> Tuple[Path, str]:
     if os.path.commonpath([real_folder, real]) != real_folder or real == real_folder:
         raise SeiriError(f"{given} は会社のフォルダの外です。外の書類は、社長に場所を聞いて取り込んでから整理します")
     rel = nfc(Path(os.path.relpath(real, real_folder)).as_posix())
-    top = rel.split("/", 1)[0]
-    if top in FORBIDDEN_TOPS:
+    parts = rel.split("/")
+    top = parts[0]
+    hidden = next((p for p in parts if p.startswith(".")), None)
+    if hidden is not None:
+        raise SeiriError(f"{rel} は書類を整理する場所の外です（「.」で始まる名前の {hidden} の中のもの・隠しファイルは原本にしません）")
+    if _forbidden_top(real_folder, top):
         raise SeiriError(f"{rel} は書類を整理する場所の外です（{top}/ の中のものは原本にしません）")
     if not os.path.isfile(real):
         raise SeiriError(f"{rel} が見つからないか、ファイルではありません")

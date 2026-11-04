@@ -353,6 +353,35 @@ def test_refuses_places_outside_documents(company, tmp_path) -> None:
     assert outside.read_bytes() == outside_before
 
 
+def test_refuses_hidden_places_in_any_case(company) -> None:
+    """「.」で始まる場所（.git/・.hojokin/・.claude/、隠しファイル）は、大文字・小文字を変えても、「..」を挟んでも、
+    中の絶対の場所で渡しても断り、何も変えない（Mac の既定のディスクは大文字と小文字を区別しないため、
+    `.Claude/settings.json` も `.claude/settings.json` を指す。DESIGN 5章・4.7）。"""
+    put(company, "入れ口/決算書18.pdf", "決算書_第18期.pdf")
+    put(company, "入れ口/.隠し.pdf", "見積書_ほしみ機工.pdf")
+    company.say("書類を入れたので整理して")
+    watched = (".claude/settings.json", ".git/HEAD", ".hojokin/設定.json")
+    snapshot = {rel: (company.folder / rel).read_bytes() for rel in watched}
+    before = files_and_ledger(company)
+    places = (".Claude/settings.json", ".GIT/HEAD", ".Hojokin/設定.json", ".CLAUDE/settings.json",
+              "入れ口/../.Claude/settings.json", "入れ口/../.GIT/HEAD", str(company.folder / ".Claude" / "settings.json"),
+              ".claude/settings.json", ".git/HEAD", ".hojokin/設定.json", "入れ口/.隠し.pdf")
+    commands = (("organize", ["--category", "会社の資料", "--kind", "設定", "--date", "2026-11-04"]),
+                ("keep", ["--reason", "そのままでいい"]), ("text", []))
+    for given in places:
+        for command, extra in commands:
+            out = refused(run_tool(company, command, "--path", given, *extra))
+            assert "書類を整理する場所の外" in out, (given, command, out)
+    assert files_and_ledger(company) == before  # 原本の置き場に何も増えず、台帳も設定もそのまま
+    for rel, data in snapshot.items():
+        assert (company.folder / rel).read_bytes() == data, rel
+    # 版の記録も止まらない（.git/HEAD が残り、そのあと整理した原本が「ツール」の版になる）
+    dest = organize(company, "入れ口/決算書18.pdf", "決算・税", "決算書", "2025-04-01")["新しい場所"]
+    assert company.stop() is None
+    records = company.log(dest)
+    assert len(records) == 1 and records[0]["変更"] == "足した" and records[0]["だれ"] == "ツール", records
+
+
 def test_refuses_outside_company_folder(tmp_path) -> None:
     env = ct.Env(tmp_path)
     folder = env.folder("ただのフォルダ")

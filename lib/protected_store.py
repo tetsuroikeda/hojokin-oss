@@ -11,6 +11,8 @@
 - 控え（`.hojokin/一時/原本の印.json`）：道具が置いた原本と公式資料ごとに、場所・入れたときのハッシュ・版の印・種類を残す。
   台帳や資料の一覧が消えたり、項目が消えたり、ハッシュが書き換えられたりしても、照らしと戻しは控えの値で続ける。
   控えは足すだけで、同じ場所の値は書き換えない（入れたときの値を残す）。
+  控えにない台帳・資料の一覧の項目は、道具が置いた記録がないものとして、今の中身で確かめられたときだけ控えに採る
+  （lib/originals_guard.py）。控えのファイルが消えたときは、そのことを知らせる（anchors_missing）。
 
 ここは標準のライブラリだけで動く。版の履歴の置き場に入れるときだけ、同梱の dulwich（lib/history.py）を読み込む。
 """
@@ -140,6 +142,14 @@ def anchor_path(folder: Path) -> Path:
     return Path(folder) / company.MARKER_DIR / company.TEMP_DIR / ANCHOR_FILE
 
 
+ANCHOR_REL = f"{company.MARKER_DIR}/{company.TEMP_DIR}/{ANCHOR_FILE}"
+
+
+def anchors_missing(folder: Path) -> bool:
+    """控えのファイルがないか（先のない別名も、ないとみなす。読めないものは load_anchors の理由で知らせる）。"""
+    return not os.path.exists(str(anchor_path(folder)))
+
+
 def _clean_anchor(rel: object, value: object) -> Optional[dict]:
     if not isinstance(rel, str) or not isinstance(value, dict):
         return None
@@ -164,10 +174,10 @@ def load_anchors(folder: Path) -> Tuple[Dict[str, dict], str]:
     except FileNotFoundError:
         return {}, ""
     except (OSError, ValueError) as e:
-        return {}, f"{company.MARKER_DIR}/{company.TEMP_DIR}/{ANCHOR_FILE} が読めません（{type(e).__name__}）"
+        return {}, f"{ANCHOR_REL} が読めません（{type(e).__name__}）"
     raw = data.get(ANCHORS_KEY) if isinstance(data, dict) else None
     if not isinstance(raw, dict):
-        return {}, f"{company.MARKER_DIR}/{company.TEMP_DIR}/{ANCHOR_FILE} の形が違います"
+        return {}, f"{ANCHOR_REL} の形が違います"
     anchors: Dict[str, dict] = {}
     for rel, value in raw.items():
         clean = _clean_anchor(rel, value)

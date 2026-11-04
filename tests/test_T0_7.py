@@ -59,6 +59,7 @@ THREE = (
     ("入れ口/見積もり（つばさ台）.pdf", "見積書_つばさ台フードシステム.pdf", "見積・契約・請求", "見積書", "2026-10-20",
      "つばさ台フードシステム"),
 )
+ANCHORS = ".hojokin/一時/原本の印.json"  # 道具が置いた原本と公式資料の控え（lib/protected_store.py）
 KESSAN = "原本/決算・税/2025-04-01_決算書.pdf"
 TOUKI = "原本/登記・名簿/2026-10-22_履歴事項全部証明書.pdf"
 MITSUMORI = "原本/見積・契約・請求/2026-10-20_見積書_つばさ台フードシステム.pdf"
@@ -537,6 +538,181 @@ def test_rewritten_ledger_hash_does_not_overwrite_original(world) -> None:
     assert "戻しました" not in reason
     assert protected(c) == before
     one_version_each(c, before)
+
+
+def anchors(company: vt.Company) -> dict:
+    """道具が置いた原本と公式資料の控え（場所 → {ハッシュ, 版の印, 種類}）。"""
+    return json.loads((company.folder / ANCHORS).read_text(encoding="utf-8"))["守るもの"]
+
+
+def make_fake(world: World) -> bytes:
+    """Claude が好きな中身のファイルを作り、応答の終わりに版の置き場へ入れる（台帳に書けば、戻す元として見つかる中身）。"""
+    c = world.company
+    payload = b"%PDF-1.7 fake statement"
+    c.say("メモを作って")
+    c.write("記録/偽.pdf", payload)
+    assert c.stop() is None
+    return payload
+
+
+def point_ledger(company: vt.Company, rel: str, payload: bytes) -> None:
+    """台帳の原本 rel のハッシュと版の印を、payload のものにする（なければ足す）。"""
+    data = json.loads((company.folder / LEDGER).read_text(encoding="utf-8"))
+    entries = [e for e in data["原本"] if e["場所"] == rel]
+    if not entries:
+        entries = [{"場所": rel}]
+        data["原本"].append(entries[0])
+    for e in entries:
+        e["ハッシュ"], e["版の印"] = sha256(payload), blob_id(payload)
+    company.write(LEDGER, json.dumps(data, ensure_ascii=False))
+
+
+NO_RECORD = "道具が置いた記録（控え）がなく、今の中身もそのハッシュと違うもの"
+ANCHORS_GONE = "原本と公式資料の控え（.hojokin/一時/原本の印.json）がありません"
+
+
+def test_rewritten_ledger_with_anchors_deleted_does_not_overwrite_original(world) -> None:
+    """台帳の原本のハッシュと版の印を別の中身のものに書き換え、控えのファイルも消しても、原本をその中身で
+    置き換えない。控えが消えたことと、道具が置いた記録がないことを知らせる。台帳を前の版に戻せば、また守る。"""
+    c = world.company
+    before = organized(world)
+    payload = make_fake(world)
+    c.say("台帳を直して")
+    point_ledger(c, KESSAN, payload)
+    (c.folder / ANCHORS).unlink()
+    reason = stop_reason(c.stop())
+    assert "戻しました" not in reason
+    assert ANCHORS_GONE in reason
+    assert NO_RECORD in reason and KESSAN in reason
+    assert protected(c) == before  # 1バイトも変わらない
+    one_version_each(c, before)
+    # 控えは、今の中身と版の履歴で確かめられたものだけで作り直す（台帳の偽のハッシュは採らない）
+    rebuilt = anchors(c)
+    assert set(rebuilt) == set(before) - {KESSAN}
+    for rel, a in rebuilt.items():
+        assert a["ハッシュ"] == sha256(before[rel][0]), rel
+    # 同じことでは、応答の終わりに続けさせない。開いたときは伝え直す。原本はそのまま
+    c.say("わかった")
+    assert c.stop() is None
+    context = vt.start_context(c.start("startup"))
+    assert NO_RECORD in context and KESSAN in context
+    assert protected(c) == before
+    # 台帳を前の版に戻すと、知らせが止まり、決算書も入れたときの中身で控えに戻る（書き換えても戻す）
+    c.say("台帳を戻して")
+    ct.ok(versions_tool(c, "revert", "--document", LEDGER, "--back", "1", "--reason", "台帳を戻して"))
+    assert c.stop() is None
+    assert anchors(c)[KESSAN]["ハッシュ"] == sha256(before[KESSAN][0])
+    c.say("決算書に書き足して")
+    make_writable(c.folder / KESSAN)
+    with open(c.folder / KESSAN, "ab") as f:
+        f.write(b"%% appended\n")
+    reason = stop_reason(c.stop())
+    assert "戻しました" in reason and KESSAN in reason
+    assert protected(c) == before
+    one_version_each(c, before)
+
+
+def test_original_replaced_together_with_ledger_is_not_adopted(world) -> None:
+    """控えを消し、台帳と原本を同じ別の中身に置き換えても、その中身を控えに採らない（版の履歴の入れたときの版と違う）。
+    置き換えたことを知らせ、入れたときの中身は版の履歴に残る。後で元の中身に戻されても、置き換えた中身で上書きしない。"""
+    c = world.company
+    before = organized(world)
+    payload = make_fake(world)
+    c.say("決算書を差し替えて")
+    point_ledger(c, KESSAN, payload)
+    (c.folder / ANCHORS).unlink()
+    make_writable(c.folder / KESSAN)
+    (c.folder / KESSAN).write_bytes(payload)
+    reason = stop_reason(c.stop())
+    assert "戻しました" not in reason
+    assert ANCHORS_GONE in reason
+    assert "版の履歴にある入れたときの版の中身と違い" in reason and KESSAN in reason
+    assert KESSAN not in anchors(c)
+    assert version_hashes(c, KESSAN)[-1] == sha256(before[KESSAN][0])  # 入れたときの中身は版の履歴に残る
+    # 社長と相談して元の中身に戻しても、台帳の偽のハッシュの中身で上書きしない
+    c.say("決算書を元に戻した")
+    (c.folder / KESSAN).write_bytes(before[KESSAN][0])
+    reason = stop_reason(c.stop())
+    assert "戻しました" not in reason and NO_RECORD in reason and KESSAN in reason
+    assert (c.folder / KESSAN).read_bytes() == before[KESSAN][0]
+    assert KESSAN not in anchors(c)
+
+
+def test_deleted_ledger_and_anchors_are_told_until_fixed(world) -> None:
+    """台帳と控えのファイルを両方消しても、黙らない。控えが消えたことと、前に照らした原本が照らせなくなったことを
+    知らせ、台帳を前の版に戻すまで、開いたときに伝え直す。原本は1バイトも変えない。"""
+    c = world.company
+    before = organized(world)
+    c.say("台帳と控えを消して")
+    (c.folder / LEDGER).unlink()
+    (c.folder / ANCHORS).unlink()
+    reason = stop_reason(c.stop())
+    assert ANCHORS_GONE in reason and "照らせなくなったもの" in reason
+    for rel in (KESSAN, TOUKI, MITSUMORI):
+        assert rel in reason
+    assert "戻しました" not in reason
+    assert protected(c) == before
+    c.say("わかった")
+    assert c.stop() is None  # 同じことでは続けさせない
+    context = vt.start_context(c.start("startup"))
+    assert "照らせなくなったもの" in context and KESSAN in context
+    # 台帳を前の版に戻すと、原本を控えに採り直して、知らせが止まる。書き換えても戻す
+    c.say("台帳を戻して")
+    ct.ok(versions_tool(c, "revert", "--document", LEDGER, "--back", "1", "--reason", "台帳を戻して"))
+    assert c.stop() is None
+    assert set(anchors(c)) == set(before)
+    assert "照らせなくなった" not in vt.start_context(c.start("startup"))
+    c.say("証明書を差し替えて")
+    make_writable(c.folder / TOUKI)
+    (c.folder / TOUKI).write_bytes(b"%PDF-1.7 overwritten")
+    reason = stop_reason(c.stop())
+    assert "戻しました" in reason and TOUKI in reason
+    assert protected(c) == before
+    one_version_each(c, before)
+
+
+def test_ledger_entries_without_tool_record_are_not_written(world) -> None:
+    """台帳と資料の一覧に、置き場の中の正しい区分の場所を指す項目を足しても、道具が置いた記録（控え）がなければ書かない。
+    ない場所にはファイルを作らず、社長が原本の置き場に直接入れた、まだ整理していない書類も上書きしない。"""
+    c = world.company
+    before = organized(world)
+    payload = make_fake(world)
+    owner_doc = "原本/決算・税/社長が入れた決算書.pdf"
+    owner_data = (DOCS / "決算書_第17期.pdf").read_bytes()
+    c.write(owner_doc, owner_data)
+    c.say("台帳を直して")
+    fake = "原本/決算・税/偽.pdf"
+    fake_official = f"{OFFICIAL_DIR}/偽.pdf"
+    for rel in (fake, owner_doc):
+        point_ledger(c, rel, payload)
+    lists = doc_list(c)
+    lists["資料"].append({"id": "偽", "名前": "偽の資料", "公募回": "第8回", "URL": "http://127.0.0.1/x.pdf",
+                         "ハッシュ": sha256(payload)})
+    lists["置き場所"]["偽"] = {"ファイル": fake_official, "本文": "", "版の印": blob_id(payload)}
+    c.write(LIST, json.dumps(lists, ensure_ascii=False))
+
+    def unchanged() -> None:
+        assert not (c.folder / fake).exists() and not (c.folder / fake_official).exists()
+        assert (c.folder / owner_doc).read_bytes() == owner_data
+        assert stat.S_IMODE((c.folder / owner_doc).stat().st_mode) == 0o644  # 読み取り専用にもしない
+        after = protected(c)
+        for rel, value in before.items():
+            assert after[rel] == value, rel
+        assert set(after) == set(before) | {owner_doc}
+
+    reason = stop_reason(c.stop())
+    assert "戻しました" not in reason and NO_RECORD in reason
+    for rel in (fake, owner_doc, fake_official):
+        assert rel in reason
+    assert ANCHORS_GONE not in reason
+    unchanged()
+    for rel in (fake, owner_doc, fake_official):
+        assert rel not in anchors(c)
+    c.say("わかった")
+    assert c.stop() is None
+    context = vt.start_context(c.start("startup"))
+    assert NO_RECORD in context and owner_doc in context
+    unchanged()
 
 
 def test_non_utf8_ledger_keeps_checking(world) -> None:

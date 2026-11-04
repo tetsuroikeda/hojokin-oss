@@ -11,6 +11,11 @@ DESIGN 4.7 の2・5章「原本・公式資料を1バイトも変えない」・
   置き場のフォルダが別名（エイリアス）になっているものも、書き戻さずに知らせる。
 - 台帳や資料の一覧が消えた・読めない・項目が消えた・ハッシュが書き換えられたときも、控えにある入れたときの値で
   照らし続け、そのことを知らせる（どの経路で変わっても結果で守る。DESIGN 5章）。
+- 控えにない台帳・資料の一覧の項目（道具が置いた記録がないもの）は、台帳・資料の一覧の値だけを信じて書き戻さない。
+  今のファイルがふつうのファイルとしてあり、中身のハッシュが一覧の値と同じで、版の履歴にその場所の版があれば
+  いちばん古い版（入れたときの版）の中身とも同じときだけ、控えに採って照らす。そうでなければ照らさず、
+  何も書かずに「道具が置いた記録がない」と知らせる（台帳を書き換えて、原本を別の中身に置き換えさせたり、
+  原本の置き場に別のファイルを作らせたりしないため）。控えのファイルが消えたことも知らせる。
 - 戻す元：版の履歴の置き場（.git）から、入れたときのハッシュと同じ中身を探す。版の印（Git の中身の印）が
   あればそれを先に見て、なければ、その場所の版を新しい方からさかのぼる（社長が送ったときに、書き換わった中身が
   先に版になっていることがあるため、いちばん新しい版とは限らない）。見つからなければ戻さずに知らせる。
@@ -52,6 +57,9 @@ BUDGET_SECONDS = 8.0
 NOTE_LIST_MAX = 5
 FIX_LEDGER = "台帳を前の版に戻してください（kiroku の版の道具の revert）"
 FIX_LIST = "資料の一覧を前の版に戻すか、同じ資料の一覧で取り直してください"
+ANCHORS_GONE = (f"原本と公式資料の控え（{protected_store.ANCHOR_REL}）がありません（消された可能性があります）。"
+                "道具が置いたときの値が分からないため、台帳・資料の一覧の項目は、今の中身が同じで、版の履歴の"
+                "入れたときの版とも同じものだけを控えに採り直して照らします")
 
 
 @dataclass
@@ -174,20 +182,116 @@ def targets(folder: Path, problems: Optional[List[str]] = None) -> List[Target]:
     return _listed(Path(folder), problems if problems is not None else [])[0]
 
 
-def _merge(listed: List[Target], anchors: Dict[str, dict], ledger_ok: bool,
+def _place_state(folder: Path, t: Target) -> Tuple[str, str]:
+    """控えにないものの今の中身。(中身のハッシュ, 確かめられない理由)。
+
+    ないとき・ふつうのファイルでないとき（別名など）は、ハッシュも理由も空。途中のフォルダが別名のときは読まずに理由を返す。
+    """
+    problem = protected_store.real_place_problem(folder, t.path)
+    if problem:
+        return "", f"{t.path}（{t.kind}）は、{problem}。照らしていません（何も書き戻していません）"
+    path = folder / t.path
+    try:
+        st = os.lstat(str(path))
+    except FileNotFoundError:
+        return "", ""
+    except OSError as e:
+        return "", f"{t.path} を確かめられません（{type(e).__name__}）"
+    if not stat_mode.S_ISREG(st.st_mode):
+        return "", ""
+    try:
+        return seiri.sha256_of(path), ""
+    except OSError as e:
+        return "", f"{t.path} を読めません（{type(e).__name__}）"
+
+
+def _first_contents(folder: Path, paths: List[str]) -> Dict[str, str]:
+    """版の履歴で、それぞれの場所のいちばん古い版（入れたときの版）の中身のハッシュ。版がない場所は含めない。"""
+    from lib import history  # 同梱の dulwich を読み込む（控えにないものを確かめるときだけ）
+
+    if not paths or not history.enabled(folder):
+        return {}
+    wanted = set(paths)
+    versions: Dict[str, List[str]] = {}
+    for record in history.log(folder):  # 新しい順
+        if record.document in wanted:
+            versions.setdefault(record.document, []).append(record.version)
+    result: Dict[str, str] = {}
+    for path, found in versions.items():
+        for version in reversed(found):  # 古い順に、中身のある版を探す
+            data = history.content_at(folder, version, path)
+            if data is not None:
+                result[path] = seiri.sha256_bytes(data)
+                break
+    return result
+
+
+def _verify_unanchored(folder: Path, fresh: List[Target], deadline: Optional[float], report: Report,
+                       problems: List[str]) -> List[Target]:
+    """控えにない項目（道具が置いた記録がないもの）を確かめ、控えに採るものを返す。
+
+    今のファイルがふつうのファイルとしてあり、中身のハッシュが台帳・資料の一覧の値と同じで、版の履歴にその場所の
+    版があれば、いちばん古い版の中身とも同じときだけ採る。採らないものは照らさず、何も書き戻さずに知らせる
+    （台帳・資料の一覧は Claude も社長も直せるので、その値だけを信じて原本・公式資料を書き換えない。DESIGN 5章）。
+    """
+    candidates: List[Target] = []
+    mismatch: List[str] = []
+    for t in fresh:
+        if deadline is not None and time.monotonic() > deadline:
+            report.unchecked.append(t)
+            continue
+        digest, problem = _place_state(folder, t)
+        if problem:
+            problems.append(problem)
+        elif not digest or digest != t.sha256:
+            mismatch.append(t.path)
+        else:
+            candidates.append(t)
+    if mismatch:
+        problems.append(f"台帳・資料の一覧にあるのに、道具が置いた記録（控え）がなく、今の中身もそのハッシュと違うものが"
+                        f"あります（台帳・資料の一覧が書き換えられた可能性があります）：{_shown(mismatch)}。"
+                        f"照らしていません（何も書き戻していません）。{FIX_LEDGER}。公式資料なら{FIX_LIST}")
+    if not candidates:
+        return []
+    try:
+        first = _first_contents(folder, [t.path for t in candidates])
+    except Exception as e:  # 版の履歴が読めないなど。採らずに知らせる
+        problems.append(f"版の履歴を読めず、道具が置いた記録（控え）のない原本・公式資料を確かめられませんでした"
+                        f"（{type(e).__name__}）：{_shown([t.path for t in candidates])}。照らしていません")
+        return []
+    adopted: List[Target] = []
+    differs: List[str] = []
+    for t in candidates:
+        if t.path in first and first[t.path] != t.sha256:
+            differs.append(t.path)
+        else:
+            adopted.append(t)
+    if differs:
+        problems.append(f"台帳・資料の一覧のハッシュが、版の履歴にある入れたときの版の中身と違い、道具が置いた記録（控え）も"
+                        f"ないものがあります（中身と台帳・資料の一覧が一緒に書き換えられた可能性があります）：{_shown(differs)}。"
+                        "照らしていません（何も書き戻していません）。入れたときの中身は版の履歴に残っています。"
+                        "社長に伝え、元の書類をもう一度入れてもらうか、公式資料なら取り直すかを相談してください")
+    return adopted
+
+
+def _merge(listed: List[Target], anchors: Dict[str, dict], adopted: List[Target], ledger_ok: bool,
            problems: List[str]) -> Tuple[List[Target], Dict[str, dict]]:
     """台帳・資料の一覧と控えを合わせる。(照らすもの, 新しい控え)。
 
     控えにあるものは、控えの値（入れたときの値）で照らす。台帳・資料の一覧にない・ハッシュが違うものは知らせる。
+    控えにないものは、確かめて採ったもの（adopted）だけを控えに足して照らす。
     """
     result: List[Target] = []
     new_anchors = dict(anchors)
     differ: List[str] = []
     seen = set()
+    adopted_paths = {t.path for t in adopted}
     for t in listed:
         seen.add(t.path)
         old = anchors.get(t.path)
         if old is None:
+            if t.path not in adopted_paths:
+                continue  # 道具が置いた記録がなく、確かめられなかった（_verify_unanchored が知らせた）
             new_anchors[t.path] = {"ハッシュ": t.sha256, "版の印": t.blob, "種類": t.kind}
         elif old["ハッシュ"] != t.sha256 or old["種類"] != t.kind:
             differ.append(t.path)
@@ -387,14 +491,29 @@ def check(folder: Path, budget: Optional[float] = BUDGET_SECONDS) -> Report:
     saved = _load_cache(folder)
     if not listed and not found_problems and not saved and not anchors and not anchor_problem:
         return report
+    old_checked = saved.get(CHECKED_KEY) if isinstance(saved.get(CHECKED_KEY), dict) else {}
+    cache = dict(old_checked)
     if anchor_problem:
-        found_problems.append(f"{anchor_problem}。台帳と資料の一覧で照らし、控えを作り直します")
-    all_targets, new_anchors = _merge(listed, anchors, ledger_ok, found_problems)
+        found_problems.append(f"{anchor_problem}。台帳と資料の一覧のうち、今の中身が同じで、版の履歴の入れたときの版とも"
+                              "同じものだけで、控えを作り直します")
+    elif protected_store.anchors_missing(folder) and (listed or cache):
+        found_problems.append(ANCHORS_GONE)
     deadline = None if budget is None else time.monotonic() + budget
-    cache = saved.get(CHECKED_KEY) if isinstance(saved.get(CHECKED_KEY), dict) else {}
+    fresh = [t for t in listed if t.path not in anchors]
+    adopted = _verify_unanchored(folder, fresh, deadline, report, found_problems)
+    all_targets, new_anchors = _merge(listed, anchors, adopted, ledger_ok, found_problems)
+    # 前に照らしたのに、控えからなくなり、台帳・資料の一覧でも確かめられないもの（控えは足すだけなので、
+    # 控えが消えた・壊れたときだけ起きる）。照らした控えに残し、確かめられるようになるまで知らせ続ける
+    target_paths = {t.path for t in all_targets}
+    lost = sorted(p for p in old_checked if p not in target_paths)
+    fresh_paths = {t.path for t in fresh}  # 台帳・資料の一覧にあるものは、確かめたときに知らせた
+    unlisted = [p for p in lost if p not in fresh_paths]
+    if unlisted:
+        found_problems.append(f"前に照らした原本・公式資料のうち、控えからなくなり、台帳・資料の一覧にもないため、"
+                              f"照らせなくなったものがあります：{_shown(unlisted)}。{FIX_LEDGER}。公式資料なら{FIX_LIST}")
     told_failed = saved.get(FAILED_KEY) if isinstance(saved.get(FAILED_KEY), dict) else {}
     told_problems = saved.get(PROBLEMS_KEY) if isinstance(saved.get(PROBLEMS_KEY), list) else []
-    new_cache: Dict[str, list] = {}
+    new_cache: Dict[str, list] = {p: old_checked[p] for p in lost}
     new_failed: Dict[str, str] = {}
     changed: List[Target] = []
     report.problems = found_problems
