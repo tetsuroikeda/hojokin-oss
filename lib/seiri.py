@@ -15,6 +15,9 @@
   版の印（Git の中身の印）・大きさ・整理した日時を残す。照らしと戻し（lib/originals_guard.py）が、このハッシュを使う。
 - 版の履歴があれば、移す前に中身を版の履歴の置き場（.git）に入れておく。同じ応答の中で原本が書き換えられても、
   応答の終わりの照らしで戻せるようにするため（版としての記録は、応答の終わりの hook が「ツール」で残す）。
+  移した後は、原本の控え（lib/protected_store.py）にも足す。台帳が消えたり項目が消えたりしても、照らしと戻しを続けるため。
+- 控えにある原本は、台帳から項目が消えていても整理した原本として扱う（新しい書類として出さない、もう一度移さない）。
+  控えに原本があるのに台帳がないときは、台帳を前の版に戻すまで整理しない（台帳にない原本を残さないため）。
 
 ここは標準のライブラリだけで動く。版の履歴の置き場に入れるときだけ、同梱の dulwich（lib/history.py）を読み込む。
 """
@@ -33,7 +36,7 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from lib import case_folder, company, dates
+from lib import case_folder, company, dates, protected_store
 from lib.company_init import CASES_DIR, INBOX_DIR, ORIGINAL_KINDS, ORIGINALS_DIR, RECORDS_DIR, VIEW_DIR
 
 LEDGER_FILE = "書類の台帳.json"
@@ -76,13 +79,7 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def git_blob_id(path: Path) -> str:
-    """Git が中身を置くときの印（版の履歴から同じ中身を探すときに使う）。"""
-    digest = hashlib.sha1(b"blob %d\x00" % os.path.getsize(path))
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(CHUNK), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+git_blob_id = protected_store.blob_id  # Git が中身を置くときの印
 
 
 def nfc(text: str) -> str:
@@ -100,13 +97,33 @@ def empty_ledger() -> dict:
     return {"説明": LEDGER_NOTE, ORIGINALS_KEY: [], KEPT_KEY: []}
 
 
+def anchored_originals(folder: Path) -> Dict[str, dict]:
+    """原本の控え（lib/protected_store.py）にある原本。場所 → {ハッシュ, 版の印, 種類}。"""
+    anchors, _problem = protected_store.load_anchors(folder)
+    return {rel: a for rel, a in anchors.items() if a["種類"] == protected_store.ORIGINAL}
+
+
 def load_ledger(folder: Path) -> dict:
-    """台帳を読む。なければ空の台帳。JSON として読めないときと形が違うときは SeiriError（黙って空にしない）。"""
+    """台帳を読む。なければ空の台帳。
+
+    読めないとき（JSON として読めない、UTF-8 でない、権限がない など）と形が違うときは SeiriError（黙って空にしない）。
+    台帳がないのに原本の控えに原本があるときも SeiriError（台帳が消えた。前の版に戻すまで整理しない）。
+    """
     path = ledger_path(folder)
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
+        known = anchored_originals(folder)
+        if known:
+            raise SeiriError(
+                f"{LEDGER_PATH} がありません（前に整理した原本が {len(known)} 件あります）。"
+                "台帳を前の版に戻してから整理します（kiroku の版の道具の revert で、"
+                f"{LEDGER_PATH} を消える前の版に戻す）。分からなければ社長に確かめてください")
         return empty_ledger()
+    except UnicodeDecodeError as e:
+        raise SeiriError(f"{LEDGER_PATH} が読めません（文字の形が UTF-8 ではありません）") from e
+    except OSError as e:
+        raise SeiriError(f"{LEDGER_PATH} が読めません（{type(e).__name__}）") from e
     try:
         data = json.loads(text)
     except ValueError as e:
@@ -268,6 +285,10 @@ def scan(folder: Path) -> ScanResult:
     ledger = load_ledger(folder)
     registered = {nfc(e["場所"]) for e in originals(ledger)}
     by_hash = {e.get("ハッシュ"): e for e in originals(ledger)}
+    # 控えにある原本は、台帳から項目が消えていても整理した原本として扱う
+    for rel, anchor in anchored_originals(folder).items():
+        registered.add(rel)
+        by_hash.setdefault(anchor["ハッシュ"], {"場所": rel})
     kept_hashes = {e.get("ハッシュ") for e in ledger.get(KEPT_KEY, [])}
     result = ScanResult()
     first: Dict[str, str] = {}
@@ -301,24 +322,10 @@ def scan(folder: Path) -> ScanResult:
 
 def _store_blob(folder: Path, path: Path) -> bool:
     """版の履歴があれば、中身を版の履歴の置き場（.git）に入れる。入れたら True。"""
-    from lib import history  # 同梱の dulwich を読み込む（使うときだけ）
-
-    if not history.enabled(folder):
-        return False
-    from dulwich.objects import Blob
-    from dulwich.repo import Repo
-
-    data = path.read_bytes()
     try:
-        with history.locked(folder):
-            repo = Repo(str(folder))
-            try:
-                repo.object_store.add_object(Blob.from_string(data))
-            finally:
-                repo.close()
-    except history.HistoryBusy as e:
+        return bool(protected_store.store(folder, path))
+    except protected_store.Busy as e:
         raise SeiriError("ほかの処理が版の履歴を使っているところです。移していません。少し待ってから、もう一度動かしてください") from e
-    return True
 
 
 def _move_without_overwrite(src: Path, dest: Path) -> None:
@@ -360,18 +367,20 @@ def organize(folder: Path, given: str, category: str, kind: str, day: str,
     ledger = load_ledger(folder)
     src, rel = resolve_document(folder, given)
     registered = {nfc(e["場所"]): e for e in originals(ledger)}
-    if rel in registered:
+    anchored = anchored_originals(folder)
+    if rel in registered or rel in anchored:
         raise SeiriError(f"{rel} は、もう整理した原本です")
     category = check_category(category)
     name = standard_name(kind, day, src.suffix, partner, note)
     dest_rel = f"{ORIGINALS_DIR}/{category}/{name}"
     digest = sha256_of(src)
-    for e in originals(ledger):
-        if e.get("ハッシュ") == digest:
+    known = [(e["場所"], e.get("ハッシュ")) for e in originals(ledger)] + [(p, a["ハッシュ"]) for p, a in anchored.items()]
+    for place, known_digest in known:
+        if known_digest == digest:
             raise SeiriError(
-                f"{rel} は、原本の {e['場所']} と同じ中身です。移していません。1つにまとめるかを社長に確かめてください")
+                f"{rel} は、原本の {place} と同じ中身です。移していません。1つにまとめるかを社長に確かめてください")
     dest = folder / ORIGINALS_DIR / category / name
-    if os.path.lexists(str(dest)):
+    if os.path.lexists(str(dest)) or dest_rel in anchored:
         raise SeiriError(
             f"同じ名前の原本（{dest_rel}）がもうあります（中身は違います）。移していません。"
             "見分ける言葉（機械の名前、何通目か など）を補足（--note）に入れて、もう一度動かしてください")
@@ -409,6 +418,8 @@ def organize(folder: Path, given: str, category: str, kind: str, day: str,
         os.chmod(str(dest), stat_mode.S_IMODE(os.lstat(str(dest)).st_mode) | 0o200)
         os.rename(str(dest), str(src))
         raise
+    # 原本の控えにも足す（台帳が消えたり項目が消えたりしても、照らしと戻しを続けるため）
+    protected_store.remember(folder, dest_rel, digest, blob, protected_store.ORIGINAL)
     return entry
 
 
@@ -417,7 +428,7 @@ def keep(folder: Path, given: str, reason: str) -> dict:
     folder = Path(folder)
     ledger = load_ledger(folder)
     src, rel = resolve_document(folder, given)
-    if rel in {nfc(e["場所"]) for e in originals(ledger)}:
+    if rel in {nfc(e["場所"]) for e in originals(ledger)} or rel in anchored_originals(folder):
         raise SeiriError(f"{rel} は、もう整理した原本です")
     digest = sha256_of(src)
     entry = {

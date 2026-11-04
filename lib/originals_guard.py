@@ -3,11 +3,18 @@ DESIGN 4.7 の2・5章「原本・公式資料を1バイトも変えない」・
 
 開いたとき（SessionStart）と、Claude が応答を終えるたび（Stop）に、hook から呼ぶ（hooks/originals_hooks.py）。
 - 照らすもの：書類の台帳（`記録/書類の台帳.json`、lib/seiri.py）の原本と、公式資料を取る道具が残した
-  資料の一覧（`記録/資料の本文/<案件>/資料の一覧.json`、lib/official_docs.py）の公式資料。
-  どちらも、入れたときの中身のハッシュ（sha256）を持つ。今の中身と比べ、違う・消えたものを戻す。
-- 戻す元：版の履歴の置き場（.git）から、台帳のハッシュと同じ中身を探す。台帳に版の印（Git の中身の印）があれば
-  それを先に見て、なければ、その場所の版を新しい方からさかのぼる（社長が送ったときに、書き換わった中身が
+  資料の一覧（`記録/資料の本文/<案件>/資料の一覧.json`、lib/official_docs.py）の公式資料に、
+  原本の控え（`.hojokin/一時/原本の印.json`、lib/protected_store.py）にあるものを合わせる。
+  どれも、入れたときの中身のハッシュ（sha256）を持つ。今の中身と比べ、違う・消えたものを戻す。
+- 照らして戻すのは、`原本/<区分>/…` と `案件/<案件>/公式資料/…` の下だけ（lib/protected_store.allowed_place）。
+  台帳や資料の一覧は Claude も社長も直せるので（DESIGN 4.5）、その外を指す場所は照らさず、何も書かずに知らせる。
+  置き場のフォルダが別名（エイリアス）になっているものも、書き戻さずに知らせる。
+- 台帳や資料の一覧が消えた・読めない・項目が消えた・ハッシュが書き換えられたときも、控えにある入れたときの値で
+  照らし続け、そのことを知らせる（どの経路で変わっても結果で守る。DESIGN 5章）。
+- 戻す元：版の履歴の置き場（.git）から、入れたときのハッシュと同じ中身を探す。版の印（Git の中身の印）が
+  あればそれを先に見て、なければ、その場所の版を新しい方からさかのぼる（社長が送ったときに、書き換わった中身が
   先に版になっていることがあるため、いちばん新しい版とは限らない）。見つからなければ戻さずに知らせる。
+  原本と公式資料は、道具が置く前に中身を版の履歴の置き場に入れ、版の印を台帳・資料の一覧・控えに残す。
 - 戻した原本と公式資料は、読み取り専用にする。中身が同じで書き込めるようになっていたものも、読み取り専用に戻す。
 - 版の記録より先に動かす（hooks/originals_hooks.py）。書き換わった中身を版に残さず、原本と公式資料の版が
   入れたときの1版のままになるようにするため（DESIGN 10章）。
@@ -29,13 +36,13 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from lib import company, seiri
+from lib import company, protected_store, seiri
 from lib.company_init import RECORDS_DIR
 
-ORIGINAL = "原本"
-OFFICIAL = "公式資料"
+ORIGINAL = protected_store.ORIGINAL
+OFFICIAL = protected_store.OFFICIAL
 TEXT_DIR = "資料の本文"  # lib/official_docs.py の TEXT_DIR と同じ
 LIST_FILE = "資料の一覧.json"  # lib/official_docs.py の LIST_FILE と同じ
 CACHE_FILE = "原本の照らし.json"
@@ -43,6 +50,8 @@ READ_ONLY = seiri.READ_ONLY
 # 1回の照らしで、中身を読むのに使う秒数（hook の見張りと、版の記録の時間を残す。仮）
 BUDGET_SECONDS = 8.0
 NOTE_LIST_MAX = 5
+FIX_LEDGER = "台帳を前の版に戻してください（kiroku の版の道具の revert）"
+FIX_LIST = "資料の一覧を前の版に戻すか、同じ資料の一覧で取り直してください"
 
 
 @dataclass
@@ -52,7 +61,7 @@ class Target:
     path: str
     sha256: str
     kind: str  # 原本・公式資料
-    blob: str = ""  # Git の中身の印（台帳にあれば）
+    blob: str = ""  # Git の中身の印（台帳・資料の一覧・控えにあれば）
 
 
 @dataclass
@@ -65,6 +74,11 @@ class Report:
     problems_known: List[str] = field(default_factory=list)  # 同じく、前の場面で伝えたもの
 
 
+def _shown(paths: List[str]) -> str:
+    rest = len(paths) - NOTE_LIST_MAX
+    return "、".join(paths[:NOTE_LIST_MAX]) + (f"（ほか{rest}件）" if rest > 0 else "")
+
+
 # ---- 照らすもの ----
 
 
@@ -75,43 +89,133 @@ def _list_files(folder: Path) -> List[Path]:
     return sorted(p for p in base.glob(f"*/{LIST_FILE}") if p.is_file())
 
 
-def targets(folder: Path, problems: Optional[List[str]] = None) -> List[Target]:
-    """台帳の原本と、資料の一覧の公式資料。読めないものは problems に理由を足して飛ばす。"""
-    folder = Path(folder)
-    problems = problems if problems is not None else []
-    found: List[Target] = []
-    seen = set()
+def _hash_text(value: object) -> str:
+    return value if isinstance(value, str) and value else ""
+
+
+def _from_ledger(folder: Path, problems: List[str]) -> Tuple[List[Target], bool]:
+    """台帳の原本。(照らすもの, 台帳が読めたか)。"""
     try:
         ledger = seiri.load_ledger(folder)
     except seiri.SeiriError as e:
         problems.append(str(e))
-        ledger = seiri.empty_ledger()
+        return [], False
+    except Exception as e:  # 思わぬ形でも、公式資料の照らしは続ける
+        problems.append(f"{seiri.LEDGER_PATH} が読めません（{type(e).__name__}）")
+        return [], False
+    found: List[Target] = []
+    outside: List[str] = []
     for e in seiri.originals(ledger):
-        digest = e.get("ハッシュ")
-        if isinstance(digest, str) and digest and e["場所"] not in seen:
-            seen.add(e["場所"])
-            found.append(Target(seiri.nfc(e["場所"]), digest, ORIGINAL, str(e.get("版の印") or "")))
-    for list_file in _list_files(folder):
-        rel_list = list_file.relative_to(folder).as_posix()
-        try:
-            data = json.loads(list_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as e:
-            problems.append(f"{rel_list} が読めません（{e}）")
+        place = seiri.nfc(e["場所"])
+        digest = _hash_text(e.get("ハッシュ"))
+        if not digest:
             continue
-        if not isinstance(data, dict):
-            problems.append(f"{rel_list} の形が違います")
+        if not protected_store.allowed_place(place, ORIGINAL):
+            outside.append(place)
             continue
-        places = data.get("置き場所") if isinstance(data.get("置き場所"), dict) else {}
-        for doc in data.get("資料") or []:
-            if not isinstance(doc, dict):
-                continue
-            place = places.get(doc.get("id"))
-            file = place.get("ファイル") if isinstance(place, dict) else None
-            digest = doc.get("ハッシュ")
-            if isinstance(file, str) and file and isinstance(digest, str) and digest and file not in seen:
-                seen.add(file)
-                found.append(Target(seiri.nfc(file), digest, OFFICIAL))
+        found.append(Target(place, digest, ORIGINAL, _hash_text(e.get("版の印"))))
+    if outside:
+        problems.append(f"{seiri.LEDGER_PATH} の原本の場所のうち、原本の置き場（原本/<区分>/）の外を指すものは、"
+                        f"照らしていません（何も書き戻していません）：{_shown(outside)}")
+    return found, True
+
+
+def _from_list(folder: Path, list_file: Path, problems: List[str]) -> List[Target]:
+    """資料の一覧の公式資料。"""
+    rel_list = list_file.relative_to(folder).as_posix()
+    try:
+        data = json.loads(list_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        problems.append(f"{rel_list} が読めません（{type(e).__name__}）")
+        return []
+    if not isinstance(data, dict):
+        problems.append(f"{rel_list} の形が違います")
+        return []
+    places = data.get("置き場所") if isinstance(data.get("置き場所"), dict) else {}
+    docs = data.get("資料") if isinstance(data.get("資料"), list) else []
+    found: List[Target] = []
+    outside: List[str] = []
+    for doc in docs:
+        if not isinstance(doc, dict) or not isinstance(doc.get("id"), str):
+            continue
+        place = places.get(doc["id"])
+        file = place.get("ファイル") if isinstance(place, dict) else None
+        digest = _hash_text(doc.get("ハッシュ"))
+        if not isinstance(file, str) or not file or not digest:
+            continue
+        file = seiri.nfc(file)
+        if not protected_store.allowed_place(file, OFFICIAL):
+            outside.append(file)
+            continue
+        found.append(Target(file, digest, OFFICIAL, _hash_text(place.get("版の印"))))
+    if outside:
+        problems.append(f"{rel_list} の公式資料の場所のうち、公式資料の置き場（案件/<案件>/公式資料/）の外を指すものは、"
+                        f"照らしていません（何も書き戻していません）：{_shown(outside)}")
     return found
+
+
+def _listed(folder: Path, problems: List[str]) -> Tuple[List[Target], bool]:
+    """台帳の原本と、資料の一覧の公式資料（同じ場所は1つ）。(照らすもの, 台帳が読めたか)。"""
+    folder = Path(folder)
+    found, ledger_ok = _from_ledger(folder, problems)
+    for list_file in _list_files(folder):
+        found += _from_list(folder, list_file, problems)
+    unique: List[Target] = []
+    seen = set()
+    for t in found:
+        if t.path not in seen:
+            seen.add(t.path)
+            unique.append(t)
+    return unique, ledger_ok
+
+
+def targets(folder: Path, problems: Optional[List[str]] = None) -> List[Target]:
+    """台帳の原本と、資料の一覧の公式資料。読めないもの・置き場の外を指すものは problems に理由を足して飛ばす。"""
+    return _listed(Path(folder), problems if problems is not None else [])[0]
+
+
+def _merge(listed: List[Target], anchors: Dict[str, dict], ledger_ok: bool,
+           problems: List[str]) -> Tuple[List[Target], Dict[str, dict]]:
+    """台帳・資料の一覧と控えを合わせる。(照らすもの, 新しい控え)。
+
+    控えにあるものは、控えの値（入れたときの値）で照らす。台帳・資料の一覧にない・ハッシュが違うものは知らせる。
+    """
+    result: List[Target] = []
+    new_anchors = dict(anchors)
+    differ: List[str] = []
+    seen = set()
+    for t in listed:
+        seen.add(t.path)
+        old = anchors.get(t.path)
+        if old is None:
+            new_anchors[t.path] = {"ハッシュ": t.sha256, "版の印": t.blob, "種類": t.kind}
+        elif old["ハッシュ"] != t.sha256 or old["種類"] != t.kind:
+            differ.append(t.path)
+        elif not old["版の印"] and t.blob:
+            new_anchors[t.path] = dict(old, 版の印=t.blob)
+        a = new_anchors[t.path]
+        result.append(Target(t.path, a["ハッシュ"], a["種類"], a["版の印"]))
+    missing = {ORIGINAL: [], OFFICIAL: []}
+    for path in sorted(anchors):
+        if path not in seen:
+            a = anchors[path]
+            missing[a["種類"]].append(path)
+            result.append(Target(path, a["ハッシュ"], a["種類"], a["版の印"]))
+    if differ:
+        problems.append(f"台帳・資料の一覧のハッシュが、入れたときと違うものがあります（書き換えられた可能性があります）："
+                        f"{_shown(differ)}。入れたときの中身で照らしています。{FIX_LEDGER}。公式資料なら{FIX_LIST}")
+    if missing[ORIGINAL]:
+        if ledger_ok:
+            problems.append(f"{seiri.LEDGER_PATH} に、前に照らした原本がありません（台帳から項目が消えました）："
+                            f"{_shown(missing[ORIGINAL])}。控えにある入れたときの中身で照らし続けます。{FIX_LEDGER}")
+        else:
+            problems.append(f"台帳が読めないため、前に照らした原本 {len(missing[ORIGINAL])} 件は、"
+                            f"控えにある入れたときの中身で照らしています。{FIX_LEDGER}")
+    if missing[OFFICIAL]:
+        problems.append(f"資料の一覧（{RECORDS_DIR}/{TEXT_DIR}/<案件>/{LIST_FILE}）に、前に照らした公式資料がありません"
+                        f"（一覧が消えたか、読めないか、項目が消えました）：{_shown(missing[OFFICIAL])}。"
+                        f"控えにある入れたときの中身で照らし続けます。{FIX_LIST}")
+    return result, new_anchors
 
 
 # ---- 控え（読まずに済ませるための、大きさと時刻） ----
@@ -178,7 +282,7 @@ def find_content(folder: Path, target: Target) -> Optional[bytes]:
             data = obj.as_raw_string()
             if seiri.sha256_bytes(data) == target.sha256:
                 return data
-        except (KeyError, ValueError, AttributeError):
+        except (KeyError, ValueError, AttributeError, UnicodeEncodeError):
             pass
         finally:
             repo.close()
@@ -190,7 +294,15 @@ def find_content(folder: Path, target: Target) -> Optional[bytes]:
 
 
 def _write_back(folder: Path, target: Target, data: bytes) -> None:
-    """入れたときの中身を書き戻し、読み取り専用にする。書きかけのファイルが残らないよう、隣に書いてから置き換える。"""
+    """入れたときの中身を書き戻し、読み取り専用にする。書きかけのファイルが残らないよう、隣に書いてから置き換える。
+
+    書き戻すのは、原本の置き場と公式資料の置き場の下だけ。途中のフォルダが別名のときも書かない。
+    """
+    if not protected_store.allowed_place(target.path, target.kind):
+        raise OSError(f"{target.path} は原本・公式資料の置き場の外です")
+    problem = protected_store.real_place_problem(folder, target.path)
+    if problem:
+        raise OSError(problem)
     path = Path(folder) / target.path
     if not _inside(folder, path):
         raise OSError(f"{target.path} の置き場が会社のフォルダの外を指しています")
@@ -218,6 +330,49 @@ def _current_sha(path: Path) -> str:
         return ""
 
 
+def _check_one(folder: Path, t: Target, cache: dict, deadline: Optional[float], report: Report,
+               new_cache: Dict[str, list], changed: List[Target]) -> None:
+    """1つを照らす。変わった・消えたものは changed に足す。"""
+    problem = protected_store.real_place_problem(folder, t.path)
+    if problem:
+        report.problems.append(f"{t.path}（{t.kind}）は、{problem}。照らしていません（何も書き戻していません）")
+        return
+    path = folder / t.path
+    try:
+        st = os.lstat(str(path))
+    except FileNotFoundError:
+        changed.append(t)
+        return
+    except OSError as e:
+        report.problems.append(f"{t.path} を確かめられません（{type(e).__name__}）")
+        return
+    if not stat_mode.S_ISREG(st.st_mode):
+        changed.append(t)
+        return
+    cached = cache.get(t.path)
+    if isinstance(cached, list) and cached == _stat_key(st) + [t.sha256]:
+        new_cache[t.path] = cached
+        return
+    if deadline is not None and time.monotonic() > deadline:
+        report.unchecked.append(t)
+        return
+    try:
+        digest = seiri.sha256_of(path)
+    except OSError as e:
+        report.problems.append(f"{t.path} を読めません（{type(e).__name__}）")
+        return
+    if digest != t.sha256:
+        changed.append(t)
+        return
+    if stat_mode.S_IMODE(st.st_mode) & 0o222:
+        try:
+            os.chmod(str(path), READ_ONLY)
+            st = os.lstat(str(path))
+        except OSError:
+            pass
+    new_cache[t.path] = _stat_key(st) + [t.sha256]
+
+
 def check(folder: Path, budget: Optional[float] = BUDGET_SECONDS) -> Report:
     """原本と公式資料を照らし、変わった・消えたものを戻す。結果を返す。
 
@@ -227,10 +382,14 @@ def check(folder: Path, budget: Optional[float] = BUDGET_SECONDS) -> Report:
     folder = Path(folder)
     report = Report()
     found_problems: List[str] = []
-    all_targets = targets(folder, found_problems)
+    listed, ledger_ok = _listed(folder, found_problems)
+    anchors, anchor_problem = protected_store.load_anchors(folder)
     saved = _load_cache(folder)
-    if not all_targets and not found_problems and not saved:
+    if not listed and not found_problems and not saved and not anchors and not anchor_problem:
         return report
+    if anchor_problem:
+        found_problems.append(f"{anchor_problem}。台帳と資料の一覧で照らし、控えを作り直します")
+    all_targets, new_anchors = _merge(listed, anchors, ledger_ok, found_problems)
     deadline = None if budget is None else time.monotonic() + budget
     cache = saved.get(CHECKED_KEY) if isinstance(saved.get(CHECKED_KEY), dict) else {}
     told_failed = saved.get(FAILED_KEY) if isinstance(saved.get(FAILED_KEY), dict) else {}
@@ -240,40 +399,10 @@ def check(folder: Path, budget: Optional[float] = BUDGET_SECONDS) -> Report:
     changed: List[Target] = []
     report.problems = found_problems
     for t in all_targets:
-        path = folder / t.path
         try:
-            st = os.lstat(str(path))
-        except FileNotFoundError:
-            changed.append(t)
-            continue
-        except OSError as e:
-            report.problems.append(f"{t.path} を確かめられません（{e}）")
-            continue
-        if not stat_mode.S_ISREG(st.st_mode):
-            changed.append(t)
-            continue
-        cached = cache.get(t.path)
-        if isinstance(cached, list) and cached == _stat_key(st) + [t.sha256]:
-            new_cache[t.path] = cached
-            continue
-        if deadline is not None and time.monotonic() > deadline:
-            report.unchecked.append(t)
-            continue
-        try:
-            digest = seiri.sha256_of(path)
-        except OSError as e:
-            report.problems.append(f"{t.path} を読めません（{e}）")
-            continue
-        if digest != t.sha256:
-            changed.append(t)
-            continue
-        if stat_mode.S_IMODE(st.st_mode) & 0o222:
-            try:
-                os.chmod(str(path), READ_ONLY)
-                st = os.lstat(str(path))
-            except OSError:
-                pass
-        new_cache[t.path] = _stat_key(st) + [t.sha256]
+            _check_one(folder, t, cache, deadline, report, new_cache, changed)
+        except Exception as e:  # 1つが思わぬ形でも、ほかのものは続ける
+            report.problems.append(f"{t.path} を確かめられません（{type(e).__name__}）")
     for t in changed:
         try:
             data = find_content(folder, t)
@@ -301,16 +430,34 @@ def check(folder: Path, budget: Optional[float] = BUDGET_SECONDS) -> Report:
     report.problems = [p for p in report.problems if p not in told_problems]
     _save_cache(folder, {CHECKED_KEY: new_cache, FAILED_KEY: new_failed,
                          PROBLEMS_KEY: report.problems_known + report.problems})
+    if new_anchors != anchors or anchor_problem:
+        try:
+            protected_store.save_anchors(folder, new_anchors)
+        except OSError:
+            pass  # 控えに書けなくても、台帳と資料の一覧で照らす（次の場面で書き直す）
     return report
+
+
+def failure_notes(folder: Path, error: BaseException, at_start: bool) -> List[str]:
+    """照らしそのものが止まったときに伝える文。応答の終わりには、前に伝えた同じ文は伝え直さない。"""
+    text = f"【hojokin】原本と公式資料を照らせませんでした（{type(error).__name__}: {error}）。次の場面で、また照らします。"
+    try:
+        saved = _load_cache(folder)
+        told = saved.get(PROBLEMS_KEY) if isinstance(saved.get(PROBLEMS_KEY), list) else []
+        if text in told:
+            return [text] if at_start else []
+        saved[PROBLEMS_KEY] = told + [text]
+        _save_cache(folder, saved)
+    except Exception:
+        pass  # 控えが使えなくても、伝えることは伝える
+    return [text]
 
 
 # ---- Claude に伝える文 ----
 
 
 def _names(items: List[Target]) -> str:
-    shown = [f"{t.path}（{t.kind}）" for t in items[:NOTE_LIST_MAX]]
-    rest = len(items) - NOTE_LIST_MAX
-    return "、".join(shown) + (f"（ほか{rest}件）" if rest > 0 else "")
+    return _shown([f"{t.path}（{t.kind}）" for t in items])
 
 
 def notes(report: Report, at_start: bool) -> List[str]:

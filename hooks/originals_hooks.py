@@ -9,7 +9,7 @@
   「応答中」にする（version_hooks.continue_response）。Stop の hook で続けているとき（stop_hook_active）は、
   続けさせすぎないよう、社長の画面に直接出す（systemMessage）。
 - どんな失敗でも例外を外に出さない（hook が落ちると、run.sh が「Python が動かない」とみなし、
-  書き込みと Bash を拒んでしまうため）。照らせなかったことを伝える。
+  書き込みと Bash を拒んでしまうため）。照らせなかったことを伝える（応答の終わりには、同じ文は一度だけ）。
 """
 
 from __future__ import annotations
@@ -28,7 +28,8 @@ def check(data: dict, folder: Path) -> List[str]:
         report = originals_guard.check(folder)
         return originals_guard.notes(report, at_start)
     except Exception as error:
-        return [f"【hojokin】原本と公式資料を照らせませんでした（{type(error).__name__}: {error}）。次の場面で、また照らします。"]
+        # 照らせなかったことを伝える。応答の終わりには、前に伝えた同じ文で続けさせない
+        return originals_guard.failure_notes(folder, error, at_start)
 
 
 def session_start(output: Optional[dict], notes: List[str]) -> Optional[dict]:

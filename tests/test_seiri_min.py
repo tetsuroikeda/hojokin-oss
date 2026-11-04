@@ -13,6 +13,8 @@
 - 応答の終わりに、移したことが「ツール」の版として残り、版の名前の指摘は出ない。
 - 動かしただけ・名前を変えただけの書類は、新しい書類として出さない。分からない書類は動かさずに台帳に残せる。
 - 同じ名前・同じ中身の原本があるとき、引数が違うとき、会社のフォルダの外・ツールの置き場の中は、何も変えずに断る。
+- 台帳から項目が消えた原本は、新しい書類として出さず、もう一度移さない。台帳が消えた・読めない（UTF-8 でない など）
+  ときは、何も変えずに断る（traceback を出さない）。
 """
 
 from __future__ import annotations
@@ -393,6 +395,49 @@ def test_broken_ledger_is_not_overwritten(company) -> None:
     assert "JSON として読めません" in out
     assert "JSON として読めません" in refused(run_tool(company, "scan"))
     assert files_and_ledger(company) == before
+    # UTF-8 でない台帳も、落ちずに断る（終了コード2、traceback を出さない）
+    company.write(LEDGER, '{"原本": [], "メモ": "あ"}'.encode("cp932"))
+    before = files_and_ledger(company)
+    for command in ("scan", "list"):
+        assert "UTF-8" in refused(run_tool(company, command))
+    assert "UTF-8" in refused(run_tool(company, "organize", "--path", "入れ口/決算書18.pdf", "--category", "決算・税",
+                                       "--kind", "決算書", "--date", "2025-04-01"))
+    assert files_and_ledger(company) == before
+
+
+def test_originals_missing_from_ledger_are_still_originals(company) -> None:
+    """台帳から項目が消えても、整理した原本（控えにあるもの）は新しい書類として出さず、もう一度移さない。
+    台帳そのものが消えたときは、前の版に戻すまで整理しない。"""
+    put(company, "入れ口/決算書18.pdf", "決算書_第18期.pdf")
+    put(company, "入れ口/見積.pdf", "見積書_ほしみ機工.pdf")
+    kessan = organize(company, "入れ口/決算書18.pdf", "決算・税", "決算書", "2025-04-01")["新しい場所"]
+    mitsumori = organize(company, "入れ口/見積.pdf", "見積・契約・請求", "見積書", "2026-10-27", "ほしみ機工")["新しい場所"]
+    data = ledger(company)
+    data["原本"] = [e for e in data["原本"] if e["場所"] != kessan]
+    company.write(LEDGER, json.dumps(data, ensure_ascii=False))
+    put(company, "入れ口/決算書のコピー.pdf", "決算書_第18期.pdf")
+    found = ok_json(run_tool(company, "scan"))
+    assert found["新しい書類"] == []
+    assert found["同じ中身"] == [{"場所": "入れ口/決算書のコピー.pdf", "同じ中身の書類": kessan, "同じ中身の書類は": "台帳の原本"}]
+    before = files_and_ledger(company)
+    for args, words in ((["--path", kessan, "--category", "決算・税", "--kind", "決算書", "--date", "2025-04-02"],
+                         "もう整理した原本"),
+                        (["--path", "入れ口/決算書のコピー.pdf", "--category", "決算・税", "--kind", "決算書",
+                          "--date", "2025-04-02"], "同じ中身")):
+        assert words in refused(run_tool(company, "organize", *args))
+    assert "もう整理した原本" in refused(run_tool(company, "keep", "--path", kessan))
+    assert files_and_ledger(company) == before
+
+    # 台帳が消えたら、どの道具も動かない（原本を新しい書類として出さない。台帳にない原本を作らない）
+    (company.folder / LEDGER).unlink()
+    before = files_and_ledger(company)
+    for command, args in (("scan", []), ("list", []), ("keep", ["--path", "入れ口/決算書のコピー.pdf"]),
+                          ("organize", ["--path", "入れ口/決算書のコピー.pdf", "--category", "決算・税",
+                                        "--kind", "決算書", "--date", "2025-04-02"])):
+        out = refused(run_tool(company, command, *args))
+        assert "書類の台帳.json がありません" in out and "前の版に戻して" in out, (command, out)
+    assert files_and_ledger(company) == before
+    assert (company.folder / mitsumori).exists()
 
 
 # ---- 中身を読む ----

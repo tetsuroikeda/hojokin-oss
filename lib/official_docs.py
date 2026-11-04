@@ -13,6 +13,8 @@
    回の違う資料（第6回版の手引きなど）も、資料ごとに示す。
 
 通信は、標準のライブラリ（urllib）だけで行う。版の履歴に残すのは、応答の終わりの hook（ツールの版）に任せる。
+ただし、置く前に中身を版の履歴の置き場（.git）に入れ、版の印を資料の一覧の「置き場所」と原本の控えに残す
+（lib/protected_store.py）。同じ応答の中で書き換えられても、応答の終わりの照らしで戻せるようにするため（TASKS M4）。
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from lib import case_folder, dates, doc_text
+from lib import case_folder, dates, doc_text, protected_store
 
 RECORDS_DIR = "記録"  # lib/company_init.py の RECORDS_DIR と同じ
 TEXT_DIR = "資料の本文"
@@ -79,6 +81,7 @@ class DocResult:
     text_dir: str = ""
     text_index: Optional[Dict] = None
     text_error: str = ""
+    blob: str = ""  # 版の履歴の置き場に入れた中身の印（版の履歴がなければ空）
 
 
 @dataclass
@@ -294,14 +297,26 @@ def fetch_one(company: Path, official: Path, doc: Dict,
         if before is not None:
             rel = str(before.relative_to(company))
             if before.suffix.lower() == suffix and sha256_of(before) == digest:
-                return DocResult(doc, SAME, "前に取ったものと同じ中身でした", rel, digest)
+                try:  # 前に取ったときの中身の印がなくても、ここで預ける（預けられなくても、同じ中身なので続ける）
+                    blob = protected_store.store(company, temp)
+                except Exception:
+                    blob = ""
+                protected_store.remember(company, rel, digest, blob, protected_store.OFFICIAL)
+                return DocResult(doc, SAME, "前に取ったものと同じ中身でした", rel, digest, blob=blob)
             return DocResult(
                 doc, CHANGED,
                 "前に取ったものと中身が違いました。改訂された可能性があります。前のものを残し、新しいものは置いていません",
                 rel, sha256_of(before))
+        # 置く前に、中身を版の履歴の置き場に入れる（同じ応答の中で書き換えられても戻せるように）
+        try:
+            blob = protected_store.store(company, temp)
+        except protected_store.Busy:
+            return DocResult(doc, FAILED, "ほかの処理が版の履歴を使っているところでした。置いていません。少し待ってから、もう一度取ってください")
         os.replace(temp, target)
         target.chmod(READ_ONLY)
-        return DocResult(doc, GOT, "", str(target.relative_to(company)), digest)
+        rel = str(target.relative_to(company))
+        protected_store.remember(company, rel, digest, blob, protected_store.OFFICIAL)
+        return DocResult(doc, GOT, "", rel, digest, blob=blob)
     finally:
         if temp.exists():
             temp.unlink()
@@ -370,7 +385,13 @@ def write_list(company: Path, case: str, seido: Dict, results: List[DocResult], 
         old = entries.get(r.doc["id"])
         if r.status in (GOT, SAME):
             entries[r.doc["id"]] = _list_entry(r, today, old)
-            places[r.doc["id"]] = {"ファイル": r.file, "本文": r.text_dir}
+            place = {"ファイル": r.file, "本文": r.text_dir}
+            # 版の印（照らしと戻しが、入れたときの中身を探すのに使う。制度データの「資料」には写さない）
+            old_place = places.get(r.doc["id"]) if isinstance(places.get(r.doc["id"]), dict) else {}
+            blob = r.blob or (old_place.get("版の印") if old_place.get("ファイル") == r.file else "")
+            if blob:
+                place["版の印"] = blob
+            places[r.doc["id"]] = place
     data = {
         "案件": case,
         "制度": seido,
