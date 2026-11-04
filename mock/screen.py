@@ -1,7 +1,10 @@
-"""模擬の申請画面（省力化・一般型 第8回）の画面の定義。D11a は1画面版。
+"""模擬の申請画面（省力化・一般型 第8回）の画面の定義。
 
-電子申請マニュアル（応募申請）第8回の画面の並び（❶〜⓬）に合わせて、欄を縦に並べる。
-D11b で12画面に分けるときも、この定義を分けて使う。
+電子申請マニュアル（応募申請）第8回の画面の並び（❶〜⓬）に合わせる。
+- D11a の1画面版（/shinsei）は、❶〜⓬ の段を縦に並べる。
+- D11b の12画面版（/shinsei/1〜/shinsei/12）は、段を1つずつ別の画面にする。
+  画面ごとのボタン（nav・screen_buttons）は、マニュアルの画面の絵に合わせる。
+どちらも同じ欄の定義を使い、同じ記録に残す。
 
 - 項目名はマニュアルの画面と同じにする（入力シートと照らすため）。
   宣誓の文・説明・注意書きは写さず、自分の言葉で短く書く。
@@ -11,14 +14,18 @@ D11b で12画面に分けるときも、この定義を分けて使う。
   ツールが入れる欄（who="tool"）の名前には、この4語を入れない。
 - 守り（hook）が押してよいボタンを決めるのは、制度データの画面の定義で、この定義ではない。
 
-`python3 mock/screen.py` で、欄とボタンの一覧を Markdown の表で出す。
+`python3 mock/screen.py` で、12画面版の画面ごとの欄とボタンの一覧を Markdown の表で出す。
+`python3 mock/screen.py --one-page` で、D11a の1画面版の一覧を出す。
 """
 
 from __future__ import annotations
 
 import sys
 
-SCREEN_NAME = "省力化投資補助金（一般型）第8回 応募申請の模擬画面（D11a・1画面版）"
+# 入力値.json の名前（1画面版と12画面版で同じ記録を使う）
+MOCK_NAME = "省力化投資補助金（一般型）第8回 応募申請の模擬画面"
+SCREEN_NAME = MOCK_NAME + "（D11a・1画面版）"
+SCREENS_NAME = MOCK_NAME + "（D11b・12画面版）"
 MANUAL = "電子申請マニュアル（応募申請）第8回（downloads/shoryokuka_ippan/electronic_application_manual_ippan_08.pdf）"
 
 # 担当者が入れる欄の名前に入れる語（DESIGN 5章の守りが見分けに使う）
@@ -184,9 +191,14 @@ def kasan(id: str, title: str, text: str, page: int) -> dict:
     return f(id, f"{title}：{text}", "checkbox", page)
 
 
+# 12画面版で、画面の上と下に置くボタン（値の並び。マニュアル p.6 と各画面の絵）。
+# ❶・❿・⓫ には一時保存がなく（p.7、p.25–27）、⓬ には置かない（p.28。修正と提出だけ）
+NAV_FULL = ("back", "save", "next")
+NAV_NO_SAVE = ("back", "next")
+
 SECTIONS = [
     {
-        "no": "❶", "key": "s1", "title": "宣誓・手引き", "pages": "7",
+        "no": "❶", "key": "s1", "title": "宣誓・手引き", "pages": "7", "nav": NAV_NO_SAVE,
         "groups": [
             group("1-1. 公募要領・手引き", 7, [
                 f("guide_links", "公募要領と応募申請の手引き", "display", 7, who="display",
@@ -202,7 +214,7 @@ SECTIONS = [
         ],
     },
     {
-        "no": "❷", "key": "s2", "title": "基本情報", "pages": "8–9",
+        "no": "❷", "key": "s2", "title": "基本情報", "pages": "8–9", "nav": NAV_FULL,
         "groups": [
             group("2-1. 事業者情報", 8, [
                 f("biz_form", "事業形態", "display", 8, who="display", value="法人"),
@@ -240,7 +252,7 @@ SECTIONS = [
         "buttons": [("issue_code", "認証コード発行", 9, "2-4. 担当者情報")],
     },
     {
-        "no": "❸", "key": "s3", "title": "要件", "pages": "10–11",
+        "no": "❸", "key": "s3", "title": "要件", "pages": "10–11", "nav": NAV_FULL,
         "groups": [
             group("3-1. 小規模企業者・小規模事業者・再生事業者", 10, [
                 f("small_business", "小規模企業者・小規模事業者：該当する", "checkbox", 10),
@@ -265,7 +277,7 @@ SECTIONS = [
         ],
     },
     {
-        "no": "❹", "key": "s4", "title": "加点項目", "pages": "12–13",
+        "no": "❹", "key": "s4", "title": "加点項目", "pages": "12–13", "nav": NAV_FULL,
         "groups": [
             group("①事業承継又はM&Aを実施した事業者", 12, [
                 kasan("kasan_succession", "事業承継又はM&A加点", "過去3年以内に事業承継やM&Aで経営資源を引き継いだ", 12)]),
@@ -290,7 +302,7 @@ SECTIONS = [
         ],
     },
     {
-        "no": "❺", "key": "s5", "title": "事業計画名及び作成者情報", "pages": "14–15",
+        "no": "❺", "key": "s5", "title": "事業計画名及び作成者情報", "pages": "14–15", "nav": NAV_FULL,
         "groups": [
             # 「程度」は目安で、上限ではない。項目名は画面のとおりにし、上限は付けない
             group("5-1. 事業計画名", 14, [f("plan_name", "事業計画名（３０文字程度）", "text", 14, required=True)]),
@@ -330,7 +342,7 @@ SECTIONS = [
         ],
     },
     {
-        "no": "❻", "key": "s6", "title": "最低賃金及び特例希望", "pages": "16",
+        "no": "❻", "key": "s6", "title": "最低賃金及び特例希望", "pages": "16", "nav": NAV_FULL,
         "groups": [
             group("6-1. 大幅賃上げに係る補助上限額引き上げの特例", 16, [
                 f("special_raise", "大幅賃上げに係る補助上限額引き上げの特例：希望する", "checkbox", 16)]),
@@ -345,7 +357,7 @@ SECTIONS = [
         ],
     },
     {
-        "no": "❼", "key": "s7", "title": "事業計画数値", "pages": "17",
+        "no": "❼", "key": "s7", "title": "事業計画数値", "pages": "17", "nav": NAV_FULL,
         "groups": [
             group("7-1. 事業計画の目標", 17, [
                 f("target_productivity", "①労働生産性の年平均成長率", "display", 17, who="display", calc=True),
@@ -362,7 +374,7 @@ SECTIONS = [
         "buttons": [("calc_plan", "計算", 17, "7-2. 会社全体の事業計画（単位：円）")],
     },
     {
-        "no": "❽", "key": "s8", "title": "経費明細｜資金調達内訳", "pages": "18–19",
+        "no": "❽", "key": "s8", "title": "経費明細｜資金調達内訳", "pages": "18–19", "nav": NAV_FULL,
         "groups": [
             group("8-1. 経費明細表", 18, [
                 f("finance_lease", "ファイナンス・リースによる共同申請", "radio", 18, required=True, options=["はい", "いいえ"]),
@@ -379,7 +391,7 @@ SECTIONS = [
         "buttons": [("calc_expense", "計算", 18, "8-1. 経費明細表")],
     },
     {
-        "no": "❾", "key": "s9", "title": "書類添付", "pages": "20–24",
+        "no": "❾", "key": "s9", "title": "書類添付", "pages": "20–24", "nav": NAV_FULL,
         "groups": [
             group("事業者の実在確認書類", 20, [
                 f("doc_registry", "履歴事項全部証明書", "file", 20, required=True, accept=PDF),
@@ -437,7 +449,7 @@ SECTIONS = [
         ],
     },
     {
-        "no": "❿", "key": "s10", "title": "アンケート", "pages": "25–26",
+        "no": "❿", "key": "s10", "title": "アンケート", "pages": "25–26", "nav": NAV_NO_SAVE,
         "groups": [
             group("本補助金申請時の経営課題・関心事項（複数選択可）", 25, [
                 f("survey_issues", "経営課題・関心事項", "checkboxes", 25, options=[
@@ -451,22 +463,47 @@ SECTIONS = [
                     "研修・人材育成", "補助金・助成金", "融資・債務保証", "その他の施策"]),
                 f("survey_other", "その他の施策の内容", "text", 25),
             ]),
+            # p.26 の問い（D11b で足した）。選択肢は一部だけ
+            group("本補助金の情報の入手元（複数選択可）", 26, [
+                f("survey_source", "情報の入手元", "checkboxes", 26, options=[
+                    "導入する製品の販売事業者からの情報", "商工会・商工会議所", "会計士・税理士", "金融機関からの情報",
+                    "インターネット検索", "SNS", "その他"]),
+                f("survey_source_other", "その他の入手元の内容", "text", 26),
+            ]),
+            group("本事業における資金の調達方法（複数選択可）", 26, [
+                f("survey_funding", "資金の調達方法", "checkboxes", 26, options=[
+                    "自己資金のみ", "新たに銀行融資を活用", "都道府県等の自治体の支援策を併用", "その他の調達方法"]),
+                f("survey_funding_other", "その他の調達方法の内容", "text", 26),
+            ]),
+            group("中小機構の各種支援情報の提供", 26, [
+                f("survey_no_info", "中小機構の支援情報の提供：希望しない", "checkbox", 26),
+            ], note="情報の提供を望まないときだけチェックします。"),
         ],
     },
     {
-        "no": "⓫", "key": "s11", "title": "メールアドレス認証", "pages": "27",
+        "no": "⓫", "key": "s11", "title": "メールアドレス認証", "pages": "27", "nav": NAV_NO_SAVE,
         "groups": [
-            group("メールアドレス認証", 27, [f("auth_code", "認証コード", "text", 27, required=True)],
-                  note="❷の「認証コード発行」で出た番号を入れます（本物ではメールで届きます）。"),
+            group("メールアドレス認証", 27, [
+                f("auth_email", "担当者メールアドレス", "display", 27, who="display", source="staff_email"),
+                f("auth_code", "認証コード", "text", 27, required=True),
+            ], note="❷の「認証コード発行」で出た番号を入れます（本物ではメールで届きます）。"),
         ],
+        # 1画面版はページの中のリンク、12画面版は「基本情報画面へ」のボタン（p.27）
         "links": [("#s2", "❷ 基本情報へ戻る")],
+        "screen_buttons": [("goto_2", "基本情報画面へ", 27, "メールアドレス認証")],
     },
     {
-        "no": "⓬", "key": "s12", "title": "確認", "pages": "28",
+        "no": "⓬", "key": "s12", "title": "確認", "pages": "28", "nav": (),
         "groups": [],
         "buttons": [("submit", "提出", 28, "")],
     },
 ]
+
+# 12画面版の ⓬ 確認で、段ごとに置く「修正」のボタン（その画面へ移る。p.6、p.28）
+FIX_PREFIX = "fix_"
+FIX_LABEL = "修正"
+# ⓫ の「基本情報画面へ」で移る先
+GOTO_PREFIX = "goto_"
 
 # ページの上と下に置くボタン（マニュアル p.6）
 NAV_BUTTONS = [("back", "戻る", 6), ("save", "一時保存", 6), ("next", "次へ", 6)]
@@ -511,10 +548,58 @@ def all_buttons() -> list:
     return buttons
 
 
+# ---- 12画面版（D11b） ----
+
+SCREEN_COUNT = len(SECTIONS)
+
+
+def screen_url(n: int) -> str:
+    return f"/shinsei/{n}"
+
+
+def screen_fields(n: int) -> list:
+    """12画面版の n 番目（1〜12）の画面の入力欄。"""
+    return section_fields(SECTIONS[n - 1])
+
+
+def screen_buttons(n: int) -> list:
+    """12画面版の n 番目の画面のボタン。(値, 表示名, ページ, 置き場所) の一覧。"""
+    s = SECTIONS[n - 1]
+    nav = {v: (label, page) for v, label, page in NAV_BUTTONS}
+    buttons = [(v, nav[v][0], nav[v][1], "画面の上と下") for v in s["nav"]]
+    if n == SCREEN_COUNT:
+        buttons += [(f"{FIX_PREFIX}{k}", FIX_LABEL, 28, f"{x['no']} {x['title']}の見出しの横")
+                    for k, x in enumerate(SECTIONS[:-1], start=1)]
+    for v, label, page, where in s.get("buttons", []) + s.get("screen_buttons", []):
+        buttons.append((v, label, page, where or "画面の下"))
+    return buttons
+
+
+def screen_button_values(n: int) -> set:
+    return {v for v, _label, _page, _where in screen_buttons(n)}
+
+
+def target_screen(n: int, button: str) -> int:
+    """12画面版で、n 番目の画面のボタンを押した後に出す画面の番号。"""
+    if button == "next":
+        return min(n + 1, SCREEN_COUNT)
+    if button == "back":
+        return max(n - 1, 1)
+    for prefix in (FIX_PREFIX, GOTO_PREFIX):
+        rest = button[len(prefix):] if button.startswith(prefix) else ""
+        if rest.isdigit() and 1 <= int(rest) <= SCREEN_COUNT:
+            return int(rest)
+    return n
+
+
 def button_label(value: str) -> str:
     for v, label, _page, _where in all_buttons():
         if v == value:
             return label
+    for n in range(1, SCREEN_COUNT + 1):
+        for v, label, _page, _where in screen_buttons(n):
+            if v == value:
+                return label
     return ""
 
 
@@ -525,8 +610,22 @@ KIND_NAMES = {
 }
 
 
+def field_cells(field: dict) -> str:
+    """一覧の表の「項目 | 種類 | 入れる人 | 必須 | ページ | 欄の id」。表の中の欄は表ごとに1行にまとめる。"""
+    if field["kind"] == "grid":
+        n = len(grid_cells(field))
+        return f"{field['label']}（表。入力欄{n}個） | 数・文字 | ツール |  | {field['page']} | {field['id']}_<行>_<列>"
+    kind = KIND_NAMES[field["kind"]]
+    if field.get("accept"):
+        kind += f"（{ACCEPT_NAMES[field['accept']]}）"
+    if field.get("options") and field["kind"] in ("radio", "checkboxes"):
+        kind += f"（{len(field['options'])}個）"
+    return (f"{field['label']} | {kind} | {WHO_NAMES[field['who']]} | {'必須' if field['required'] else ''} "
+            f"| {field['page']} | {field['id']}")
+
+
 def markdown_tables() -> str:
-    """欄とボタンの一覧を Markdown の表にする（README と報告に使う）。表の中の欄は表ごとにまとめる。"""
+    """D11a の1画面版の欄とボタンの一覧を Markdown の表にする。表示だけの欄は除く。"""
     lines = ["| 段 | 項目 | 種類 | 入れる人 | 必須 | ページ | 欄の id |", "|---|---|---|---|---|---|---|"]
     for field in LOGIN_FIELDS:
         lines.append(f"| ログイン | {field['label']} | {KIND_NAMES[field['kind']]} | {WHO_NAMES[field['who']]} |  "
@@ -534,20 +633,8 @@ def markdown_tables() -> str:
     for s in SECTIONS:
         for g in s["groups"]:
             for field in g["fields"]:
-                if field["kind"] == "display":
-                    continue
-                if field["kind"] == "grid":
-                    n = len(grid_cells(field))
-                    lines.append(f"| {s['no']} | {field['label']}（表。入力欄{n}個） | 数・文字 | ツール |  "
-                                 f"| {field['page']} | {field['id']}_<行>_<列> |")
-                    continue
-                kind = KIND_NAMES[field["kind"]]
-                if field.get("accept"):
-                    kind += f"（{ACCEPT_NAMES[field['accept']]}）"
-                if field.get("options") and field["kind"] in ("radio", "checkboxes"):
-                    kind += f"（{len(field['options'])}個）"
-                lines.append(f"| {s['no']} | {field['label']} | {kind} | {WHO_NAMES[field['who']]} | "
-                             f"{'必須' if field['required'] else ''} | {field['page']} | {field['id']} |")
+                if field["kind"] != "display":
+                    lines.append(f"| {s['no']} | {field_cells(field)} |")
     lines += ["", "| ボタン | 置き場所 | 押す人 | ページ | 値 |", "|---|---|---|---|---|"]
     lines.append(f"| {LOGIN_BUTTON[1]} | ログイン | 担当者 | {LOGIN_BUTTON[2]} | {LOGIN_BUTTON[0]} |")
     for v, label, page, where in all_buttons():
@@ -556,5 +643,36 @@ def markdown_tables() -> str:
     return "\n".join(lines)
 
 
+def markdown_screens() -> str:
+    """12画面版の画面ごとの欄とボタンの一覧を Markdown にする（README と報告に使う）。表示だけの欄は除く。"""
+    lines = ["| 画面 | URL | マニュアルのページ | ボタン | 入力欄の数 |", "|---|---|---|---|---|",
+             f"| ログイン | /login | p.{LOGIN_BUTTON[2]} | {LOGIN_BUTTON[1]} | {len(LOGIN_FIELDS)} |"]
+    for n, s in enumerate(SECTIONS, start=1):
+        names = "・".join(dict.fromkeys(label for _v, label, _p, _w in screen_buttons(n)))
+        lines.append(f"| {s['no']} {s['title']} | {screen_url(n)} | p.{s['pages']} | {names} | {len(screen_fields(n))} |")
+    lines += ["", "入力欄の数は、表の中の欄を1つずつ数えたもの（下の表では、表ごとに1行にまとめる）。"]
+    lines += ["", "### ログイン（`/login`、マニュアル p.5）", "",
+              "| 見出し | 項目 | 種類 | 入れる人 | 必須 | ページ | 欄の id |", "|---|---|---|---|---|---|---|"]
+    for field in LOGIN_FIELDS:
+        lines.append(f"| ログイン | {field['label']} | {KIND_NAMES[field['kind']]} | {WHO_NAMES[field['who']]} |  "
+                     f"| {field['page']} | {field['id']} |")
+    lines += ["", "| ボタン | 置き場所 | 押す人 | ページ | 値 |", "|---|---|---|---|---|",
+              f"| {LOGIN_BUTTON[1]} | 画面の下 | 担当者 | {LOGIN_BUTTON[2]} | {LOGIN_BUTTON[0]} |"]
+    for n, s in enumerate(SECTIONS, start=1):
+        lines += ["", f"### {s['no']} {s['title']}（`{screen_url(n)}`、マニュアル p.{s['pages']}）", ""]
+        rows = [f"| {g['title']} | {field_cells(field)} |"
+                for g in s["groups"] for field in g["fields"] if field["kind"] != "display"]
+        if rows:
+            lines += ["| 見出し | 項目 | 種類 | 入れる人 | 必須 | ページ | 欄の id |", "|---|---|---|---|---|---|---|"]
+            lines += rows + [""]
+        else:
+            lines += ["入力欄はありません。一時保存した内容を段ごとに出し、段ごとに「修正」を置きます。", ""]
+        lines += ["| ボタン | 置き場所 | 押す人 | ページ | 値 |", "|---|---|---|---|---|"]
+        for v, label, page, where in screen_buttons(n):
+            who = "担当者だけ" if v in PERSON_BUTTONS else "ツール"
+            lines.append(f"| {label} | {where} | {who} | {page} | {v} |")
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
-    sys.stdout.write(markdown_tables() + "\n")
+    sys.stdout.write((markdown_tables() if "--one-page" in sys.argv[1:] else markdown_screens()) + "\n")
