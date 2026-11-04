@@ -16,6 +16,9 @@
     どの値も「値」か「要確認」で埋まっているか。読み取れない値、1件もない項目は、足りないとして終了コード 1
   - 確認済み（資料で食い違いも）なのに値が空のもの（""・空白だけ・[]・{}・中がどれも空）も、埋まっていないとして終了コード 1
   - 出典のない値の数（出典がない、根拠の文がない、出典の資料が「資料」にない）。1つでもあれば終了コード 1
+  - 名前の参照（M2c の直し・波2）。書類の「手続き」が手続きの段階の id にないもの（「1_申請」のようなフォルダの名前を書いた書類）、
+    手続きの段階の「様式」が様式の名前にないものを、当たらない名前ごとに数えて出す。1つでもあれば足りないとして終了コード 1。
+    読み直させるときに渡せるよう、当たる名前の一覧（当たらなかった種類の分だけ）も出す
   - 確かめるだけでは、制度データを書き換えない
 - 段階のフォルダ（DESIGN 4.5）
   - まとめたときは、いちばん前の段階（1_申請）だけを作る。中は「申請書」と「添付する書類」
@@ -244,6 +247,34 @@ def important_row(out: str, name: str) -> list:
     raise AssertionError(f"重要な項目の行がありません：{name}\n{out}")
 
 
+IMPORTANT_NAMES = ("締切", "補助上限", "補助率", "数値の要件", "必須書類", "補助の対象にならない経費")
+OK_LINE = "重要な項目はすべて値か「要確認」で埋まり、出典のない値は0件です"
+NOT_OK_LINE = "まだ足りないところがあります"
+REFS_LINE = "- 手続きの段階・様式に当たらない名前："
+
+
+def refs_count(out: str) -> int:
+    """確かめた結果の「手続きの段階・様式に当たらない名前：<数>」の数。"""
+    for line in out.splitlines():
+        if line.startswith(REFS_LINE):
+            return int(line[len(REFS_LINE):].split("（", 1)[0])
+    raise AssertionError(f"当たらない名前の行がありません\n{out}")
+
+
+def all_important_filled(out: str) -> bool:
+    for name in IMPORTANT_NAMES:
+        entries, values, filled, unfilled = important_row(out, name)
+        if not (entries > 0 and values == filled and unfilled == 0):
+            return False
+    return True
+
+
+def write_data(company: Company, data: dict) -> bytes:
+    path = company.folder / DATA_REL
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return path.read_bytes()
+
+
 # ---- まとめる ----
 
 
@@ -285,6 +316,7 @@ def test_merge_makes_full_data_that_passes_schema(company) -> None:
     assert important_row(out, "補助上限") == [2, 3, 3, 0]   # 2区分の上限と、特例の上限
     assert important_row(out, "補助率") == [2, 2, 2, 0]
     assert important_row(out, "必須書類") == [2, 4, 4, 0]   # 内容と、有効期限・期数
+    assert refs_count(out) == 0 and "当たる名前（" not in out  # 書類の手続きは、どれも手続きの段階の id
     assert "重要な項目はすべて値か「要確認」で埋まり、出典のない値は0件です" in out
     # 段階のフォルダは、いちばん前の段階だけ
     assert sorted(p.name for p in company.case_dir().iterdir()) == ["1_申請", "公式資料"]
@@ -417,6 +449,80 @@ def test_check_counts_unsourced_values_and_does_not_rewrite(company) -> None:
     assert "形（スキーマ）：合いません" in out
 
 
+# ---- 名前の参照（M2c の直し・波2：書類の手続きが段階の id に当たらない、申請の書類が2つの章で二重に入る） ----
+
+
+def test_document_stage_must_be_a_stage_id(company) -> None:
+    """書類の手続きにフォルダの名前（1_申請）を書いた章は、まとめても足りないとして終了コード 1。
+
+    波1の章4と同じ形：書類を読む章に段階の id を渡さなかったので、「1_申請」と書いた。手続きの段階を読んだ章は
+    同じ申請の書類を段階の id「申請」で返したので、申請の書類が二重に入った（名前が違うので、同じ名前の検出には出ない）。
+    """
+    b = chapter_b()
+    b["制度データ"]["書類"][0]["手続き"] = ["1_申請"]
+    read_all(company, b)
+    twice = {"読み取り": {"章": "4 申請の書類", "読んだページ": [{"資料": DOC, "ページ": 2}], "回目": 1},
+             "制度データ": {"書類": [{"名前": "決算書（直近2期分）", "区分": "必須", "発行元": "自社", "手続き": ["申請"],
+                                    "内容": sv("決算書 直近2期分", 2, "必ず出す書類：決算書 直近 2 期分")}]}}
+    company.read(twice)
+    out = check_code(company.tool("--merge"), 1)
+    assert refs_count(out) == 1
+    assert "  - 書類「決算書」の手続き「1_申請」が、手続きの段階の id にありません\n" in out
+    assert "  - 当たる名前（手続きの段階の id：申請・交付申請・実績報告）\n" in out  # 読み直させるときに渡す
+    assert "当たる名前（様式の名前" not in out
+    assert "書類「決算書（直近2期分）」の手続き" not in out
+    # 重要な項目・出典・形は足りている。足りないのは名前の参照だけ
+    assert all_important_filled(out)
+    assert "出典のない値：0" in out and "形（スキーマ）：合っています" in out
+    assert NOT_OK_LINE in out and OK_LINE not in out
+    assert (company.folder / DATA_REL).is_file()  # 制度データは置いた（読み直して、まとめ直す）
+    # 確かめるだけでも同じに数え、書き換えない
+    path = company.folder / DATA_REL
+    before = path.read_bytes()
+    out = check_code(company.tool("--check"), 1)
+    assert refs_count(out) == 1 and "書類「決算書」の手続き「1_申請」が、手続きの段階の id にありません" in out
+    assert path.read_bytes() == before
+
+
+def test_every_unmatched_stage_name_is_counted(company) -> None:
+    """当たらない名前ごとに1件と数え、どの書類のどの名前かを出す。当たる名前は出さない。"""
+    read_all(company)
+    check_code(company.tool("--merge"), 0)
+    data = company.data()
+    data["書類"][0]["手続き"] = ["申請", "2_交付申請"]
+    data["書類"][1]["手続き"] = ["応募申請"]
+    before = write_data(company, data)
+    out = check_code(company.tool("--check"), 1)
+    assert refs_count(out) == 2
+    assert "書類「決算書」の手続き「2_交付申請」が、手続きの段階の id にありません" in out
+    assert "書類「登記簿の写し」の手続き「応募申請」が、手続きの段階の id にありません" in out
+    assert "書類「決算書」の手続き「申請」" not in out
+    assert NOT_OK_LINE in out
+    assert (company.folder / DATA_REL).read_bytes() == before
+
+
+def test_stage_form_must_be_a_form_name(company) -> None:
+    """手続きの段階の様式が、様式の名前にない（波1の「事故報告」の「様式第３」と同じ形）。様式に入れれば通る。"""
+    read_all(company)
+    check_code(company.tool("--merge"), 0)
+    data = company.data()
+    assert data["様式"] == []
+    data["手続きの段階"][1]["様式"] = ["様式第３"]
+    write_data(company, data)
+    out = check_code(company.tool("--check"), 1)
+    assert refs_count(out) == 1
+    assert "  - 手続きの段階「交付申請」の様式「様式第３」が、様式の名前にありません\n" in out
+    assert "  - 当たる名前（様式の名前：（ありません））\n" in out
+    assert "当たる名前（手続きの段階の id" not in out
+    assert NOT_OK_LINE in out
+
+    data["様式"] = [{"名前": "様式第３", "入力先": unread("資料に入力先が書かれていない"), "項目": []}]
+    write_data(company, data)
+    out = check_code(company.tool("--check"), 0)
+    assert refs_count(out) == 0 and "当たる名前（" not in out
+    assert OK_LINE in out
+
+
 def test_shape_error_writes_nothing(company) -> None:
     a = chapter_a()
     del a["制度データ"]["補助額"]
@@ -458,7 +564,10 @@ def test_stage_folders_need_numbering_from_one(company) -> None:
     out = check_code(company.tool("--merge"), 1)
     assert "段階のフォルダを作れませんでした" in out
     assert "1つ目の段階のフォルダが「2_交付申請」です" in out and "2つ目の段階のフォルダが「3_実績報告」です" in out
-    assert "重要な項目はすべて値か「要確認」で埋まり" in out  # 確かめた結果はよい。段階のフォルダだけ作れない
+    # 重要な項目は埋まっている。申請の段階が抜けたので、申請で使う書類の手続き「申請」も段階の id に当たらない
+    assert all_important_filled(out) and "出典のない値：0" in out
+    assert refs_count(out) == 2 and "書類「決算書」の手続き「申請」が、手続きの段階の id にありません" in out
+    assert "当たる名前（手続きの段階の id：交付申請・実績報告）" in out
     assert sorted(p.name for p in company.case_dir().iterdir()) == ["公式資料"]
     assert (company.folder / DATA_REL).is_file()
     before = hr.snapshot(company.folder)
