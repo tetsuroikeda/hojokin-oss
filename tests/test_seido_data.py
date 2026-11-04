@@ -576,6 +576,93 @@ def test_stage_folders_need_numbering_from_one(company) -> None:
     assert hr.snapshot(company.folder) == before
 
 
+# ---- 申請画面（波3：流れのページだけを読んで、欄もボタンも空になった形） ----
+
+FLOW = "審査は書面で行う。"  # 架空の公募要領の3ページの文（流れの出典つき値の形を通すためだけに使う）
+EMPTY_LINE = "- 欄も押してよいボタンもない申請画面："
+
+
+def screen(order: int, name: str, fields=(), buttons=()) -> dict:
+    return {"順番": order, "名前": name, "欄": [dict(f) for f in fields], "押してよいボタン": list(buttons)}
+
+
+def field(name: str, kind: str = "文字", staff: bool = False) -> dict:
+    return {"名前": name, "種類": kind, "担当者が入れる": staff}
+
+
+def screens_part(screens: list) -> dict:
+    return {"申請画面": {"流れ": sv("審査は書面で行う", 3, FLOW), "画面": screens}}
+
+
+def empty_count(out: str) -> int:
+    for line in out.splitlines():
+        if line.startswith(EMPTY_LINE):
+            return int(line[len(EMPTY_LINE):])
+    raise AssertionError(f"欄もボタンもない申請画面の行がありません\n{out}")
+
+
+def test_screens_without_fields_or_buttons_are_counted(company) -> None:
+    """欄も押してよいボタンもない画面は、足りないに数える（入力シートに欄ができず、守りが一時保存も次へも拒むため）。"""
+    read_all(company)
+    out = check_code(company.tool("--merge"), 0)
+    assert empty_count(out) == 0  # どの章も申請画面を読んでいない（流れは読み取れない）ときは、読み取れなかった項目に回す
+    data = company.data()
+    data.update(screens_part([screen(1, "宣誓"), screen(2, "入力", [field("事業名")]), screen(3, "確認", buttons=["戻る"])]))
+    before = write_data(company, data)
+    out = check_code(company.tool("--check"), 1)
+    assert empty_count(out) == 1 and "  - 宣誓（電子申請マニュアルの、その画面のページを読み取り役に読ませる）\n" in out
+    assert all_important_filled(out) and NOT_OK_LINE in out
+    assert (company.folder / DATA_REL).read_bytes() == before
+    # 宣誓の画面に押してよいボタンがあれば足りる（欄は担当者が入れる宣誓だけでもよい）
+    data["申請画面"]["画面"][0]["押してよいボタン"] = ["次へ"]
+    write_data(company, data)
+    out = check_code(company.tool("--check"), 0)
+    assert empty_count(out) == 0 and OK_LINE in out
+    # 流れは読めているのに画面が1つもない
+    data["申請画面"]["画面"] = []
+    write_data(company, data)
+    out = check_code(company.tool("--check"), 1)
+    assert empty_count(out) == 1 and "（画面が1つもありません）" in out
+
+
+def test_screens_reread_in_the_same_chapter_replace_only_the_screens(company) -> None:
+    """junbi の手順：申請の手続きの章で流れだけを読んだ後、申請画面だけを同じ章の名前で読み直して通すと、
+    申請画面だけが差し替わり、ほかの項目は残る。まとめると、画面ごとの欄とボタンが入る。"""
+    c = chapter_c()
+    c["制度データ"].update(screens_part([screen(1, "宣誓"), screen(2, "入力")]))
+    company.read(chapter_a())
+    company.read(chapter_b())
+    company.read(c)
+    out = check_code(company.tool("--merge"), 1)
+    assert empty_count(out) == 2 and "  - 宣誓・入力（" in out
+    again = {"読み取り": {"章": c["読み取り"]["章"], "読んだページ": [{"資料": DOC, "ページ": 3}], "回目": 1},
+             "制度データ": screens_part([screen(1, "宣誓", [field("宣誓事項1", "チェック", True)], ["次へ"]),
+                                       screen(2, "入力", [field("事業名"), field("従業員数", "数字")], ["戻る", "一時保存", "次へ"])])}
+    out = company.read(again)
+    assert "申請画面（1件 → 1件）" in out and "残した項目（照らし直しました）：審査の段階、審査項目、手続きの段階" in out
+    out = check_code(company.tool("--merge"), 0)
+    assert empty_count(out) == 0 and OK_LINE in out
+    data = company.data()
+    assert [s["押してよいボタン"] for s in data["申請画面"]["画面"]] == [["次へ"], ["戻る", "一時保存", "次へ"]]
+    assert [f["名前"] for f in data["申請画面"]["画面"][1]["欄"]] == ["事業名", "従業員数"]
+    assert [s["id"] for s in data["手続きの段階"]] == ["申請", "交付申請", "実績報告"]  # 同じ章のほかの項目は残った
+
+
+def test_screens_read_by_two_chapters_are_reported(company) -> None:
+    """2つの章が申請画面を読むと、画面がつながって二重になる。まとめの結果に、同じ名前の画面があると書く。"""
+    read_all(company)
+    one = {"読み取り": {"章": "5 申請画面", "読んだページ": [{"資料": DOC, "ページ": 3}], "回目": 1},
+           "制度データ": screens_part([screen(1, "入力", [field("事業名")], ["次へ"])])}
+    two = copy.deepcopy(one)
+    two["読み取り"]["章"] = "6 申請画面の続き"
+    two["制度データ"]["申請画面"]["画面"][0]["押してよいボタン"] = ["次へ", "一時保存"]
+    company.read(one)
+    company.read(two)
+    out = text(company.tool("--merge"))
+    assert "同じ名前の件が2つ以上あります（章をまたいで重ねて読んでいないか確かめる）：申請画面の画面：入力" in out
+    assert len(company.data()["申請画面"]["画面"]) == 2
+
+
 def test_stage_folders_from_seido_data(company) -> None:
     read_all(company)
     check_code(company.tool("--merge"), 0)
