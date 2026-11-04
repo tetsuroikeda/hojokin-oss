@@ -1,6 +1,10 @@
 ---
 name: shorui
 description: 「書類を入れた」「確認して」「整理して」と言われたときに使う。原本の整理、名前の付け直し、写しの作成、不備のチェック。「決算書を入れておいた」「見積書がそろっているか見て」「足りない書類はある？」と言われたときも使う。
+allowed-tools:
+  - Bash(python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/shorui/scripts/*)
+  - Bash(python3 -B ${CLAUDE_PLUGIN_ROOT}/skills/shorui/scripts/*)
+  - Read(/${CLAUDE_PLUGIN_ROOT}/skills/shorui/**)
 ---
 
 # 書類の整理と不備チェック（F5）

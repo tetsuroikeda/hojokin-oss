@@ -20,6 +20,7 @@
 - 欄の名前の照らし方は、画面入力の守り（lib/browser_guard.py）と同じ（囲むラベルの名前の全文か、「：」より前の項目名）。
 - チェック欄の値は「はい」（チェックを入れる）・「いいえ」（外す）で書く（M8 の仮の形）。空の欄には触れない。
   ラジオボタンの値は、選ぶ項目の名前（「いいえ」など）。
+- 値が「該当なし」の欄（会社に当てはまらない欄。kaku が書く）も、空の欄と同じく画面に触れない（M12b）。
 - 会社のフォルダの外は読まない。場所の確かめは lib/places.py で行う。
 - 終了コード：0 照らした値がすべて合う（sheet・list は、入れられない値がない）、1 補助プログラムを読み込めない、
   2 しなかった（会社のフォルダでない、入力シート・画面の控えがない、引数が違う など）、
@@ -116,10 +117,17 @@ def screen_key(name) -> str:
     return text[i:]
 
 
+def not_applicable(value) -> bool:
+    """入力シートの値が「該当なし」（会社に当てはまらない欄。画面には入れない。M12b）か。"""
+    from lib import input_sheet
+
+    return input_sheet.is_not_applicable(value)
+
+
 def check_state(value: str):
-    """チェック欄の値 → True（入れる）・False（外す）・None（空。触れない）。書き方が分からなければ Refused。"""
+    """チェック欄の値 → True（入れる）・False（外す）・None（空か「該当なし」。触れない）。書き方が分からなければ Refused。"""
     text = norm(value)
-    if text == "":
+    if text == "" or not_applicable(text):
         return None
     if text in CHECK_ON or text.lower() == "true":
         return True
@@ -379,6 +387,10 @@ def plan(rows: list, controls: list) -> dict:
             result["担当者が入れる"].append({**base, "ref": [c["ref"] for c in hits],
                                         "理由": f"名前に「{word}」を含むので、ツールは入れない"})
             continue
+        if not_applicable(row["値"]):
+            # 会社に当てはまらない欄。空の欄と同じく、画面には触れない
+            result["値がない"].append({**base, "理由": "該当なし"})
+            continue
         if row["種類"] == "添付":
             result["添付"].append({**base, "ref": [c["ref"] for c in hits]})
             continue
@@ -485,7 +497,7 @@ def print_list(screen: str, source: str, result: dict, warn: str) -> None:
     else:
         print("- ツールが入れる欄はありません。")
     sections = (
-        ("値がない（入れない）", "値がない", lambda e: e["欄"]),
+        ("値がない・該当なし（入れない）", "値がない", lambda e: e["欄"] + (f"（{e['理由']}）" if e.get("理由") else "")),
         ("担当者が入れる（ツールは入れない。入れるべき欄を担当者に示す）", "担当者が入れる",
          lambda e: f"{e['欄']}（{e['理由']}）"),
         ("入れられない（入力シートを直す）", "入れられない", lambda e: f"{e['欄']}：{e['理由']}"),

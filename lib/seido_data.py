@@ -22,10 +22,20 @@
      1件以上あり、どの値も「値」か「要確認」で埋まっているか（「読み取れない」や、値が空の確認済み・資料で食い違いは、埋まっていない。
      空は null・空白だけの文字・[]・{}・中の値がどれも空のもの。読み取り役が「読み取れない」にせず空の値を返したときに、
      確認済みの空欄のまま社長に渡さないため）。
+     - ただし、スキーマで任意の欄（数値の要件の計算式・元の数字の決め方・満たせないとき、必須書類の有効期限・期数、
+       補助の対象にならない経費の上限・例外）が「読み取れない」のときは、埋まっていないに数えない（11/5 の作者の決定。
+       M2c の基本要件④の満たせないとき）。「任意の欄で読み取れない値」として別に数えて示し、問い合わせ文の案に回す。
+       必須の欄（締切の日時、補助額の上限・補助率・特例の値、数値の要件の基準、必須書類と経費の内容）は、今のまま数える。
+       任意の欄でも、値が空の確認済み・資料で食い違いは、埋まっていないに数える（読み取り役の返し方の誤りのため）。
+   - 読み取れない値ごとに、「読み取れなかった項目」に同じ項目の問い合わせ文の案があるか。ないものを一覧に出す
+     （終了コードには響かせない。問い合わせ文の案は、読み取り役か Claude が作る）。
    - 出典のない値の数。読み取れないでない値のうち、出典か根拠の文がないもの、出典の資料が「資料」にないもの。
    - 名前の参照（M2c の直し・波2）。書類の「手続き」が手続きの段階の id にないもの、手続きの段階の「様式」が様式の名前にないものを、
      当たらない名前ごとに数え、足りないに数える（仮）。「1_申請」のようなフォルダの名前を書いた書類は、段階の id で書類を引く道具
      （概要と流れ.docx の必要書類、段階ごとの書類の一覧）から落ちるため。読み直させるときに渡せるよう、当たる名前の一覧も出す。
+   - 欄も押してよいボタンもない申請画面（電子申請マニュアルの流れのページだけを読んだ形）。足りないに数える（波3）。
+     いちばん後ろの確認・提出の画面は数えない（提出のボタンしかなければ、空が正しい形）。
+     入力シートに欄ができず、画面入力の守りが一時保存も次へも拒むため。2つの章が申請画面を読んで画面が二重になったら、まとめの結果に書く。
 3. 段階のフォルダを作る（make_stage_folders）
    - 制度データの「手続きの段階」のうち「フォルダ」のある段階から作る（DESIGN 4.5）。中は「申請書」と「添付する書類」。
    - はじめは、いちばん前の段階（申請）だけを作る。採択後に次の段階へ進むときは、その段階の名前を渡して作る（M10）（仮）。
@@ -91,6 +101,7 @@ class ImportantItem:
     values: int = 0
     filled: int = 0
     unfilled: List[str] = field(default_factory=list)  # 埋まっていない値の場所
+    optional_unreadable: List[str] = field(default_factory=list)  # 任意の欄で読み取れない値の場所（埋まっていないに数えない）
 
     @property
     def ok(self) -> bool:
@@ -108,13 +119,15 @@ class CheckResult:
     unreadable_items: List[str] = field(default_factory=list)
     unread_listed: int = 0       # 「読み取れなかった項目」の件数
     unread_with_question: int = 0  # そのうち、問い合わせ文の案があるもの
+    question_missing: List[str] = field(default_factory=list)  # 読み取れない値のうち、同じ項目の問い合わせ文の案がないもの
     bad_refs: List[str] = field(default_factory=list)   # 手続きの段階の id・様式の名前に当たらない名前（足りないに数える）
     ref_known: List[str] = field(default_factory=list)  # そのときに当たる名前の一覧（読み直させるときに渡す）
+    empty_screens: List[str] = field(default_factory=list)  # 欄も押してよいボタンもない申請画面（足りないに数える）
 
     @property
     def ok(self) -> bool:
         return (not self.schema_errors and all(i.ok for i in self.important) and not self.unsourced
-                and not self.bad_refs)
+                and not self.bad_refs and not self.empty_screens)
 
 
 # ---- 場所 ----
@@ -350,6 +363,11 @@ def merge(company: Path, case: str) -> Tuple[Dict, MergeResult]:
             dup = _duplicates(key, full[key])
             if dup:
                 result.duplicates.append(dup)
+    screens = full.get("申請画面", {}).get("画面") if isinstance(full.get("申請画面"), dict) else None
+    if isinstance(screens, list):  # 2つの章が申請画面を読むと、画面がつながって二重になる
+        dup = _duplicates("申請画面の画面", screens)
+        if dup:
+            result.duplicates.append(dup)
 
     # 読み取れなかった項目：章が書いたもの、どの章も読んでいない項目、読み取れないの値
     unread = list(full.get("読み取れなかった項目") or [])
@@ -379,44 +397,50 @@ def _is_sourced(node: Any) -> bool:
     return isinstance(node, dict) and "値" in node and "状態" in node
 
 
-def _important_values(data: Dict) -> Dict[str, Tuple[int, List[Tuple[str, Any]]]]:
-    """重要な項目ごとの（件数、（場所、出典つき値）の一覧）。"""
+def _important_values(data: Dict) -> Dict[str, Tuple[int, List[Tuple[str, Any, bool]]]]:
+    """重要な項目ごとの（件数、（場所、出典つき値、必須の欄か）の一覧）。
+
+    必須の欄か任意の欄かは、制度データのスキーマの required のとおり（決まった期日：日時、補助額：上限・補助率、
+    特例：値、数値の要件：基準、書類：内容、補助の対象にならない経費：内容が必須。ほかは任意の欄）。
+    任意の欄は、件にその欄があるときだけ見る。
+    """
 
     def where(*path: Any) -> str:
         return urakadori.readable(list(path), data)
 
-    out: Dict[str, Tuple[int, List[Tuple[str, Any]]]] = {}
+    def fields(name: str, items: List[Tuple[int, Dict]], required: str, optional: Tuple[str, ...]) -> List[Tuple[str, Any, bool]]:
+        return [(where(name, i, k), item.get(k), k == required) for i, item in items
+                for k in (required,) + optional if k == required or k in item]
+
+    out: Dict[str, Tuple[int, List[Tuple[str, Any, bool]]]] = {}
     deadlines = [(i, d) for i, d in enumerate(data.get("決まった期日") or [])
                  if isinstance(d, dict) and DEADLINE_WORD in str(d.get("名前", ""))]
-    out["締切"] = (len(deadlines), [(where("決まった期日", i, "日時"), d.get("日時")) for i, d in deadlines])
+    out["締切"] = (len(deadlines), [(where("決まった期日", i, "日時"), d.get("日時"), True) for i, d in deadlines])
 
-    caps: List[Tuple[str, Any]] = []
-    rates: List[Tuple[str, Any]] = []
+    caps: List[Tuple[str, Any, bool]] = []
+    rates: List[Tuple[str, Any, bool]] = []
     amounts = [a for a in data.get("補助額") or [] if isinstance(a, dict)]
     for i, a in enumerate(data.get("補助額") or []):
         if not isinstance(a, dict):
             continue
-        caps.append((where("補助額", i, "上限"), a.get("上限")))
-        rates.append((where("補助額", i, "補助率"), a.get("補助率")))
+        caps.append((where("補助額", i, "上限"), a.get("上限"), True))
+        rates.append((where("補助額", i, "補助率"), a.get("補助率"), True))
         for j, s in enumerate(a.get("特例") or []):
             if not isinstance(s, dict):
                 continue
             target = rates if s.get("種類") == "補助率の置き換え" else caps
-            target.append((where("補助額", i, "特例", j, "値"), s.get("値")))
+            target.append((where("補助額", i, "特例", j, "値"), s.get("値"), True))
     out["補助上限"] = (len(amounts), caps)
     out["補助率"] = (len(amounts), rates)
 
     reqs = [(i, r) for i, r in enumerate(data.get("数値の要件") or []) if isinstance(r, dict)]
-    out["数値の要件"] = (len(reqs), [(where("数値の要件", i, k), r.get(k)) for i, r in reqs
-                                  for k in ("基準", "計算式", "元の数字の決め方", "満たせないとき") if k == "基準" or k in r])
+    out["数値の要件"] = (len(reqs), fields("数値の要件", reqs, "基準", ("計算式", "元の数字の決め方", "満たせないとき")))
 
     docs = [(i, d) for i, d in enumerate(data.get("書類") or []) if isinstance(d, dict) and d.get("区分") == "必須"]
-    out["必須書類"] = (len(docs), [(where("書類", i, k), d.get(k)) for i, d in docs
-                               for k in ("内容", "有効期限", "期数") if k == "内容" or k in d])
+    out["必須書類"] = (len(docs), fields("書類", docs, "内容", ("有効期限", "期数")))
 
     costs = [(i, c) for i, c in enumerate(data.get("補助の対象にならない経費") or []) if isinstance(c, dict)]
-    out["補助の対象にならない経費"] = (len(costs), [(where("補助の対象にならない経費", i, k), c.get(k)) for i, c in costs
-                                         for k in ("内容", "上限", "例外") if k == "内容" or k in c])
+    out["補助の対象にならない経費"] = (len(costs), fields("補助の対象にならない経費", costs, "内容", ("上限", "例外")))
     return out
 
 
@@ -510,8 +534,29 @@ def reference_problems(data: Dict) -> Tuple[List[str], List[str]]:
     return problems, known
 
 
+def empty_screens(data: Dict) -> List[str]:
+    """欄も押してよいボタンもない申請画面の名前（電子申請マニュアルの流れのページだけを読んだときの形）。
+
+    このままでは、入力シートに欄ができず、画面入力の守りが一時保存も次へも拒む（F10、DESIGN 5章）。
+    画面が1つもないのは、流れが「読み取れない」なら読み取れなかった項目に回し、読めているなら足りないに数える。
+    いちばん後ろの画面（確認・提出の画面）は数えない。提出のボタンしかない画面は、提出を押してよいボタンに入れないので、
+    欄もボタンも空になるのが正しい形のため（数えると、読み直しても直らない）。
+    """
+    part = data.get("申請画面")
+    if not isinstance(part, dict):
+        return []
+    screens = [s for s in part.get("画面") or [] if isinstance(s, dict)]
+    flow = part.get("流れ")
+    if not screens:
+        read = isinstance(flow, dict) and flow.get("状態") != UNREADABLE
+        return ["（画面が1つもありません）"] if read else []
+    last = max(screens, key=lambda s: s.get("順番") if isinstance(s.get("順番"), int) else 0)
+    return [str(s.get("名前") or f"{s.get('順番')}つ目の画面") for s in screens
+            if s is not last and not s.get("欄") and not s.get("押してよいボタン")]
+
+
 def check(data: Any) -> CheckResult:
-    """制度データの全体を確かめる（形、重要な項目、出典のない値、名前の参照）。"""
+    """制度データの全体を確かめる（形、重要な項目、出典のない値、名前の参照、欄もボタンもない申請画面）。"""
     result = CheckResult()
     if not isinstance(data, dict):
         result.schema_errors = ["（全体）：いちばん外側を { } の形にしてください"]
@@ -551,22 +596,32 @@ def check(data: Any) -> CheckResult:
                     result.unsourced.append(f"資料どうしの食い違い「{entry.get('項目')}」の{j + 1}つ目の値：{p}")
 
     result.bad_refs, result.ref_known = reference_problems(data)
+    result.empty_screens = empty_screens(data)
 
-    listed = [u for u in data.get("読み取れなかった項目") or [] if isinstance(u, dict)]
+    listed =[u for u in data.get("読み取れなかった項目") or [] if isinstance(u, dict)]
     result.unread_listed = len(listed)
-    result.unread_with_question = sum(1 for u in listed if str(u.get("問い合わせ文の案") or "").strip())
+    result.unread_with_question = sum(1 for u in listed if _has_question(u))
+    # 読み取れない値の場所と、まとめの道具が「読み取れなかった項目」に書く項目の名前は、同じ書き方（urakadori.readable）
+    asked = {u.get("項目") for u in listed if _has_question(u)}
+    result.question_missing = [p for p in result.unreadable_items if p not in asked]
 
     found = _important_values(data)
     for name in IMPORTANT:
         entries, nodes = found.get(name, (0, []))
         item = ImportantItem(name=name, entries=entries, values=len(nodes))
-        for place, node in nodes:
+        for place, node, required in nodes:
             if _filled(node):
                 item.filled += 1
+            elif not required and _is_sourced(node) and node["状態"] == UNREADABLE:
+                item.optional_unreadable.append(place)  # 任意の欄の読み取れないは数えず、問い合わせ文の案に回す
             else:
                 item.unfilled.append(f"{place}（{_unfilled_reason(node)}）")
         result.important.append(item)
     return result
+
+
+def _has_question(entry: Dict) -> bool:
+    return bool(str(entry.get("問い合わせ文の案") or "").strip())
 
 
 def load_data(company: Path, case: str) -> Tuple[Path, Any]:
@@ -645,23 +700,37 @@ def check_report(result: CheckResult, rel: str) -> str:
     if len(result.bad_refs) > 30:
         lines.append(f"  - ほかに {len(result.bad_refs) - 30} か所")
     lines += [f"  - 当たる名前（{k}）" for k in result.ref_known]
+    lines.append(f"- 欄も押してよいボタンもない申請画面：{len(result.empty_screens)}")
+    if result.empty_screens:
+        lines.append(f"  - {'・'.join(result.empty_screens)}（電子申請マニュアルの、その画面のページを読み取り役に読ませる）")
     lines += ["", "重要な項目（締切・補助上限・補助率・数値の要件・必須書類・補助の対象にならない経費）：", "",
-              "| 項目 | 件数 | 値 | 値か要確認で埋まった値 | 埋まっていない値 |", "|---|---|---|---|---|"]
+              "| 項目 | 件数 | 値 | 値か要確認で埋まった値 | 埋まっていない値 | 任意の欄で読み取れない値（数えない） |",
+              "|---|---|---|---|---|---|"]
     for item in result.important:
-        lines.append(f"| {item.name} | {item.entries} | {item.values} | {item.filled} | {len(item.unfilled)} |")
+        lines.append(f"| {item.name} | {item.entries} | {item.values} | {item.filled} | {len(item.unfilled)} "
+                     f"| {len(item.optional_unreadable)} |")
     for item in result.important:
         if item.entries == 0:
             lines.append(f"- {item.name}：1件もありません。読み取り役に、その章を読ませてください")
         for u in item.unfilled[:10]:
             lines.append(f"- {item.name}の埋まっていない値：{u}")
+    for item in result.important:
+        for u in item.optional_unreadable[:10]:
+            lines.append(f"- {item.name}の任意の欄で読み取れない値：{u}（埋まっていないに数えず、空けたまま社長に伝え、問い合わせ文の案を作る）")
     if result.unreadable_items:
         lines += ["", f"読み取れない値：{len(result.unreadable_items)}（空けたまま社長に伝え、問い合わせ文の案を作る）"]
         lines += [f"- {u}" for u in result.unreadable_items[:30]]
     lines += ["", f"読み取れなかった項目：{result.unread_listed}（問い合わせ文の案があるもの {result.unread_with_question}）"]
+    if result.question_missing:
+        lines.append(f"- 読み取れない値のうち、同じ項目の問い合わせ文の案がまだないもの：{len(result.question_missing)}")
+        lines += [f"  - {u}" for u in result.question_missing[:30]]
     lines.append("")
     if result.ok:
+        optional = sum(len(i.optional_unreadable) for i in result.important)
         lines.append("結果：形が合い、重要な項目はすべて値か「要確認」で埋まり、出典のない値は0件です。"
-                     "書類の手続きと段階の様式は、どれも手続きの段階の id・様式の名前に当たります。")
+                     "書類の手続きと段階の様式は、どれも手続きの段階の id・様式の名前に当たります。"
+                     + (f"重要な項目の任意の欄で読み取れない値 {optional} は、埋まっていないに数えず、問い合わせ文の案に回します。"
+                        if optional else ""))
     else:
         lines.append("結果：まだ足りないところがあります（上の一覧）。")
     return "\n".join(lines) + "\n"

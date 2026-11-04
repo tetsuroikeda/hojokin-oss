@@ -14,6 +14,11 @@
   python3 -B <この場所>/yoshiki.py sheet --field "<欄の名前>" [--screen "<画面の名前>"] [--case] [--stage] [--seido]
                                        [--value "<値>"]   （--value がなければ標準入力から読む）
       `案件/<案件>/<段階>/申請書/入力シート.xlsx` の、その欄の「値」に書く（なければ制度データの申請画面から作る）。
+  python3 -B <この場所>/yoshiki.py sheet --values - [--case] [--stage] [--seido] <<'EOF'
+      {"値": [{"画面": "<画面の名前>", "欄": "<欄の名前>", "値": "<値>"}]}
+      EOF
+      入力シートの欄に、まとめて書く（M12b。欄が数百あるため）。1件でも書けなければ、何も書かない。
+      会社に当てはまらない欄には「該当なし」と書く（数字の欄にも書ける。画面入力の道具は、その欄を画面に入れない）。
 
 - --case：`案件/` の下の案件のフォルダの名前。1つなら省いてよい。--stage：段階のフォルダ（1_申請 など）。省くと、
   番号のいちばん小さい段階。--seido：制度データ（`記録/制度データ/` の中の JSON）。1つなら省いてよい。
@@ -88,12 +93,19 @@ def parse(argv):
     p.add_argument("--text", help="書く文（省くか - なら標準入力）。改行で段落を分ける")
     p = sub.add_parser("sheet", help="入力シートの欄に書く")
     common(p, stage=True, source=False)
-    p.add_argument("--field", required=True, help="入力シートの欄の名前（制度データの申請画面の欄の名前）")
+    p.add_argument("--field", help="入力シートの欄の名前（制度データの申請画面の欄の名前）")
     p.add_argument("--screen", help="画面の名前（同じ名前の欄が2つの画面にあるとき）")
     p.add_argument("--value", help="書く値（省くか - なら標準入力）")
+    p.add_argument("--values", help="まとめて書く欄と値の JSON（- なら標準入力）。"
+                                    "{\"値\": [{\"画面\": \"…\", \"欄\": \"…\", \"値\": …}]} の形")
     args = parser.parse_args(argv)
     if args.command is None:
         raise Refused("outline・map・write・sheet のどれかを付けてください")
+    if args.command == "sheet":
+        if args.values is not None and (args.field or args.value is not None or args.screen):
+            raise Refused("--values と、--field・--value・--screen は一緒に使えません")
+        if args.values is None and not args.field:
+            raise Refused("--field（1つの欄）か --values（まとめて）を付けてください")
     return args
 
 
@@ -379,24 +391,50 @@ def do_write(folder: Path, args, yw) -> int:
     return OK
 
 
+def sheet_field(seido, name, screen_name):
+    """制度データの申請画面の（画面、欄）。見つからない・2つ以上なら Refused。"""
+    from lib import input_sheet
+
+    hits = [(s, f) for s, f in input_sheet.fields_of(seido)
+            if f.get("名前") == name and (not screen_name or s.get("名前") == screen_name)]
+    if not hits:
+        where = f"画面「{screen_name}」に" if screen_name else ""
+        raise Refused(f"制度データの申請画面の{where}、欄「{name}」がありません")
+    if len(hits) > 1:
+        raise Refused(f"制度データの申請画面に、欄「{name}」が{len(hits)}つあります。画面の名前を渡してください")
+    return hits[0]
+
+
+def sheet_value(field, value):
+    """欄の種類に合わせた値（数字の欄は数。「該当なし」は文字のまま）。"""
+    from lib import input_sheet
+
+    if isinstance(value, bool):
+        value = "はい" if value else "いいえ"
+    if field.get("種類") == "数字":
+        if input_sheet.is_not_applicable(value):
+            return input_sheet.NOT_APPLICABLE
+        if isinstance(value, (int, float)):
+            return value
+        return input_sheet.parse_number(str(value))
+    if value is None:
+        return ""
+    return str(value)
+
+
 def do_sheet(folder: Path, args, yw) -> int:
     from lib import input_sheet
 
     case = find_case(folder, args.case)
     stage = find_stage(folder, case, args.stage)
     seido, _seido_path = find_seido(folder, args.seido)
-    hits = [(s, f) for s, f in input_sheet.fields_of(seido)
-            if f.get("名前") == args.field and (not args.screen or s.get("名前") == args.screen)]
-    if not hits:
-        raise Refused(f"制度データの申請画面に、欄「{args.field}」がありません")
-    if len(hits) > 1:
-        raise Refused(f"制度データの申請画面に、欄「{args.field}」が{len(hits)}つあります。--screen で画面の名前を渡してください")
-    screen, field = hits[0]
+    if args.values is not None:
+        return do_sheet_many(folder, args, yw, case, stage, seido)
+    screen, field = sheet_field(seido, args.field, args.screen)
     value = read_text_arg(args.value)
     if value.endswith("\n") and args.value in (None, "-"):
         value = value[:-1]
-    if field.get("種類") == "数字":
-        value = input_sheet.parse_number(value)
+    value = sheet_value(field, value)
     target = application_file(folder, case, stage, input_sheet.FILE_NAME)
     first = not os.path.lexists(str(target))
     before = input_sheet.build(seido) if first else target.read_bytes()
@@ -418,6 +456,80 @@ def do_sheet(folder: Path, args, yw) -> int:
     print(f"{rel} に、{made}欄「{summary['欄']}」（{screen.get('名前')}）の値を書きました（セル {summary['セル']}）。")
     if summary.get("注意"):
         print(f"- 注意：{summary['注意']}。")
+    print("- 直前の版と比べ、書いてよい範囲の外は変わっていません。")
+    return OK
+
+
+def read_values(folder: Path, given) -> list:
+    """--values の JSON（{"値": [...]} か、並びそのもの）。"""
+    if given in (None, "-"):
+        try:
+            data = json.loads(sys.stdin.read())
+        except ValueError as e:
+            raise Refused(f"標準入力の欄と値が JSON として読めません（{e}）")
+    else:
+        data, _ = read_json(folder, given, "欄と値の JSON")
+    entries = data.get("値") if isinstance(data, dict) else data
+    if not isinstance(entries, list) or not entries:
+        raise Refused("欄と値は {\"値\": [{\"画面\": \"…\", \"欄\": \"…\", \"値\": …}]} の形で渡してください")
+    return entries
+
+
+def do_sheet_many(folder: Path, args, yw, case: str, stage: str, seido) -> int:
+    """入力シートの欄に、まとめて書く。1件でも書けなければ、何も書かない（入力シートは前のまま）。"""
+    from lib import input_sheet
+
+    entries = read_values(folder, args.values)
+    target = application_file(folder, case, stage, input_sheet.FILE_NAME)
+    first = not os.path.lexists(str(target))
+    original = input_sheet.build(seido) if first else target.read_bytes()
+    blob = original
+    problems, written, notes = [], [], []
+    for k, entry in enumerate(entries, 1):
+        if not isinstance(entry, dict) or not isinstance(entry.get("欄"), str) or "値" not in entry:
+            problems.append(f"{k}件目：「欄」と「値」がありません")
+            continue
+        name, screen_name = entry["欄"], entry.get("画面")
+        try:
+            screen, field = sheet_field(seido, name, screen_name)
+            value = sheet_value(field, entry["値"])
+            blob, summary = input_sheet.write_value(blob, name, value, screen.get("名前"), input_sheet.limit_of(field))
+        except yw.OutsideChange as e:
+            print(f"保存しませんでした：{input_sheet.FILE_NAME} に書くと、書いてよい範囲の外が変わります（{len(e.differences)}か所）。"
+                  "前のファイルのままです。作者に知らせてください。")
+            for d in e.differences:
+                print(f"- {d}")
+            return OUTSIDE
+        except (Refused, ValueError) as e:
+            problems.append(f"{k}件目（{screen_name + '・' if screen_name else ''}{name}）：{e}")
+            continue
+        written.append((screen.get("名前"), summary))
+        if summary.get("注意"):
+            notes.append(f"{screen.get('名前')}・{summary['欄']}：{summary['注意']}")
+    if problems:
+        print(f"しませんでした（{input_sheet.FILE_NAME} は前のままです）。直す所：")
+        for p in problems:
+            print(f"- {p}")
+        return REFUSED
+    # 書く前に、はじめの版と最後の版も比べる（1件ずつの比べに加えて）
+    differences = input_sheet.compare_xlsx(original, blob)
+    if differences:
+        print(f"保存しませんでした：{input_sheet.FILE_NAME} の書いてよい範囲の外が変わります（{len(differences)}か所）。"
+              "前のファイルのままです。作者に知らせてください。")
+        for d in differences:
+            print(f"- {d}")
+        return OUTSIDE
+    target = application_file(folder, case, stage, input_sheet.FILE_NAME)
+    from lib.docx_min import write_replacing
+
+    write_replacing(target, blob)
+    rel = places.relative_inside(folder, target)
+    made = "制度データの申請画面から作り、" if first else ""
+    print(f"{rel} に、{made}{len(written)}件の欄の値を書きました。")
+    for screen_name, summary in written:
+        print(f"- {screen_name}・{summary['欄']}（セル {summary['セル']}）")
+    for n in notes:
+        print(f"- 注意：{n}。")
     print("- 直前の版と比べ、書いてよい範囲の外は変わっていません。")
     return OK
 
