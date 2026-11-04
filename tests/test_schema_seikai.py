@@ -70,6 +70,45 @@ def test_seikai_has_eligible_cost_categories(seikai: dict) -> None:
     assert all(c.get("注記", "").startswith("［追加分］") for c in items)
 
 
+def test_seikai_screens_have_fields_and_buttons(seikai: dict) -> None:
+    """申請画面の12画面に、欄と押してよいボタンがある（波3。電子申請マニュアル8 p.6〜28 から読み取り役で作り、作者が A2 で確かめる）。
+
+    空のままだと、入力シートに欄ができず、画面入力の守りが一時保存も次へも拒む（F10、DESIGN 5章）。
+    """
+    from lib import browser_guard, input_sheet
+
+    screens = seikai["申請画面"]["画面"]
+    assert [s["順番"] for s in screens] == list(range(1, 13))
+    for s in screens[:-1]:  # ⓬ 確認は、欄がなく「修正」だけ
+        assert s["欄"], s["名前"]
+        assert "次へ" in s["押してよいボタン"] and "戻る" in s["押してよいボタン"], s["名前"]
+    assert screens[-1]["欄"] == [] and screens[-1]["押してよいボタン"] == ["修正"]
+    for s in screens[1:9]:  # ❷〜❾ には一時保存がある（❶・❿・⓫ にはない）
+        assert "一時保存" in s["押してよいボタン"], s["名前"]
+    for s in screens:
+        for button in s["押してよいボタン"]:
+            assert not any(w in button for w in browser_guard.PROHIBITED_BUTTON_WORDS), button
+        names = [f["名前"] for f in s["欄"]]
+        assert len(names) == len(set(names)), s["名前"]  # 同じ画面に同じ名前の欄がない（入力シートで欄を1つに決めるため）
+        for f in s["欄"]:
+            assert isinstance(f["担当者が入れる"], bool), f
+            assert len(f["名前"]) <= 60, f["名前"]  # 項目名だけ。マニュアルの文は写さない
+            # 4つの語を含む選ぶ欄は、守りがツールに入れさせないので担当者が入れる（添付の欄は書類の名前なので当たらない）
+            if f["種類"] in ("チェック", "ラジオ", "選択") and any(w in f["名前"] for w in browser_guard.PROHIBITED_FIELD_WORDS):
+                assert f["担当者が入れる"] is True, f["名前"]
+            if "上限" in f:
+                assert f["上限"]["根拠の文"] == "（正解では資料の文を写さない。DESIGN 14章）"
+    assert all(f["担当者が入れる"] for f in screens[0]["欄"])  # 宣誓は担当者が入れる
+    # 入力シートは画面の順にすべての欄を並べ、守りは制度データから押してよいボタンを作る
+    sheet = input_sheet.sheet_xml(seikai)
+    assert input_sheet.NO_FIELDS in sheet and sheet.count(input_sheet.NO_FIELDS) == 1  # ⓬ だけ
+    assert sheet.count("<row ") == 2 + sum(len(s["欄"]) for s in screens) + 1
+    buttons = set()
+    for s in screens:
+        buttons |= set(s["押してよいボタン"])
+    assert {"戻る", "一時保存", "次へ", "計算", "修正"} <= buttons
+
+
 def test_seikai_cost_limits_refer_to_categories(seikai: dict) -> None:
     """区分ごとの上限（種類「上限」）のうち、区分1つの件は、補助の対象になる経費の区分を指す。"""
     names = set(SHORYOKUKA_8_CATEGORIES)

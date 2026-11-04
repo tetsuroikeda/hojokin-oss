@@ -1,0 +1,54 @@
+# 模擬の申請画面（12画面版）の ❶ 宣誓・手引きを、内蔵ブラウザの read_page（filter は all）で読んだ結果
+# （2026-11-04。TASKS M8）。宣誓事項は担当者が入れる欄（名前に確認・誓約・同意・宣誓のどれかを含む）。
+note "模擬画面（実在のシステムではありません）。架空の練習用の画面で、入れた内容はこのパソコンの中にだけ記録されます。" [ref_1]
+main [ref_2]
+ heading "❶ 宣誓・手引き" [ref_3]
+ generic "省力化投資補助金（一般型）第8回 応募申請の模擬画面（D11b・12画面版）" [ref_4]
+ navigation "進み具合" [ref_5]
+  list [ref_6]
+   listitem "❶ 宣誓・手引き" [ref_7]
+   listitem "❷ 基本情報" [ref_8]
+   listitem "❸ 要件" [ref_9]
+   listitem "❹ 加点項目" [ref_10]
+   listitem "❺ 事業計画名及び作成者情報" [ref_11]
+   listitem "❻ 最低賃金及び特例希望" [ref_12]
+   listitem "❼ 事業計画数値" [ref_13]
+   listitem "❽ 経費明細｜資金調達内訳" [ref_14]
+   listitem "❾ 書類添付" [ref_15]
+   listitem "❿ アンケート" [ref_16]
+   listitem "⓫ メールアドレス認証" [ref_17]
+   listitem "⓬ 確認" [ref_18]
+ generic "最後に保存した時刻：2026-11-04T19:31:45+09:00" [ref_19]
+ form [ref_20]
+  button "戻る" [ref_21] type="submit"
+  button "次へ" [ref_22] type="submit"
+  region [ref_23]
+   heading "1-1. 公募要領・手引き" [ref_24]
+   generic "公募要領と応募申請の手引き" [ref_25]
+   generic "（模擬なので、資料へのリンクは置いていません）" [ref_26]
+   heading "1-2. 宣誓事項" [ref_27]
+   generic "模擬の宣誓事項です（本物の文ではありません）。担当者が自分で読んでチェックを入れる欄です。" [ref_28]
+   label [ref_29]
+    checkbox "on" [ref_30] type="checkbox"
+    generic "宣誓事項1：公募要領を理解し、申請者自身が計画を作って申請することに同意する" [ref_31]
+   label [ref_32]
+    checkbox "on" [ref_33] type="checkbox"
+    generic "宣誓事項2：補助の対象となる事業者と事業に当たることを確認した" [ref_34]
+   label [ref_35]
+    checkbox "on" [ref_36] type="checkbox"
+    generic "宣誓事項3：不正があったときは、交付の取消しや公表などの措置に従うことを誓約する" [ref_37]
+   label [ref_38]
+    checkbox "on" [ref_39] type="checkbox"
+    generic "宣誓事項4：計画の達成状況の報告と、求められた調査に協力することに同意する" [ref_40]
+   label [ref_41]
+    checkbox "on" [ref_42] type="checkbox"
+    generic "宣誓事項5：反社会的勢力に当たらないことを宣誓する" [ref_43]
+  button "戻る" [ref_44] type="submit"
+  button "次へ" [ref_45] type="submit"
+
+Viewport: 1024x768
+
+Tab Context:
+- Executed on tabId: tab-1
+- Available tabs:
+  • tabId tab-1: "【模擬画面】❶ 宣誓・手引き（省力化・一般型）" ("http://127.0.0.1:8796/shinsei/1")

@@ -1,6 +1,10 @@
 ---
 name: sagasu
 description: 使える補助金・助成金を探し、どれに申請するかを決めるときに使う。要件、義務、返還の条件、自己負担、二重受給を説明する。「うちで使える補助金はある？」「機械を入れたいけど補助金は出る？」「どれに申し込めばいい？」と言われたときに使う。
+allowed-tools:
+  - Bash(python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/sagasu/scripts/*)
+  - Bash(python3 -B ${CLAUDE_PLUGIN_ROOT}/skills/sagasu/scripts/*)
+  - Read(/${CLAUDE_PLUGIN_ROOT}/skills/sagasu/**)
 ---
 
 # 補助金を探す・決める（F1、F2）

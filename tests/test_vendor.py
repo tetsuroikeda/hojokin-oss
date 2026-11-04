@@ -5,6 +5,7 @@
 - ライセンスの全文がある
 - 社長の Mac と同じ /usr/bin/python3 で、通信のための urllib3 なしに、同梱の dulwich を読み込める
 - 同じく /usr/bin/python3 で、同梱の pypdf（公式資料をページごとの文字にする。TASKS M2a）を読み込める
+- 同じく /usr/bin/python3 で、同梱の openpyxl と et_xmlfile（財務モデル.xlsx を作る。TASKS M5）を読み込める
 """
 
 from __future__ import annotations
@@ -13,15 +14,23 @@ import base64
 import csv
 import hashlib
 import json
+import re
 import subprocess
 
 import hook_runner as hr
 import pytest
 
 VENDOR = hr.REPO_ROOT / "lib" / "vendor"
-PACKAGES = {"dulwich": "0.24.10", "typing_extensions": "4.16.0", "pypdf": "6.21.4"}
-# dist-info のうち置くもの（コマンドの入口・entry_points.txt・top_level.txt は置かない）
-KEPT_INFO = ("METADATA", "RECORD", "WHEEL", "licenses/")
+PACKAGES = {
+    "dulwich": "0.24.10",
+    "typing_extensions": "4.16.0",
+    "pypdf": "6.21.4",
+    "openpyxl": "3.1.5",
+    "et_xmlfile": "2.0.0",
+}
+# dist-info のうち置くもの（コマンドの入口・entry_points.txt・top_level.txt は置かない）。
+# ライセンスの全文は licenses/ の下（dulwich など）か、dist-info の直下（openpyxl・et_xmlfile の LICENCE.*、AUTHORS.txt）にある
+KEPT_INFO = ("METADATA", "RECORD", "WHEEL", "licenses/", "LICENCE", "AUTHORS")
 README = "README.md"
 
 
@@ -82,12 +91,14 @@ def test_pure_python_wheel(name) -> None:
     assert "Tag: py3-none-any" in wheel
     metadata = (info / "METADATA").read_text(encoding="utf-8")
     assert f"Version: {PACKAGES[name]}" in metadata
-    # Python 3.9 で動く版
-    assert "Requires-Python: >=3.9" in metadata
+    # Python 3.9 で動く版（「>=3.9」か、それより古い版からの「>=3.8」など）
+    found = re.search(r"^Requires-Python: >=3\.(\d+)\s*$", metadata, re.MULTILINE)
+    assert found and int(found.group(1)) <= 9, metadata[:400]
 
 
 def test_license_texts_are_bundled() -> None:
-    """dulwich は Apache-2.0 か GPL-2.0-or-later を選べる（このリポジトリでは Apache-2.0）。typing_extensions は PSF-2.0。"""
+    """dulwich は Apache-2.0 か GPL-2.0-or-later を選べる（このリポジトリでは Apache-2.0）。typing_extensions は PSF-2.0。
+    openpyxl と et_xmlfile は MIT（et_xmlfile は標準のライブラリから写したコードも持つので、PSF のライセンスの文も添える）。"""
     copying = (dist_info("dulwich") / "licenses" / "COPYING").read_text(encoding="utf-8")
     assert "SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later" in copying
     assert "Apache License" in copying and "Version 2.0" in copying
@@ -100,6 +111,15 @@ def test_license_texts_are_bundled() -> None:
     assert "Redistribution and use in source and binary forms" in (pdf / "licenses" / "LICENSE").read_text(
         encoding="utf-8")
     assert "License-Expression: BSD-3-Clause" in (pdf / "METADATA").read_text(encoding="utf-8")
+    for name in ("openpyxl", "et_xmlfile"):
+        info = dist_info(name)
+        licence = (info / "LICENCE.rst").read_text(encoding="utf-8")
+        assert "MIT Licence" in licence and "Permission is hereby granted, free of charge" in licence
+        metadata = (info / "METADATA").read_text(encoding="utf-8")
+        assert "License: MIT" in metadata and "License-File: LICENCE.rst" in metadata
+    et = dist_info("et_xmlfile")
+    assert "PYTHON SOFTWARE FOUNDATION LICENSE" in (et / "LICENCE.python").read_text(encoding="utf-8")
+    assert (et / "AUTHORS.txt").is_file()
     readme = (VENDOR / README).read_text(encoding="utf-8")
     for name, version in PACKAGES.items():
         assert name in readme and version in readme

@@ -9,18 +9,22 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 MAX_BLOCKS = 8
-CHECK_TIMEOUT = 300
+# 速いテストは並べて4分ほど。Workflow の作業役が同じ Mac でテストを流している間は遅くなるので、余裕を持たせる
+# （.claude/settings.json の hook の時間切れ 660秒より短くする）
+CHECK_TIMEOUT = 600
 OUTPUT_TAIL = 3000
 
 CHECKS = [
     ("構成の検査", ["claude", "plugin", "validate", ".", "--strict"]),
-    ("速いテスト", ["uv", "run", "pytest", "-q", "-m", "not slow"]),
+    # 版の履歴（Git）を使うテストが増え、1つずつ流すと300秒を超えるので、CPU の数だけ並べて流す（pytest-xdist）
+    ("速いテスト", ["uv", "run", "pytest", "-q", "-m", "not slow", "-n", "auto"]),
 ]
 
 
@@ -65,13 +69,33 @@ def tree_fingerprint(root: Path) -> str:
     return h.hexdigest()
 
 
+def run_command(cmd: list[str], root: Path, timeout: float) -> subprocess.CompletedProcess:
+    """コマンドを別のプロセスの組で流す。時間切れのときは、子（pytest とその作業役）まで組ごと止める。
+
+    subprocess.run の時間切れは uv だけを止め、子の pytest が置き去りになって増えていくため。
+    """
+    proc = subprocess.Popen(
+        cmd, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.communicate()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
 def run_checks(root: Path) -> tuple[list[tuple[str, str]], list[str]]:
     """落ちた検査の名前と出力の終わり、見つからなかった道具の名前を返す。"""
     failures = []
     missing = []
     for label, cmd in CHECKS:
         try:
-            result = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=CHECK_TIMEOUT)
+            result = run_command(cmd, root, CHECK_TIMEOUT)
         except FileNotFoundError:
             missing.append(cmd[0])
             continue

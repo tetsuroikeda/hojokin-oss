@@ -12,7 +12,13 @@
 5. 案件の回の資料が一つもなければ（まだ公表されていない）、「直近回である第◯回の資料に基づいている」と示す（SPEC F3）。
    回の違う資料（第6回版の手引きなど）も、資料ごとに示す。
 
+書く前に、書く先（`案件/`、`案件/<案件の名前>/公式資料/`、`記録/資料の本文/<案件の名前>/` と、その中の資料ごとのフォルダ・
+資料の一覧.json）の途中のフォルダとそのものに、別名（シンボリックリンク）がないかを確かめる。前に置いた公式資料が別名のときも、
+別名の先（会社のフォルダの外かもしれない）を読まない。どれかに別名があれば、何も書かずに PlaceError（DESIGN 5章。lib/places.py）。
+
 通信は、標準のライブラリ（urllib）だけで行う。版の履歴に残すのは、応答の終わりの hook（ツールの版）に任せる。
+ただし、置く前に中身を版の履歴の置き場（.git）に入れ、版の印を資料の一覧の「置き場所」と原本の控えに残す
+（lib/protected_store.py）。同じ応答の中で書き換えられても、応答の終わりの照らしで戻せるようにするため（TASKS M4）。
 """
 
 from __future__ import annotations
@@ -31,7 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from lib import case_folder, dates, doc_text
+from lib import case_folder, dates, doc_text, place_text, protected_store
 
 RECORDS_DIR = "記録"  # lib/company_init.py の RECORDS_DIR と同じ
 TEXT_DIR = "資料の本文"
@@ -69,6 +75,10 @@ class ListError(ValueError):
     """取る資料の一覧の形が違う。"""
 
 
+class PlaceError(ValueError):
+    """書く先（案件のフォルダ・公式資料・資料の本文・資料の一覧）か、前に置いた公式資料に別名がある。何も書いていない。"""
+
+
 @dataclass
 class DocResult:
     doc: Dict
@@ -79,6 +89,7 @@ class DocResult:
     text_dir: str = ""
     text_index: Optional[Dict] = None
     text_error: str = ""
+    blob: str = ""  # 版の履歴の置き場に入れた中身の印（版の履歴がなければ空）
 
 
 @dataclass
@@ -294,14 +305,26 @@ def fetch_one(company: Path, official: Path, doc: Dict,
         if before is not None:
             rel = str(before.relative_to(company))
             if before.suffix.lower() == suffix and sha256_of(before) == digest:
-                return DocResult(doc, SAME, "前に取ったものと同じ中身でした", rel, digest)
+                try:  # 前に取ったときの中身の印がなくても、ここで預ける（預けられなくても、同じ中身なので続ける）
+                    blob = protected_store.store(company, temp)
+                except Exception:
+                    blob = ""
+                protected_store.remember(company, rel, digest, blob, protected_store.OFFICIAL)
+                return DocResult(doc, SAME, "前に取ったものと同じ中身でした", rel, digest, blob=blob)
             return DocResult(
                 doc, CHANGED,
                 "前に取ったものと中身が違いました。改訂された可能性があります。前のものを残し、新しいものは置いていません",
                 rel, sha256_of(before))
+        # 置く前に、中身を版の履歴の置き場に入れる（同じ応答の中で書き換えられても戻せるように）
+        try:
+            blob = protected_store.store(company, temp)
+        except protected_store.Busy:
+            return DocResult(doc, FAILED, "ほかの処理が版の履歴を使っているところでした。置いていません。少し待ってから、もう一度取ってください")
         os.replace(temp, target)
         target.chmod(READ_ONLY)
-        return DocResult(doc, GOT, "", str(target.relative_to(company)), digest)
+        rel = str(target.relative_to(company))
+        protected_store.remember(company, rel, digest, blob, protected_store.OFFICIAL)
+        return DocResult(doc, GOT, "", rel, digest, blob=blob)
     finally:
         if temp.exists():
             temp.unlink()
@@ -370,7 +393,13 @@ def write_list(company: Path, case: str, seido: Dict, results: List[DocResult], 
         old = entries.get(r.doc["id"])
         if r.status in (GOT, SAME):
             entries[r.doc["id"]] = _list_entry(r, today, old)
-            places[r.doc["id"]] = {"ファイル": r.file, "本文": r.text_dir}
+            place = {"ファイル": r.file, "本文": r.text_dir}
+            # 版の印（照らしと戻しが、入れたときの中身を探すのに使う。制度データの「資料」には写さない）
+            old_place = places.get(r.doc["id"]) if isinstance(places.get(r.doc["id"]), dict) else {}
+            blob = r.blob or (old_place.get("版の印") if old_place.get("ファイル") == r.file else "")
+            if blob:
+                place["版の印"] = blob
+            places[r.doc["id"]] = place
     data = {
         "案件": case,
         "制度": seido,
@@ -385,16 +414,52 @@ def write_list(company: Path, case: str, seido: Dict, results: List[DocResult], 
     return path
 
 
+NOT_PLACED = "公式資料も資料の本文も置いていません"
+
+
+def _check_no_link(company: Path, rel: str) -> None:
+    problem = place_text.write_problem(company, rel, NOT_PLACED)
+    if problem:
+        raise PlaceError(problem)
+
+
+def check_places(company: Path, case: str, docs: List[Dict]) -> None:
+    """書く先と、前に置いた公式資料に別名がないかを確かめる（lib/places.py）。あれば、何も書かずに PlaceError。
+
+    別名のフォルダに書くと、別名の先（会社のフォルダの外や、別の場所）に資料を置くことになる。前に置いた公式資料が
+    別名なら、前と同じ中身かを比べるときに、別名の先のファイルを読むことになる（DESIGN 5章）。
+    """
+    texts = f"{RECORDS_DIR}/{TEXT_DIR}/{case}"
+    official_rel = f"{case_folder.CASES_DIR}/{case}/{case_folder.OFFICIAL_DIR}"
+    rels = [official_rel, f"{texts}/{LIST_FILE}"] + [f"{texts}/{doc['id']}/{doc_text.INDEX_FILE}" for doc in docs]
+    for rel in rels:
+        _check_no_link(company, rel)
+    official = case_folder.official_dir(company, case)
+    if not official.is_dir():
+        return
+    stems = {file_stem(doc) for doc in docs}
+    for path in sorted(official.iterdir()):
+        if path.is_symlink() and unicodedata.normalize("NFC", path.stem) in stems:
+            raise PlaceError(place_text.linked(f"前に取ったものと比べず、{NOT_PLACED}",
+                                               f"{official_rel}/{unicodedata.normalize('NFC', path.name)}"))
+
+
 def fetch_all(company: Path, data: Dict, downloader: Callable[[str, Path], str] = download) -> FetchResult:
-    """一覧の資料をすべて取り、案件のフォルダに置いて、文字にする。company は会社のフォルダ（目印を確かめた後）。"""
+    """一覧の資料をすべて取り、案件のフォルダに置いて、文字にする。company は会社のフォルダ（目印を確かめた後）。
+
+    書く先か前に置いた公式資料に別名があれば、何も書かずに PlaceError（check_places）。
+    """
     data = load_list(data)
     seido = data["制度"]
     today = dates.today(company)
+    # `案件/` が別名なら、中の一覧も見ない（同じ制度・枠・回のフォルダを探す前に確かめる）
+    _check_no_link(company, case_folder.CASES_DIR)
     # 案件の名前がなければ、同じ制度・枠・回の案件のフォルダを使う（年が変わってから取り直しても、別の案件を作らない）
     if data.get("案件の名前"):
         case = case_folder.safe_name(data["案件の名前"])
     else:
         case = case_folder.find_or_name_case(company, seido, today.year)
+    check_places(company, case, data["資料"])
     result = FetchResult(case=case, seido=seido)
     result.made = case_folder.ensure_case(company, case)
     official = case_folder.official_dir(company, case)

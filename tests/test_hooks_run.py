@@ -20,6 +20,7 @@ import unicodedata
 
 import hook_runner as hr
 import pytest
+from lib import common_rules, status_view
 
 PREPARE = "xcode-select --install"
 CAUSE_NOT_WORKING = "補助プログラム（Python）が動かない"
@@ -46,7 +47,7 @@ def run_all(tmp_path, python, plugin=None, extra_env=None, only=None):
         tool = payload.get("tool_name", "")
         if only is not None and (tool or event) not in only:
             continue
-        for command in hr.hook_commands(event, tool):
+        for command in hr.hook_commands(event, hr.match_name(payload)):
             role = command.split(event, 1)[1].strip()
             start = time.monotonic()
             r = hr.run(command, payload, plugin=plugin, folder=folder, path=path, home=home, data=data,
@@ -80,7 +81,8 @@ def test_read_matcher_covers_read_tools_only() -> None:
     for tool in hr.GUARDED_TOOLS + ("WebFetch", "mcp__x__Read", "ReadMcpResourceTool"):
         assert not hr.claude_matches(matcher, tool), tool
     config = json.loads(hr.HOOKS_JSON.read_text(encoding="utf-8"))
-    assert len(config["hooks"]["PreToolUse"]) == 2
+    # 3つ目は、審査役が報告を渡す道具（SubagentHandback）だけを受け取る（M7。tests/test_check_min.py）
+    assert len(config["hooks"]["PreToolUse"]) == 3
 
 
 def test_post_tool_use_only_for_browser() -> None:
@@ -123,10 +125,22 @@ def test_company_folder_with_python_runs_python_hooks(tmp_path) -> None:
             assert hso["permissionDecision"] == "deny", (tool, hso)
             assert "hojokin プラグインの決まり" in hso["permissionDecisionReason"]
             denied.add(tool)
+        elif tool == "Write":
+            # 入力の例は「計画書_v2.docx」。版の名前の新しいファイルとして拒む（M0a。tests/test_version_names.py）
+            hso = json.loads(r.stdout.decode("utf-8"))["hookSpecificOutput"]
+            assert hso["permissionDecision"] == "deny", (tool, hso)
+            assert "版の名前のファイルは作れません" in hso["permissionDecisionReason"]
+            denied.add(tool)
+        elif event == "SessionStart":
+            # 開いたときは、期限と作業・どの段階にも共通の決まりを渡す（M3。lib/status_view.py）。ほかには何も渡さない
+            hso = json.loads(r.stdout.decode("utf-8"))["hookSpecificOutput"]
+            assert hso["hookEventName"] == "SessionStart"
+            assert status_view.without_brief(hso["additionalContext"]) == ""
+            assert common_rules.TEXT.rstrip() in hso["additionalContext"]
         else:
             assert r.stdout == b"", (event, tool, r.stdout.decode("utf-8"))
     assert denied == {"Read", "Grep", "Glob", "mcp__Claude_Browser__computer",
-                      "mcp__claude-in-chrome__form_input", "mcp__computer-use__left_click"}
+                      "mcp__claude-in-chrome__form_input", "mcp__computer-use__left_click", "Write"}
     assert (tmp_path / "python-ran").exists()
     # -B で動かすので、プラグインのフォルダに __pycache__ を書かない
     assert not list(plugin.rglob("__pycache__"))
@@ -326,7 +340,12 @@ def test_watcher_does_not_linger(tmp_path) -> None:
     results = run_all(tmp_path, "本物", extra_env={"HOJOKIN_WATCH_SECONDS": marker_seconds}, only={"Write", "Bash"})
     assert len(results) == 2
     for event, tool, role, r, seconds in results:
-        assert r.returncode == 0 and r.stdout == b"" and r.stderr == b"", (tool, r)
+        assert r.returncode == 0 and r.stderr == b"", (tool, r)
+        if tool == "Write":
+            # 入力の例は「計画書_v2.docx」。Python が版の名前の新しいファイルとして拒む（M0a）
+            assert "版の名前のファイルは作れません" in r.stdout.decode("utf-8"), r.stdout.decode("utf-8")
+        else:
+            assert r.stdout == b"", (tool, r)
         assert seconds < 3, (tool, seconds)
     ps = subprocess.run(["/bin/ps", "-axo", "command"], capture_output=True, check=True).stdout.decode("utf-8")
     assert f"/bin/sleep {marker_seconds}\n" not in ps

@@ -17,7 +17,13 @@
   - Windows の OneDrive は、環境変数（OneDrive など）に場所がある（期間中は確かめない。SPEC 4章）。
   - iCloud の「デスクトップと書類」：Finder の設定（com.apple.finder の FXICloudDriveDesktop・
     FXICloudDriveDocuments）が 1 のときだけ、~/Desktop・~/Documents の下を同期されるとみなす。
-    切ってある Mac で 0 と読めることは確かめた。入れた Mac で 1 になることは、まだ確かめていない（M0c で確かめる）。
+    切ってある Mac で 0 と読めることは確かめた。入れた Mac で 1 になることは、まだ確かめていない。
+    M0c（11/4）で、開発の Mac を読むだけで確かめた結果：Desktop・Documents は 0（切ってある）、FXICloudDriveEnabled
+    は 1（iCloud Drive は入っている）。~/Desktop・~/Documents はふつうのフォルダ（別名でない）で、拡張属性に iCloud の
+    印はない（com.apple.macl・com.apple.provenance だけ）。~/Library/Mobile Documents/com~apple~CloudDocs/ の中には
+    Desktop・Documents のフォルダが残っている（切った後も残る）ので、そのフォルダがあることは見分けに使わない。
+    入れた Mac は手元になく、1 になることは確かめられなかった（作者に確かめてもらう）。~/Desktop が iCloud Drive の
+    中への別名になる形なら、別名をたどった場所（~/Library/Mobile Documents/）で iCloud Drive と見分ける。
 """
 
 from __future__ import annotations

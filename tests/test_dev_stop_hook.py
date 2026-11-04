@@ -2,7 +2,38 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
 import dev_stop_hook as hook
+
+
+def test_timeout_also_stops_children(tmp_path: Path) -> None:
+    # uv が pytest を起こすのと同じく、子を起こして待つコマンド。時間切れのとき、子も残らないこと
+    pid_file = tmp_path / "child.pid"
+    script = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen(['sleep', '60'])\n"
+        f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+        "time.sleep(60)\n"
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        hook.run_command([sys.executable, "-c", script], tmp_path, timeout=2)
+    child = int(pid_file.read_text())
+    for _ in range(50):
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        os.kill(child, 9)
+        pytest.fail("時間切れの後も、子のプロセスが残っている")
 
 
 def test_pass_resets_count() -> None:

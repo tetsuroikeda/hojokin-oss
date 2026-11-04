@@ -24,6 +24,7 @@ sys.path.insert(0, str(HOOKS_DIR.parent))
 import post_tool_use  # noqa: E402
 import pre_tool_use  # noqa: E402
 import session_start  # noqa: E402
+import shinsa_hooks  # noqa: E402
 import stop  # noqa: E402
 import user_prompt_submit  # noqa: E402
 from lib import company  # noqa: E402
@@ -34,6 +35,7 @@ HANDLERS = {
     "PreToolUse": pre_tool_use.handle,
     "PostToolUse": post_tool_use.handle,
     "Stop": stop.handle,
+    "SubagentStop": shinsa_hooks.subagent_stop,
 }
 
 
