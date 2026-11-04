@@ -926,13 +926,18 @@ def record_scene(folder: Path, who: str, reason: str, when: Optional[datetime] =
     - budget は、この呼び出しで使ってよい秒数。過ぎたら、残しきれないファイルを次の場面に回す（上の説明）。
       渡さなければ、上限なしで全部を残す。
     - 前の場面から回したファイルは、その場面のだれ・理由で先に残す（版が2件になることがある）。
+    - 版を残せなかった場面の控え（lib/history_carry.py）に、控えたときと同じ状態で当たるファイルも、その控えの
+      だれ・理由で先に残す。
     """
+    from lib import history_carry  # history_carry がこのモジュールを読み込むので、使うときに読む
+
     if who not in IDENTITIES:
         raise ValueError(f"だれ（{who}）が分かりません")
     deadline = None if budget is None else time.monotonic() + budget
     moment = (when or datetime.now(timezone.utc)).astimezone(JST)
     result = Result()
     with locked(folder):
+        carried = history_carry.load(folder)  # 比べる前に読む（後から書かれた控えは消さない）
         repo = Repo(str(folder))
         try:
             index = repo.open_index()
@@ -943,7 +948,8 @@ def record_scene(folder: Path, who: str, reason: str, when: Optional[datetime] =
             wrote = bool(refresh)
             leftovers = load_leftovers(folder)
             kept: Dict[str, dict] = {}
-            for g_who, g_reason, items, earlier in _groups(changes, leftovers, who, reason):
+            notes = {**history_carry.attribute(changes, carried), **leftovers}  # 残り.json の控えを先にする
+            for g_who, g_reason, items, earlier in _groups(changes, notes, who, reason):
                 done: List[Change] = []
                 deferred: List[Change] = []
                 skipped: List[Change] = []  # 読めなかったもの
@@ -1010,6 +1016,7 @@ def record_scene(folder: Path, who: str, reason: str, when: Optional[datetime] =
                 index.write()
             if kept != leftovers:
                 _save_leftovers(folder, kept)
+            history_carry.consume(folder, carried)
             return result
         finally:
             repo.close()

@@ -16,6 +16,9 @@
   飛ばし、ほかは残す（版の名前の確かめも続ける）。読めないものは消したことにせず、開いたときに伝え、読めるように
   なったら、最初に見つけた場面のだれ・理由で残す。
 - Stop で続けさせている間に社長が止めて次を送っても、続きの中でツールが変えた分は「ツール」として残す。
+- ほかのセッションの hook が版の錠を持っていて、その場面で版を残せなくても（版を残す処理が落ちたときも）、
+  その場面で変わっていたファイルは、次に版を残す場面で、その場面のだれ・理由で残す（控えた後にまた変わったものは、
+  次の場面のだれ）。応答の終わりで錠が取れなくても、版の名前のファイルはその応答の終わりに伝える。
 
 hook は hooks.json のコマンドから、Claude Code と同じ入力で動かす（tests/version_tool.py）。
 """
@@ -594,6 +597,110 @@ def test_lock_of_a_running_process_is_respected(company) -> None:
     (record,) = newest(company)
     assert record["書類"] == SONO1
     assert not lock.exists()
+
+
+# ---- 版の錠が取れない場面（ほかのセッションの hook が版を残している間）と、版を残す処理が落ちた場面 ----
+
+SONO2 = f"{vt.APPLICATION}/その2.md"
+SONO1_V2 = f"{vt.APPLICATION}/その1_v2.md"
+INTERRUPTED = "（応答が途中で止まったため、次の発言のときに残した）"
+
+
+@pytest.mark.slow
+def test_busy_stop_keeps_the_tool_and_tells_version_names(company) -> None:
+    """応答の終わりに版の錠が取れなくても、ツールが変えた分は、次の場面で「ツール」と依頼の文で残す
+    （「社長が手で変更」にしない）。その応答で足された版の名前のファイルも、その応答の終わりに伝える。"""
+    company.say("その1を直して")
+    company.write(SONO1_V2, "直した中身")
+    count = len(company.versions())
+    with vt.held_lock(company.folder):
+        output = company.stop()
+    assert output is not None and output["decision"] == "block", output
+    assert SONO1_V2 in output["reason"], output
+    assert len(company.versions()) == count
+    # 続きの中で Claude がまとめないまま、社長が次を送った
+    assert company.say("次へ") is None
+    by_doc = {r["書類"]: (r["だれ"], r["理由"]) for r in newest(company)}
+    assert by_doc == {SONO1_V2: ("ツール", "その1を直して")}
+    assert vt.carried_notes(company.folder) == []
+    # 伝えたものを、次の応答の終わりに繰り返さない
+    assert company.stop() is None
+
+
+@pytest.mark.slow
+def test_busy_stop_then_reopened_keeps_who_by_file_state(company) -> None:
+    """応答の終わりに版を残せないまま閉じ、次に開いたとき（別のセッション）も、ツールが変えたままのファイルは
+    「ツール」と依頼の文で残す。応答の後に社長が手で変えたファイル（ツールが書いたものを直したものを含む）は「社長」。"""
+    company.say("その1とその2を書いて")
+    company.write(SONO1, "ツールが書いた")
+    company.write(SONO2, "ツールが書いた")
+    with vt.held_lock(company.folder):
+        assert company.stop() is None
+    company.write(SONO2, "社長が直した")
+    company.write("入れ口/メモ.txt", "社長のメモ")
+    assert company.start("startup", session="next-day") is None
+    by_doc = {r["書類"]: (r["だれ"], r["理由"]) for r in newest(company, 2)}
+    assert by_doc == {SONO1: ("ツール", "その1とその2を書いて"), SONO2: ("社長", OWNER_REASON),
+                      "入れ口/メモ.txt": ("社長", OWNER_REASON)}
+    assert company.content(newest(company)[0]["版"], SONO2) == "社長が直した"
+    assert company.pending() == [] and vt.carried_notes(company.folder) == []
+
+
+@pytest.mark.slow
+def test_busy_send_keeps_the_owner_changes_as_the_owner(company) -> None:
+    """社長が送ったときに版の錠が取れなくても、社長が手で変えた分は、次の場面で「社長」として残す
+    （応答の中のツールの分と混ぜない）。"""
+    company.say("その1を書いて")
+    company.write(SONO1, "ツールが書いた")
+    assert company.stop() is None
+    company.write(SONO1, "社長が直した")
+    company.write("入れ口/見積書.pdf", b"%PDF-1.4 owner")
+    count = len(company.versions())
+    with vt.held_lock(company.folder):
+        assert company.say("その2も書いて") is None
+    assert len(company.versions()) == count
+    company.write(SONO2, "ツールが書いた")
+    assert company.stop() is None
+    by_doc = {r["書類"]: (r["だれ"], r["理由"]) for r in newest(company, 2)}
+    assert by_doc == {SONO1: ("社長", OWNER_REASON), "入れ口/見積書.pdf": ("社長", OWNER_REASON),
+                      SONO2: ("ツール", "その2も書いて")}
+    assert company.pending() == [] and vt.carried_notes(company.folder) == []
+
+
+@pytest.mark.slow
+def test_busy_send_after_an_interrupted_response_keeps_its_request(company) -> None:
+    """途中で止めた応答の後に送ったとき、版の錠が取れなくても、止めた応答でツールが変えた分は、前の依頼の
+    「ツール」として残す（次の依頼の文にしない）。止めた応答で足された版の名前のファイルは、次の応答の終わりに伝える。"""
+    company.say("その1を書いて")
+    company.write(SONO1, "途中まで書いた")
+    company.write(SONO1_V2, "途中まで書いた")
+    with vt.held_lock(company.folder):
+        assert company.say("やっぱり別の書き方で") is None
+    company.write(SONO2, "別の書き方")
+    output = company.stop()
+    assert output is not None and output["decision"] == "block", output
+    assert SONO1_V2 in output["reason"], output
+    by_doc = {r["書類"]: (r["だれ"], r["理由"]) for r in newest(company, 2)}
+    assert by_doc == {SONO1: ("ツール", f"その1を書いて{INTERRUPTED}"), SONO1_V2: ("ツール", f"その1を書いて{INTERRUPTED}"),
+                      SONO2: ("ツール", "やっぱり別の書き方で")}
+
+
+def test_who_is_kept_when_recording_fails_at_stop(company) -> None:
+    """応答の終わりに版を残す処理が落ちても（.git に書けない）、直った後の場面で、ツールが変えた分は「ツール」と
+    依頼の文で、応答の後に社長が手で変えた分は「社長」として残す。"""
+    company.say("その1を書いて")
+    company.write(SONO1, "ツールが書いた")
+    objects = company.folder / ".git" / "objects"
+    objects.chmod(0o500)
+    try:
+        assert company.stop() is None
+    finally:
+        objects.chmod(0o755)
+    company.write("入れ口/メモ.txt", "社長のメモ")
+    assert company.say("次へ") is None
+    by_doc = {r["書類"]: (r["だれ"], r["理由"]) for r in newest(company, 2)}
+    assert by_doc == {SONO1: ("ツール", "その1を書いて"), "入れ口/メモ.txt": ("社長", OWNER_REASON)}
+    assert company.pending() == [] and vt.carried_notes(company.folder) == []
 
 
 def test_owner_files_left_for_later_are_recorded_as_the_owner(company) -> None:

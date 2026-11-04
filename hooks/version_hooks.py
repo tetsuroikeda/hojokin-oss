@@ -26,6 +26,9 @@
 残しきれない分は次の場面に回す（lib/history.py）。版を残す処理が落ちたとき（.git が壊れた、書けないなど）は、
 hook を落とさずに控え（`.hojokin/一時/版の記録/止まった.json`）、開いたときに伝える。hook が落ちると、
 run.sh が「Python が動かない」とみなし、開いたときに誤った案内（開発ツールを入れる）を渡すため。
+ほかのセッションが版を残している間（版の錠が取れない）と、落ちたときは、その場面で変わっていたファイルを、
+その場面のだれ・理由で控え、次に版を残す場面がそのだれ・理由で残す（lib/history_carry.py）。錠が取れない応答の
+終わりでも、版の名前のファイルは控えた結果から見つけて伝える。
 
 会社のフォルダに Git の形の版の履歴（.git）がないときは、何もしない（.git を作らない）。
 版の履歴は lib/history.py が扱う。dulwich を読み込むので、PreToolUse では読み込まない。
@@ -155,22 +158,24 @@ def _one_line(text: str, limit: int) -> str:
 def _record(folder: Path, role: str, reason: Optional[str], event: str):
     """版を残す。role は "tool"（ツール）か "owner"（社長。理由は「社長が手で変更」）。
 
-    lib.history.Result を返す。ほかのセッションが残しているところ（HistoryBusy）なら None（変わった分は次の場面で
-    残る）。落ちたときも None を返し、止まったことを控える（開いたときに伝える）。
+    lib.history.Result を返す。ほかのセッションが残しているところ（HistoryBusy）なら、変わっていたファイルを
+    この場面のだれ・理由で控え（次の場面で、そのだれ・理由で残る。lib/history_carry.py）、控えた結果を返す
+    （版の名前の確かめに使う）。落ちたときも同じく控え、None を返し、止まったことを控える（開いたときに伝える）。
     """
     try:
-        from lib import history  # dulwich を読み込むので、使うときだけ
+        from lib import history, history_carry  # dulwich を読み込むので、使うときだけ
     except Exception as error:  # 同梱が欠けたなど
         _save_failure(folder, event, error)
         return None
     who = history.TOOL if role == "tool" else history.OWNER
+    words = history.OWNER_REASON if reason is None else reason
     try:
-        result = history.record_scene(folder, who, history.OWNER_REASON if reason is None else reason,
-                                      when=_now(folder), budget=_budget(event))
+        result = history.record_scene(folder, who, words, when=_now(folder), budget=_budget(event))
     except history.HistoryBusy:
-        return None
+        return history_carry.take(folder, who, words)
     except Exception as error:
         _save_failure(folder, event, error)
+        history_carry.take(folder, who, words)  # 版の名前の確かめはしない（.git が壊れたときの扱いは作者に確かめる）
         return None
     _clear_failure(folder)
     return result
