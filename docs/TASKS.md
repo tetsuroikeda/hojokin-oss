@@ -140,13 +140,13 @@ DESIGN 13.1 の 11/4 の流れを、1時間ほどのタスクに分けたもの�
 
 | ID | すること | 触るファイル | 終わりの確かめ | 先に済ませるタスク | 予定の日 | 状態 |
 |---|---|---|---|---|---|---|
-| M0a | 版の記録を作る。ツールが変えた分は Stop で「ツール」、社長が手で変えた分は UserPromptSubmit と SessionStart で「社長」として、履歴に残す（書類・理由・案件・段階）。「_v2」「最終」などの名前のファイルを PreToolUse で拒み、その場のコードで作られたら Stop で見つける | hooks/、lib/、tests/ | `uv run pytest tests/test_history.py tests/test_version_names.py` を流し、すべて通った出力を会話に示す | S5 | 11/4 | まだ |
-| M0b | 提出版と「見るだけ」を作る。「提出した」と言われたら提出版を記録する。前の版や提出版を、`見るだけ/` に読み取り専用で出し、次に開いたときに片付ける。kiroku の SKILL.md に版の扱いを書く | skills/kiroku/、hooks/、lib/、tests/ | `uv run pytest tests/test_T0_6.py` を流し、すべて通った出力を会話に示す（T0-6） | M0a | 11/4 | まだ |
+| M0a | 版の記録を作る。ツールが変えた分は Stop で「ツール」、社長が手で変えた分は UserPromptSubmit と SessionStart で「社長」として、履歴に残す（書類・理由・案件・段階）。「_v2」「最終」などの名前のファイルを PreToolUse で拒み、その場のコードで作られたら Stop で見つける | hooks/、lib/、tests/ | `uv run pytest tests/test_history.py tests/test_version_names.py` を流し、すべて通った出力を会話に示す | S5 | 11/4 | 済み |
+| M0b | 提出版と「見るだけ」を作る。「提出した」と言われたら提出版を記録する。前の版や提出版を、`見るだけ/` に読み取り専用で出し、次に開いたときに片付ける。kiroku の SKILL.md に版の扱いを書く | skills/kiroku/、hooks/、lib/、tests/ | `uv run pytest tests/test_T0_6.py` を流し、すべて通った出力を会話に示す（T0-6） | M0a | 11/4 | 済み |
 | M1 | 探す・決めるを最小限で動かす。sagasu の SKILL.md、jGrants の検索（記録した応答と、実際の通信1回）、補助金の候補.docx。決めるは、選んだ制度の公募要領を読み、要件・義務・返還の条件を一覧で示す最小限の形にする | skills/sagasu/、lib/、tests/ | `uv run pytest tests/test_T1_3.py tests/test_T1_6.py` を流し、すべて通った出力を会話に示す（T1-3、T1-6） | S3、S5 | 11/4 | 済み |
 | M2a | 公式資料の取得と書類フォルダを作る。junbi の取得のスクリプト、資料をページごとの文字にして `記録/資料の本文/` に置くこと（印刷されたページ番号との対応つき）、案件のフォルダ | skills/junbi/、lib/、tests/ | `uv run pytest tests/test_T3_1.py` を流し、すべて通った出力を会話に示す（T3-1） | S5、S6、E0 | 11/4 | 済み |
 | M2b | 読み取り役と裏取りの道具を作る。読み取り役が章ごとに読み、根拠の文とページを付けて JSON で返す形。道具が Schema で形を確かめ、根拠の文がそのページにあるか、値がその文の中にあるかを照らす。小さな資料で確かめる。実験 E7（呼ぶときに Opus 5.5 に替えられるか）を兼ねる | skills/junbi/、agents/yomitori.md、lib/、tests/ | `uv run pytest tests/test_urakadori.py` を流し、すべて通った出力を会話に示す | M2a、S1 | 11/4 | 済み |
 | M2c | 省力化 第8回の制度データを作る。読み取り役で全章を読み、道具で裏取りする。段階のフォルダを制度データから作る | skills/junbi/、lib/、tests/ | 作った制度データが Schema を通り、重要な項目（締切、補助上限、補助率、数値の要件、必須書類、補助の対象にならない経費）がすべて値か「要確認」で埋まり、出典のない値が0件だった道具の出力を会話に示す | M2b | 11/4 | まだ |
-| M2d | 概要と流れ.docx を作る | skills/junbi/、lib/、tests/ | `uv run pytest tests/test_T3_9.py` を流し、すべて通った出力を会話に示す（T3-9） | M2c | 11/4 | まだ |
+| M2d | 概要と流れ.docx を作る | skills/junbi/、lib/、tests/ | `uv run pytest tests/test_T3_9.py` を流し、すべて通った出力を会話に示す（T3-9） | M2c | 11/4 | 済み |
 | M3 | 今の状態と、開いたときの表示を最小限で作る。SessionStart で、今日やること・近い締切・遅れている作業を締切順に組み立て、どの段階にも共通の決まりの短い文（1,200字まで。DESIGN 4.2）を添えて渡す。今の状態.html を作る | hooks/、lib/、tests/ | `uv run pytest tests/test_T6_1.py` を流し、すべて通った出力を会話に示す（T6-1 のうち、近い締切がはじめの値の30日の部分。日数を変える部分と期限の台帳は K1 で足す） | M2c、S3 | 11/4 | まだ |
 | M4 | 書類3件の整理を最小限で作る。shorui の SKILL.md。入れ口の書類をハッシュで見つけ、原本の置き場へ移して決まった形の名前にし、台帳に残す。原本と公式資料のハッシュを、開いたときと応答の終わりに照らし、変わっていたら戻す | skills/shorui/、hooks/、lib/、tests/ | `uv run pytest tests/test_T0_7.py tests/test_seiri_min.py` を流し、すべて通った出力を会話に示す（T0-7） | M0a、D2a | 11/4 | 済み |
 | M5 | 前提3つだけの財務モデルを作る。3つのシート、名前を付けたセル、数式。Python の計算と、LibreOffice で計算し直した結果を比べる。数値の要件（労働生産性、給与支給総額）を、制度データにある定義で判定する。判定は様式（別紙4）の数式と同じ計算で行い、基準との差が0.01ポイント未満なら社長に知らせる（DESIGN 8.3。11/3 に作者が決めた）。openpyxl を lib/vendor/ に同梱する（DESIGN 4.1） | skills/kaku/、lib/、tests/ | `uv run pytest tests/test_T8_4.py tests/test_zaimu_min.py` を流し、すべて通った出力を会話に示す（T8-4） | E2b、S5、M2c | 11/4 | まだ |
