@@ -29,7 +29,8 @@ Claude が渡す JSON の形
      "理由": "…", "会社の記録": [...]（任意）}
   ],
   "補助額の見込み": {                                 （任意。なければ見込みは出さない）
-    "区分": "<補助額の区分の名前>", "特例": ["<その区分の特例の名前>", …]（任意）,
+    "区分": "<補助額の区分の名前>", "特例": ["<その区分の特例の名前>", …]（任意。同じ特例は1回だけ。
+                                                                          補助率と上限の置き換えは、それぞれ1つまで）,
     "補助の対象にする経費": "<会社の記録の事実の id。値は円の金額（22500000、「22,500千円」など）>",
     "理由": "（任意）その区分に当たる理由", "会社の記録": [...]（任意。区分の判断に使った項目）
   }
@@ -557,11 +558,21 @@ def _check_estimate(spec: Any, seido: Dict, record: Dict[str, Dict], problems: L
             problems.append(f"{where}の「特例」は、特例の名前の並びにしてください")
         elif entry is not None:
             kinds: List[str] = []
+            seen: List[str] = []
+            repeated: List[str] = []
             for name in specials:
                 special = _find_special(entry, name)
                 if special is None:
                     problems.append(f"{where}の特例「{_norm(name)}」が、区分「{_norm(spec['区分'])}」の特例にありません")
                     continue
+                # 同じ特例を2回渡すと、上乗せが2回足される。種類にかかわらず、名前（NFC にそろえ、前後の空白を除く）で断る
+                key = _norm(special.get("名前", ""))
+                if key in seen:
+                    if key not in repeated:
+                        problems.append(f"{where}で、同じ特例「{key}」を2回以上選んでいます。1回だけ書いてください")
+                        repeated.append(key)
+                    continue
+                seen.append(key)
                 kind = special.get("種類")
                 if kind != "上限の上乗せ" and kind in kinds:
                     problems.append(f"{where}で、同じ種類の特例（{kind}）を2つ以上選んでいます。1つにしてください")
