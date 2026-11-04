@@ -123,10 +123,16 @@ def test_company_folder_with_python_runs_python_hooks(tmp_path) -> None:
             assert hso["permissionDecision"] == "deny", (tool, hso)
             assert "hojokin プラグインの決まり" in hso["permissionDecisionReason"]
             denied.add(tool)
+        elif tool == "Write":
+            # 入力の例は「計画書_v2.docx」。版の名前の新しいファイルとして拒む（M0a。tests/test_version_names.py）
+            hso = json.loads(r.stdout.decode("utf-8"))["hookSpecificOutput"]
+            assert hso["permissionDecision"] == "deny", (tool, hso)
+            assert "版の名前のファイルは作れません" in hso["permissionDecisionReason"]
+            denied.add(tool)
         else:
             assert r.stdout == b"", (event, tool, r.stdout.decode("utf-8"))
     assert denied == {"Read", "Grep", "Glob", "mcp__Claude_Browser__computer",
-                      "mcp__claude-in-chrome__form_input", "mcp__computer-use__left_click"}
+                      "mcp__claude-in-chrome__form_input", "mcp__computer-use__left_click", "Write"}
     assert (tmp_path / "python-ran").exists()
     # -B で動かすので、プラグインのフォルダに __pycache__ を書かない
     assert not list(plugin.rglob("__pycache__"))
@@ -326,7 +332,12 @@ def test_watcher_does_not_linger(tmp_path) -> None:
     results = run_all(tmp_path, "本物", extra_env={"HOJOKIN_WATCH_SECONDS": marker_seconds}, only={"Write", "Bash"})
     assert len(results) == 2
     for event, tool, role, r, seconds in results:
-        assert r.returncode == 0 and r.stdout == b"" and r.stderr == b"", (tool, r)
+        assert r.returncode == 0 and r.stderr == b"", (tool, r)
+        if tool == "Write":
+            # 入力の例は「計画書_v2.docx」。Python が版の名前の新しいファイルとして拒む（M0a）
+            assert "版の名前のファイルは作れません" in r.stdout.decode("utf-8"), r.stdout.decode("utf-8")
+        else:
+            assert r.stdout == b"", (tool, r)
         assert seconds < 3, (tool, seconds)
     ps = subprocess.run(["/bin/ps", "-axo", "command"], capture_output=True, check=True).stdout.decode("utf-8")
     assert f"/bin/sleep {marker_seconds}\n" not in ps

@@ -10,6 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import originals_hooks
+import version_hooks
+
 
 def handle(data: dict, folder: Path) -> Optional[dict]:
-    return None
+    notes = originals_hooks.check(data, folder)  # 原本と公式資料の照らしと戻し（M4）。版の記録より先に
+    return originals_hooks.stop(data, folder, notes, version_hooks.stop(data, folder))
