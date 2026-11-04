@@ -9,6 +9,9 @@ DESIGN 4.7 の2・5章「原本・公式資料を1バイトも変えない」・
 - 照らして戻すのは、`原本/<区分>/…` と `案件/<案件>/公式資料/…` の下だけ（lib/protected_store.allowed_place）。
   台帳や資料の一覧は Claude も社長も直せるので（DESIGN 4.5）、その外を指す場所は照らさず、何も書かずに知らせる。
   置き場のフォルダが別名（エイリアス）になっているものも、書き戻さずに知らせる。
+  資料の一覧（とその上のフォルダ）が別名で会社のフォルダの外を指すときは、外の一覧を読まずに知らせる
+  （公式資料は、控えにあるものを照らし続ける。台帳の置き場が別名で、その先に台帳があるときは、lib/seiri.py の
+  load_ledger が読まずに断り、ここで知らせる）。
 - 台帳や資料の一覧が消えた・読めない・項目が消えた・ハッシュが書き換えられたときも、控えにある入れたときの値で
   照らし続け、そのことを知らせる（どの経路で変わっても結果で守る。DESIGN 5章）。
 - 控えにない台帳・資料の一覧の項目（道具が置いた記録がないもの）は、台帳・資料の一覧の値だけを信じて書き戻さない。
@@ -90,11 +93,28 @@ def _shown(paths: List[str]) -> str:
 # ---- 照らすもの ----
 
 
-def _list_files(folder: Path) -> List[Path]:
-    base = Path(folder) / RECORDS_DIR / TEXT_DIR
+def _list_files(folder: Path, problems: List[str]) -> List[Path]:
+    """資料の一覧のファイル。別名と「..」をたどった後に会社のフォルダの外を指すものは読まず、problems に知らせる
+    （外の一覧で、照らすものを決めない。公式資料は、控えにあるものを照らし続ける。lib/places.py。DESIGN 5章）。"""
+    folder = Path(folder)
+    base = folder / RECORDS_DIR / TEXT_DIR
     if not base.is_dir():
         return []
-    return sorted(p for p in base.glob(f"*/{LIST_FILE}") if p.is_file())
+    if not places.is_inside(folder, base):
+        problems.append(f"{RECORDS_DIR}/{TEXT_DIR}/ が、別名（シンボリックリンク）などで会社のフォルダの外を指しているため、"
+                        "資料の一覧は読んでいません（公式資料は、控えにあるものだけを照らしています）")
+        return []
+    found: List[Path] = []
+    outside: List[str] = []
+    for p in sorted(base.glob(f"*/{LIST_FILE}")):
+        if not places.is_inside(folder, p):
+            outside.append(p.relative_to(folder).as_posix())
+        elif p.is_file():
+            found.append(p)
+    if outside:
+        problems.append("資料の一覧のうち、別名（シンボリックリンク）などで会社のフォルダの外を指すものは読んでいません"
+                        f"（公式資料は、控えにあるものだけを照らしています）：{_shown(outside)}")
+    return found
 
 
 def _hash_text(value: object) -> str:
@@ -166,7 +186,7 @@ def _listed(folder: Path, problems: List[str]) -> Tuple[List[Target], bool]:
     """台帳の原本と、資料の一覧の公式資料（同じ場所は1つ）。(照らすもの, 台帳が読めたか)。"""
     folder = Path(folder)
     found, ledger_ok = _from_ledger(folder, problems)
-    for list_file in _list_files(folder):
+    for list_file in _list_files(folder, problems):
         found += _from_list(folder, list_file, problems)
     unique: List[Target] = []
     seen = set()

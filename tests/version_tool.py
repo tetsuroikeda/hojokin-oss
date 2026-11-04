@@ -17,6 +17,7 @@ from typing import Iterator, Optional
 
 import company_tool as ct
 import hook_runner as hr
+from lib import status_view
 
 SESSION = "session-m0a"
 CASE = "2026_省力化（一般型）第9回"
@@ -71,6 +72,12 @@ class Company:
         return json.loads(out) if out else None
 
     def start(self, source: str = "startup", session: str = SESSION, env: Optional[dict] = None):
+        """開いたとき。M3 が毎回添える「期限と作業・共通の決まり」（lib/status_view.py）は除いて返す
+        （版や原本の照らしのテストが見るのは、ほかの処理が渡す情報のため）。除いて何も残らなければ None。
+        そのままの出力は start_raw。"""
+        return without_brief(self.start_raw(source, session=session, env=env))
+
+    def start_raw(self, source: str = "startup", session: str = SESSION, env: Optional[dict] = None):
         return self.hook("SessionStart", {"source": source}, session=session, env=env)
 
     def say(self, prompt: str, session: str = SESSION, env: Optional[dict] = None):
@@ -122,6 +129,23 @@ def denied_reason(output) -> str:
     assert hso["hookEventName"] == "PreToolUse"
     assert hso["permissionDecision"] == "deny", hso
     return hso["permissionDecisionReason"]
+
+
+def without_brief(output):
+    """開いたときの出力から、期限と作業・共通の決まりのまとまり（lib/status_view.py の BRIEF_HEAD から後ろ）を除く。
+    除いて何も残らなければ None。"""
+    if output is None:
+        return None
+    hso = output.get("hookSpecificOutput") or {}
+    text = hso.get("additionalContext")
+    if not isinstance(text, str) or status_view.BRIEF_HEAD not in text:
+        return output
+    rest = status_view.without_brief(text)
+    if not rest and set(output) == {"hookSpecificOutput"} and set(hso) <= {"hookEventName", "additionalContext"}:
+        return None
+    result = dict(output)
+    result["hookSpecificOutput"] = {**hso, "additionalContext": rest}
+    return result
 
 
 def start_context(output) -> str:

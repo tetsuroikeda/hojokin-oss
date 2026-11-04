@@ -6,6 +6,8 @@
 - 段階のフォルダ（1_申請 など）は、制度データの「手続きの段階」から作る（DESIGN 4.5）。
   制度データは公式資料を読んでから作るので（M2c）、ここでは作る道具（ensure_stage_folders）だけを用意する。
   どの段階のフォルダも、中は「申請書」と「添付する書類」の2つにそろえる。
+- `案件/` の中を見る前と、フォルダを作る前に、場所を確かめる（lib/places.py。DESIGN 5章）。
+  `案件/` が外への別名なら中の一覧を見ない。作る先の途中に別名があれば、何も作らずに CaseError。
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ import re
 import unicodedata
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
+
+from lib import places, place_text
 
 CASES_DIR = "案件"  # lib/company_init.py の CASES_DIR と同じ
 OFFICIAL_DIR = "公式資料"
@@ -61,7 +65,8 @@ def existing_cases(company: Path, seido: Dict) -> List[str]:
     前のフォルダを使うために探す。
     """
     base = company / CASES_DIR
-    if not base.is_dir():
+    # 別名と「..」をたどった後に会社のフォルダの外なら、外の中の一覧を見ない（lib/places.py）
+    if not base.is_dir() or not places.is_inside(company, base):
         return []
     pattern = re.compile(r"^[0-9]{4}_" + re.escape(safe_name(f"0000_{_case_label(seido)}")[5:]) + r"$")
     names = (unicodedata.normalize("NFC", p.name) for p in base.iterdir() if p.is_dir())
@@ -92,8 +97,20 @@ def official_dir(company: Path, name: str) -> Path:
     return case_dir(company, name) / OFFICIAL_DIR
 
 
+def check_no_link(company: Path, rel: str, action: str) -> None:
+    """会社のフォルダから rel までの途中のフォルダと rel そのものに、別名がないかを確かめる（lib/places.py）。
+
+    別名があれば、何も作らずに CaseError（別名の先の、会社のフォルダの外や別の場所に作らないため。DESIGN 5章）。
+    action は、しないことの文（「案件のフォルダを作りません」など）。
+    """
+    problem = place_text.write_problem(company, rel, action)
+    if problem:
+        raise CaseError(problem)
+
+
 def ensure_case(company: Path, name: str) -> List[str]:
     """案件のフォルダと `公式資料/` を作る。新しく作ったフォルダ（会社のフォルダからの場所）を返す。"""
+    check_no_link(company, f"{CASES_DIR}/{safe_name(name)}/{OFFICIAL_DIR}", "案件のフォルダを作りません")
     made = []
     for path in (company / CASES_DIR, case_dir(company, name), official_dir(company, name)):
         if not path.is_dir():
@@ -118,12 +135,17 @@ def ensure_stage_folders(company: Path, name: str, folders: Iterable[str],
     base = case_dir(company, name)
     if not base.is_dir():
         raise CaseError(f"案件のフォルダがありません（{base.relative_to(company)}）")
-    made = []
     for folder in folders:
         if not STAGE_NAME.match(folder) or safe_name(folder) != folder:
             raise CaseError(f"段階のフォルダの名前は「1_申請」の形にしてください（{folder}）")
-        if wanted is not None and folder not in wanted:
-            continue
+    targets = [f for f in folders if wanted is None or f in wanted]
+    # 作る前に、どの段階のフォルダまでの途中にも別名がないことを確かめる（1つでもあれば、どれも作らない）
+    rel_case = f"{CASES_DIR}/{safe_name(name)}"
+    for folder in targets:
+        for sub in STAGE_SUBDIRS:
+            check_no_link(company, f"{rel_case}/{folder}/{sub}", "段階のフォルダを作りません")
+    made = []
+    for folder in targets:
         for path in [base / folder] + [base / folder / sub for sub in STAGE_SUBDIRS]:
             if not path.is_dir():
                 path.mkdir()

@@ -11,7 +11,9 @@
      略称は、案件の `資料の一覧.json` の「制度」が同じ名前のときにその略称を使い、なければ制度の名前を使う（仮）。
      公募回は、制度データの「制度」の公募回。
    - 名前に版の名前の語（「_v2」「最終」「修正版」「コピー」など）があれば、何も書かない（版のファイルを増やさない）。
-   - 置き場所が、別名をたどった後も `記録/制度データ/` の中にあることを確かめる。
+   - 置き場所が、別名をたどった後も `記録/制度データ/` の中にあり、途中に別名がないことを確かめる。
+   - 読む材料（`記録/資料の本文/` の案件の一覧、案件の `資料の一覧.json`、出典のページの本文）も、別名と「..」を
+     たどった後に会社のフォルダの中にあるときだけ読む。外なら読まず、何も書かない（DESIGN 5章。確かめは lib/places.py）。
 3. 同じ章・同じ回目の結果がすでにあれば、渡された項目（「補助額」など）だけを前の結果に差し替え、
    ほかの項目は前の結果のまま残して、章の全体を照らし直す（外れた項目だけを読み直して通すため）。
 4. 前にこの道具が足した「裏取り：」の注記を除き、この道具が下げた状態を、読み取り役が付けた状態に戻す。
@@ -59,7 +61,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from lib import case_folder, doc_text, places
+from lib import case_folder, doc_text, place_text, places
 from lib.official_docs import LIST_FILE, RECORDS_DIR, TEXT_DIR  # 資料の本文の置き場所は、取る道具（M2a）と同じ
 from lib.schema_lite import Validator, path_label
 
@@ -181,6 +183,13 @@ class InputError(ValueError):
 
 class PlaceError(ValueError):
     """置き場所を決められない（版の名前の語がある、記録/制度データ/ の外になる、前の結果が読めない）。何も書かない。"""
+
+
+class OutsideError(PlaceError):
+    """読む材料（資料の本文・資料の一覧）が、別名などで会社のフォルダの外を指している（lib/places.py）。
+
+    外のファイルは読まず、何も書かない（DESIGN 5章）。文は、そのまま社長への説明に使える形（lib/place_text.py）。
+    """
 
 
 # ---- 形 ----
@@ -688,17 +697,35 @@ def _bad_doc_id(doc_id: Any) -> bool:
 
 
 class Texts:
-    """案件の資料の本文（`記録/資料の本文/<案件>/`）。"""
+    """案件の資料の本文（`記録/資料の本文/<案件>/`）。
+
+    読む前に、別名と「..」をたどった後も会社のフォルダの中かを確かめる（lib/places.py）。外なら読まずに OutsideError。
+    """
 
     def __init__(self, company: Path, case: str) -> None:
+        self.company = company
         self.root = company / RECORDS_DIR / TEXT_DIR / case_folder.safe_name(case)
         self._cache: Dict[Tuple[str, Optional[int]], Optional[str]] = {}
+        self._inside: Set[Path] = set()  # 中にあると確かめた場所（値ごとに確かめ直さない）
 
     def exists(self) -> bool:
         return self.root.is_dir()
 
     def doc_dir(self, doc_id: str) -> Path:
         return self.root / doc_id
+
+    def check_inside(self, path: Path) -> None:
+        """path が、別名と「..」をたどった後も会社のフォルダの中か。外なら、読まずに OutsideError。"""
+        if path in self._inside:
+            return
+        try:
+            shown = path.relative_to(self.company).as_posix()
+        except ValueError:  # ページの対応の「ファイル」が絶対の場所のとき（外なので、下で断る）
+            shown = path.name
+        problem = place_text.read_problem(self.company, path, f"資料の本文（{shown}）")
+        if problem:
+            raise OutsideError(problem)
+        self._inside.add(path)
 
     def pages(self, source: Dict) -> Tuple[List[Tuple[str, str]], List[str]]:
         """出典（資料・ページ・終わりのページ）の、（ページの名前、形をそろえた文字）の一覧と、問題の一覧。"""
@@ -707,6 +734,8 @@ class Texts:
         if _bad_doc_id(doc_id):
             return [], [f"出典の資料の id「{doc_id}」の形が違います（資料の一覧の id を書いてください）"]
         doc_dir = self.doc_dir(doc_id)
+        self.check_inside(doc_dir)
+        self.check_inside(doc_dir / doc_text.INDEX_FILE)
         if not (doc_dir / doc_text.INDEX_FILE).is_file():
             return [], [f"出典の資料「{doc_id}」の本文がありません（資料の id が違うか、文字にしていない資料です）"]
         index = doc_text.load_index(doc_dir)
@@ -716,8 +745,8 @@ class Texts:
                 return [], [f"出典（{label}）にページがありません。PDF の資料は、印刷されたページ番号を書いてください"]
             out = []
             for info in index.get("ページ", []):
-                raw = (doc_dir / info["ファイル"]).read_text(encoding="utf-8")
-                out.append((label, normalize(doc_text._strip_header(raw))))
+                self.check_inside(doc_dir / info["ファイル"])
+                out.append((label, normalize(doc_text.read_page(doc_dir, info))))
             return out, []
         if index.get("種類") != "PDF":
             return [], [f"出典（{label} p.{page}）：{index.get('種類')} の資料にはページの番号がありません。ページを書かずに資料だけを示してください"]
@@ -728,8 +757,14 @@ class Texts:
         for n in range(page, end + 1):
             key = (doc_id, n)
             if key not in self._cache:
-                text = doc_text.page_text(doc_dir, printed_page=n)
-                self._cache[key] = normalize(text) if text is not None else None
+                # ページの対応から当たるページのファイルを引き、読む前に会社のフォルダの中かを確かめる
+                # （ページなしの経路と同じ。ページのファイル1つが外への別名のときも、外を読まない）
+                info = doc_text.find_page(index, printed_page=n)
+                if info is None:
+                    self._cache[key] = None
+                else:
+                    self.check_inside(doc_dir / info["ファイル"])
+                    self._cache[key] = normalize(doc_text.read_page(doc_dir, info))
             if self._cache[key] is None:
                 problems.append(f"出典の資料「{doc_id}」に p.{n} がありません")
             else:
@@ -957,8 +992,14 @@ def verify(data: Dict, texts: Texts) -> Result:
 
 
 def find_case(company: Path, case: Optional[str]) -> str:
-    """裏取りに使う案件。渡されなければ、`記録/資料の本文/` の中の案件が1つのときだけ、それを使う。"""
+    """裏取りに使う案件。渡されなければ、`記録/資料の本文/` の中の案件が1つのときだけ、それを使う。
+
+    `記録/資料の本文/` が、別名と「..」をたどった後に会社のフォルダの外なら、外の中の一覧を見ずに CaseError（lib/places.py）。
+    """
     root = company / RECORDS_DIR / TEXT_DIR
+    problem = place_text.read_problem(company, root, f"資料の本文（{RECORDS_DIR}/{TEXT_DIR}/）")
+    if problem:
+        raise case_folder.CaseError(problem)
     if case:
         name = case_folder.safe_name(case)
         if not (root / name).is_dir():
@@ -993,8 +1034,14 @@ def chapter_out_path(company: Path, case: str, data: Dict) -> Path:
 
 
 def _abbreviation(company: Path, case: str, seido: Dict) -> str:
-    """制度の略称。案件の資料の一覧の「制度」が同じ名前なら、その略称。なければ制度の名前（仮）。"""
+    """制度の略称。案件の資料の一覧の「制度」が同じ名前なら、その略称。なければ制度の名前（仮）。
+
+    資料の一覧が、別名と「..」をたどった後に会社のフォルダの外なら、読まずに OutsideError（lib/places.py）。
+    """
     path = company / RECORDS_DIR / TEXT_DIR / case_folder.safe_name(case) / LIST_FILE
+    problem = place_text.read_problem(company, path, f"案件の資料の一覧（{path.relative_to(company).as_posix()}）")
+    if problem:
+        raise OutsideError(problem)
     try:
         listed = json.loads(path.read_text(encoding="utf-8")).get("制度") or {}
     except (OSError, ValueError, AttributeError):
@@ -1021,6 +1068,10 @@ def _check_place(company: Path, out: Path) -> None:
     if rel.parts[:2] != (RECORDS_DIR, SEIDO_DIR) or out.suffix != ".json":
         raise PlaceError(f"置き場所（{rel}）が、{RECORDS_DIR}/{SEIDO_DIR}/ の中の JSON になりません"
                          "（別名のフォルダかもしれません）。何も書いていません")
+    # 別名の先が 記録/制度データ/ の中でも、行き先が別の置き場に変わるので書かない（lib/places.py）
+    problem = place_text.write_problem(company, out.relative_to(company).as_posix(), "何も書いていません")
+    if problem:
+        raise PlaceError(problem)
 
 
 def _size(value: Any) -> int:
@@ -1076,12 +1127,15 @@ def run(company: Path, case: str, data: Any) -> Tuple[Result, Dict]:
     full = is_full(data)
     out = full_out_path(company, case, data) if full else chapter_out_path(company, case, data)
     _check_place(company, out)
+    # 出典のページを読む資料の本文も、会社のフォルダの中にあるときだけ読む（資料ごとのフォルダは、読むときに確かめる）
+    texts = Texts(company, case)
+    texts.check_inside(texts.root)
     merged = Result()  # 前の結果に差し替えた項目と、残した項目だけを持つ
     if not full:
         data = _merge_previous(company, out, data, merged)
     target = data if full else data["制度データ"]
     restore(target)
-    result = verify(target, Texts(company, case))
+    result = verify(target, texts)
     result.replaced, result.kept = merged.replaced, merged.kept
     saved = dict(data)
     if not full:
@@ -1154,7 +1208,7 @@ def error_report(errors: List[str]) -> str:
 
 
 __all__ = [
-    "CHAPTER_FORM", "InputError", "PlaceError", "Result", "Texts", "error_report", "event_problems", "find_case",
+    "CHAPTER_FORM", "InputError", "OutsideError", "PlaceError", "Result", "Texts", "error_report", "event_problems", "find_case",
     "form_for", "fragments", "is_full", "limit_kind_problems", "month_problems", "normalize", "path_label",
     "period_problems", "period_spans", "report", "restore", "run", "scan_numbers", "shape_errors", "strip_own_notes",
     "text_found", "value_problems", "verify",

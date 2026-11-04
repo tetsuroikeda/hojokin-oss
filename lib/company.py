@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from typing import Optional, Union
 
+from lib import places  # 標準のライブラリだけを使う、軽い道具（hook からも読み込む）
+
 MARKER_DIR = ".hojokin"
 SETTINGS_FILE = "設定.json"
 # `.hojokin/` の中で、版の履歴に入れない、その場限りのものを置くフォルダ
@@ -46,8 +48,13 @@ def load_settings(folder: Optional[Path]) -> dict:
 
     中身が JSON として読めないときは、黙って無視せずに ValueError にする
     （日付の差し替えが効いていないことに気づかないまま、デモやテストが進まないように）。
+    `.hojokin/` か `設定.json` が別名（シンボリックリンク）なら、別名の先（会社のフォルダの外かもしれない）を読まず、
+    空（差し替えのないもの）として扱う（lib/places.py。DESIGN 5章）。断らないのは、多くの hook と道具が呼ぶので、
+    止めずに今の日付で動かすため（仮。作者に確かめる）。
     """
     if folder is None:
+        return {}
+    if places.first_link(folder, f"{MARKER_DIR}/{SETTINGS_FILE}") is not None:
         return {}
     path = settings_path(folder)
     try:

@@ -20,6 +20,7 @@ import unicodedata
 
 import hook_runner as hr
 import pytest
+from lib import common_rules, status_view
 
 PREPARE = "xcode-select --install"
 CAUSE_NOT_WORKING = "補助プログラム（Python）が動かない"
@@ -129,6 +130,12 @@ def test_company_folder_with_python_runs_python_hooks(tmp_path) -> None:
             assert hso["permissionDecision"] == "deny", (tool, hso)
             assert "版の名前のファイルは作れません" in hso["permissionDecisionReason"]
             denied.add(tool)
+        elif event == "SessionStart":
+            # 開いたときは、期限と作業・どの段階にも共通の決まりを渡す（M3。lib/status_view.py）。ほかには何も渡さない
+            hso = json.loads(r.stdout.decode("utf-8"))["hookSpecificOutput"]
+            assert hso["hookEventName"] == "SessionStart"
+            assert status_view.without_brief(hso["additionalContext"]) == ""
+            assert common_rules.TEXT.rstrip() in hso["additionalContext"]
         else:
             assert r.stdout == b"", (event, tool, r.stdout.decode("utf-8"))
     assert denied == {"Read", "Grep", "Glob", "mcp__Claude_Browser__computer",

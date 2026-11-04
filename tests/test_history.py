@@ -1040,7 +1040,11 @@ def test_folder_without_git_is_left_untouched(tmp_path) -> None:
         (command,) = hr.hook_commands(event)
         r = hr.run(command, {**base, "hook_event_name": event, **payload}, plugin=plugin, folder=folder,
                    path=path, home=home, data=data)
-        assert (r.returncode, r.stdout, r.stderr) == (0, b"", b""), (event, r)
+        out = r.stdout
+        if event == "SessionStart":  # 開いたときに毎回渡す期限と作業・共通の決まり（M3）のほかは、何も渡さない
+            assert vt.without_brief(json.loads(out.decode("utf-8"))) is None, (event, r)
+            out = b""
+        assert (r.returncode, out, r.stderr) == (0, b"", b""), (event, r)
     assert hr.snapshot(folder) == before
     assert not (folder / ".git").exists()
     assert (tmp_path / "python-ran").exists()

@@ -18,6 +18,9 @@
   移した後は、原本の控え（lib/protected_store.py）にも足す。台帳が消えたり項目が消えたりしても、照らしと戻しを続けるため。
 - 控えにある原本は、台帳から項目が消えていても整理した原本として扱う（新しい書類として出さない、もう一度移さない）。
   控えに原本があるのに台帳がないときは、台帳を前の版に戻すまで整理しない（台帳にない原本を残さないため）。
+- 移す先（`原本/<区分>/`）と台帳（`記録/書類の台帳.json`）は、途中のフォルダとそのものに別名（シンボリックリンク）が
+  あれば、読まず・書かず・移さずに断る（別名の先の、会社のフォルダの外や別の場所に置かないため。DESIGN 5章。lib/places.py）。
+  別名の先にまだ台帳がなければ、読むものがないので、見つける・一覧を出すは台帳のないものとして続ける（移す・確かめ済みにするは断る）。
 
 ここは標準のライブラリだけで動く。版の履歴の置き場に入れるときだけ、同梱の dulwich（lib/history.py）を読み込む。
 """
@@ -36,7 +39,7 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from lib import case_folder, company, dates, places, protected_store
+from lib import case_folder, company, dates, place_text, places, protected_store
 from lib.company_init import CASES_DIR, INBOX_DIR, ORIGINAL_KINDS, ORIGINALS_DIR, RECORDS_DIR, VIEW_DIR
 
 LEDGER_FILE = "書類の台帳.json"
@@ -97,6 +100,13 @@ def empty_ledger() -> dict:
     return {"説明": LEDGER_NOTE, ORIGINALS_KEY: [], KEPT_KEY: []}
 
 
+def _check_ledger_place(folder: Path) -> None:
+    """台帳の置き場（記録/ と 記録/書類の台帳.json）に別名がないかを確かめる（lib/places.py）。あれば SeiriError。"""
+    problem = place_text.write_problem(folder, LEDGER_PATH, f"書類の台帳（{LEDGER_PATH}）を読まず、書きもしません")
+    if problem:
+        raise SeiriError(problem)
+
+
 def anchored_originals(folder: Path) -> Dict[str, dict]:
     """原本の控え（lib/protected_store.py）にある原本。場所 → {ハッシュ, 版の印, 種類}。"""
     anchors, _problem = protected_store.load_anchors(folder)
@@ -108,8 +118,12 @@ def load_ledger(folder: Path) -> dict:
 
     読めないとき（JSON として読めない、UTF-8 でない、権限がない など）と形が違うときは SeiriError（黙って空にしない）。
     台帳がないのに原本の控えに原本があるときも SeiriError（台帳が消えた。前の版に戻すまで整理しない）。
+    台帳の置き場に別名があり、別名の先に台帳があるときは、読まずに SeiriError（別名の先の、会社のフォルダの外の台帳を
+    読まないため）。別名の先にも台帳がなければ、読むものがないので、台帳がないときと同じに扱う（書くときは save_ledger が断る）。
     """
     path = ledger_path(folder)
+    if os.path.exists(str(path)) or os.path.islink(str(path)):
+        _check_ledger_place(folder)
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -138,7 +152,8 @@ def load_ledger(folder: Path) -> dict:
 
 
 def save_ledger(folder: Path, data: dict) -> None:
-    """台帳を書く。書きかけのファイルが残らないよう、隣に書いてから置き換える。"""
+    """台帳を書く。書きかけのファイルが残らないよう、隣に書いてから置き換える。置き場に別名があれば書かない。"""
+    _check_ledger_place(folder)
     path = ledger_path(folder)
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
@@ -398,6 +413,7 @@ def organize(folder: Path, given: str, category: str, kind: str, day: str,
     移さないとき（同じ名前・同じ中身の原本がある、引数が違う など）は SeiriError で、何も変えていない。
     """
     folder = Path(folder)
+    _check_ledger_place(folder)  # 台帳に書けないなら、移す前に断る（移してから戻さない）
     ledger = load_ledger(folder)
     src, rel = resolve_document(folder, given)
     registered = {nfc(e["場所"]): e for e in originals(ledger)}
@@ -407,6 +423,11 @@ def organize(folder: Path, given: str, category: str, kind: str, day: str,
     category = check_category(category)
     name = standard_name(kind, day, src.suffix, partner, note)
     dest_rel = f"{ORIGINALS_DIR}/{category}/{name}"
+    # 移す先の途中（原本/・原本/<区分>/）と移す先そのものに、別名がないことを確かめる（lib/places.py）。
+    # 別名のフォルダに移すと、硬いリンクや名前の付け直しで、別名の先（会社のフォルダの外など）に原本を置くことになる
+    problem = place_text.write_problem(folder, dest_rel, f"{rel} を移していません")
+    if problem:
+        raise SeiriError(problem)
     digest = sha256_of(src)
     known = [(e["場所"], e.get("ハッシュ")) for e in originals(ledger)] + [(p, a["ハッシュ"]) for p, a in anchored.items()]
     for place, known_digest in known:
@@ -447,8 +468,8 @@ def organize(folder: Path, given: str, category: str, kind: str, day: str,
     ledger[KEPT_KEY] = [e for e in ledger.get(KEPT_KEY, []) if e.get("ハッシュ") != digest]
     try:
         save_ledger(folder, ledger)
-    except OSError:
-        # 台帳に書けなければ、元に戻す（台帳にない原本を残さない）
+    except (OSError, SeiriError):
+        # 台帳に書けなければ（途中で台帳の置き場が別名になった場合も）、元に戻す（台帳にない原本を残さない）
         os.chmod(str(dest), stat_mode.S_IMODE(os.lstat(str(dest)).st_mode) | 0o200)
         os.rename(str(dest), str(src))
         raise
@@ -460,6 +481,7 @@ def organize(folder: Path, given: str, category: str, kind: str, day: str,
 def keep(folder: Path, given: str, reason: str) -> dict:
     """動かさずに確かめた書類（何の書類か分からない、社長が動かさないと答えた など）として台帳に残す。"""
     folder = Path(folder)
+    _check_ledger_place(folder)
     ledger = load_ledger(folder)
     src, rel = resolve_document(folder, given)
     if rel in {nfc(e["場所"]) for e in originals(ledger)} or rel in anchored_originals(folder):

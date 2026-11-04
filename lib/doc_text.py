@@ -420,13 +420,13 @@ def _strip_header(text: str) -> str:
     return text
 
 
-def page_text(doc_dir: Path, printed_page: Optional[int] = None, pdf_page: Optional[int] = None) -> Optional[str]:
-    """資料のあるページの文字（1行目の見出しは除く）。ページは、印刷された番号か PDF のページで指す。
+def find_page(index: Dict, printed_page: Optional[int] = None, pdf_page: Optional[int] = None) -> Optional[Dict]:
+    """ページの対応（load_index）から、あるページの項目（「ファイル」など）を引く。見つからなければ None。
 
     印刷された番号は、資料のずれが分かっているときだけ使える。ずれが分からない資料は、PDF のページで指す
-    （出典もそのページで示しているため）。見つからなければ None。M2b の裏取りと、答えの引用の照らしに使う。
+    （出典もそのページで示しているため）。ページのファイルを読む前に、その場所を確かめたい道具（M2b の裏取り。
+    lib/places.py）は、これで引いてから read_page で読む。
     """
-    index = load_index(doc_dir)
     for page in index.get("ページ", []):
         if printed_page is not None:
             match = page.get("印刷されたページ") == printed_page
@@ -437,5 +437,20 @@ def page_text(doc_dir: Path, printed_page: Optional[int] = None, pdf_page: Optio
         else:
             match = False
         if match:
-            return _strip_header((doc_dir / page["ファイル"]).read_text(encoding="utf-8"))
+            return page
     return None
+
+
+def read_page(doc_dir: Path, page: Dict) -> str:
+    """find_page で引いたページの文字（1行目の見出しは除く）。"""
+    return _strip_header((doc_dir / page["ファイル"]).read_text(encoding="utf-8"))
+
+
+def page_text(doc_dir: Path, printed_page: Optional[int] = None, pdf_page: Optional[int] = None) -> Optional[str]:
+    """資料のあるページの文字（1行目の見出しは除く）。ページは、印刷された番号か PDF のページで指す（find_page）。
+
+    見つからなければ None。答えの引用の照らしなどに使う。ページのファイルの場所は確かめないので、会社のフォルダの
+    外を読まない確かめが要る道具は、find_page で引いて場所を確かめてから read_page で読む（M2b の裏取り）。
+    """
+    page = find_page(load_index(doc_dir), printed_page=printed_page, pdf_page=pdf_page)
+    return None if page is None else read_page(doc_dir, page)
