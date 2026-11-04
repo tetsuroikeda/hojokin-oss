@@ -53,6 +53,15 @@ NO_FIELDS = "この画面の欄は、まだ制度データにありません"
 # セルの書式の番号（styles.xml の cellXfs の順）
 ST_TITLE, ST_HEAD, ST_TEXT, ST_TOOL, ST_STAFF = 1, 2, 3, 4, 5
 HARD_LIMITS = ("上限", "システムの上限")
+# 会社に当てはまらない欄（選ばない特例・支援者がいないときの支援者の欄・出さない書類など）に書く値（M12b）。
+# 確かめの道具（lib/kakunin.py）は値のある欄として数え、画面入力の道具（nyuryoku）は空の欄と同じく画面に入れない。
+# 数字の欄にも、この文字のまま書ける。
+NOT_APPLICABLE = "該当なし"
+
+
+def is_not_applicable(value: Any) -> bool:
+    """値が「該当なし」（前後の空白・全角半角の違いは見ない）か。"""
+    return isinstance(value, str) and _norm(value) == _norm(NOT_APPLICABLE)
 
 
 # ---------------------------------------------------------------- 作る

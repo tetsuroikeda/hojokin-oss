@@ -7,6 +7,9 @@ allowed-tools:
   - Bash(python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kaku/scripts/*)
   - Bash(python3 -B ${CLAUDE_PLUGIN_ROOT}/skills/kaku/scripts/*)
   - Read(/${CLAUDE_PLUGIN_ROOT}/skills/kaku/**)
+  - Bash(python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py*)
+  - Bash(python3 -B ${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py*)
+  - Read(/${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/**)
 ---
 
 # 申請書を書く・確かめる・直す（F8、F9、F10 の入力シート、F11、F12 の差し戻しと実績の比較）
@@ -31,6 +34,14 @@ python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kaku/scripts/relevant_records.py" --fol
 - 「使い回す前に確かめる」と出た変わりうる情報（従業員数など）は、書く前の質問で「前回は◯でしたが、変わりましたか」とまとめて1問で確かめる。変わらなければ kiroku の `record.py confirm`、変わったら `record.py update-fact` で記録を直してから書く。
 - 「食い違いあり」の事実は、両方を出典付きで示して社長に決めてもらうまで使わない。
 - 記録にないことだけを社長に聞く。答えで分かった事実は、kiroku の `record.py add-fact` で出典（質問と答えた日）と一緒に残す（次の申請で聞き直さないため）。
+  kiroku の記録の道具は、この skill からも動かせる（書き方は kiroku の SKILL.md と同じ）。
+
+```bash
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" add-fact --folder "${CLAUDE_PROJECT_DIR}" --name "<名前>" --value "<値>" --changeable --source 質問 --question "<聞いた質問>"
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" confirm --folder "${CLAUDE_PROJECT_DIR}" --id <事実の id>
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" update-fact --folder "${CLAUDE_PROJECT_DIR}" --id <事実の id> --value "<新しい値>" --source 社長の発言 --utterance "<社長の発言>"
+```
+
 - 書き方の決まりは、どの申請書にも当てる。避けたい言い方は使わない。前の申請で受けた指摘には、応える記述を入れる。
 - 記録から書いた箇所は、根拠対照表に、出力の「根拠対照表の出典」（例：`会社の記録 事実-0001（従業員の数）`）を出典として残す。
 - 終了コード2は、記録が読めないときなど。理由を社長に伝え、記録にあるはずのことも推測で書かずに確かめる。
@@ -112,6 +123,17 @@ EOF
 ```bash
 python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kaku/scripts/yoshiki.py" sheet --folder "${CLAUDE_PROJECT_DIR}" --field "<欄の名前>" --value "<値>"
 ```
+
+   欄が多いので、画面ごとなどにまとめて書く（1件でも書けなければ何も書かないので、出た直す所を直して渡し直す）。
+
+```bash
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kaku/scripts/yoshiki.py" sheet --folder "${CLAUDE_PROJECT_DIR}" --values - <<'EOF'
+{"値": [{"画面": "<画面の名前>", "欄": "<欄の名前>", "値": "<値>"}]}
+EOF
+```
+
+- 会社に当てはまらない欄（選ばない加点や特例の欄、支援者がいないときの支援者の欄、出さない書類の添付の欄など）には `該当なし` と書く（チェック欄は「いいえ」）。数字の欄にも書ける。画面入力の道具は、この欄を画面に入れない。当てはまるか分からない欄は、推測で `該当なし` にせず、社長に聞く。
+- 添付の欄の値は、添付する書類の、会社のフォルダからの場所を書く（原本の置き場の書類か、申請書のファイル。画面に添付するのは、段階のフォルダの `添付する書類/` の写し）。
 
 - 計画書と入力シートの数字は、財務モデルの道具の出力から取る（Claude が計算しない）。
 - 終了コード：0 書いた、1 補助プログラムが読めない（プラグインを入れ直すよう案内）、2 しなかった（理由を読んで直す。書き込む位置が見つからないときは、社長が見出しを書き換えていないかを確かめ、対応づけし直す）、3 書くと範囲の外が変わるので保存しなかった（ファイルは前のまま。道具の不具合か様式の想定違いなので、作者に知らせる）。

@@ -27,12 +27,23 @@ SKILLS = sorted(p.parent.name for p in REPO_ROOT.glob("skills/*/SKILL.md"))
 ROOT = "${CLAUDE_PLUGIN_ROOT}"
 
 
+# ほかの skill の道具を本文で使う skill と、その道具（M12b：kaku は、社長の答えを kiroku の record.py で会社の記録に残す）
+SHARED_SCRIPTS = {"kaku": ["skills/kiroku/scripts/record.py"]}
+
+
 def expected_rules(skill: str) -> list:
-    return [
+    rules = [
         f'Bash(python3 -B "{ROOT}/skills/{skill}/scripts/*)',
         f"Bash(python3 -B {ROOT}/skills/{skill}/scripts/*)",
         f"Read(/{ROOT}/skills/{skill}/**)",
     ]
+    for script in SHARED_SCRIPTS.get(skill, []):
+        rules += [
+            f'Bash(python3 -B "{ROOT}/{script}*)',
+            f"Bash(python3 -B {ROOT}/{script}*)",
+            f"Read(/{ROOT}/{script.rsplit('/', 1)[0]}/**)",
+        ]
+    return rules
 
 
 def split_doc(skill: str):
@@ -95,7 +106,7 @@ def test_commands_in_body_match_allowed_tools(skill) -> None:
     for command in commands:
         assert covered_by_bash_rule(command, rules), command
         for path in plugin_paths(command):
-            assert path.startswith(f"skills/{skill}/"), (command, path)
+            assert path.startswith(f"skills/{skill}/") or path in SHARED_SCRIPTS.get(skill, []), (command, path)
             # 本文に書いたスクリプトや資料の一覧が、本当にある（名前の書き違いがない）
             if "<" not in path:
                 assert (REPO_ROOT / path).exists(), path
@@ -110,6 +121,11 @@ def test_rule_shapes_do_not_allow_other_commands() -> None:
     assert not covered_by_bash_rule(f'python3 -B "{root}/skills/kaku/scripts/yoshiki.py" outline', rules)
     assert not covered_by_bash_rule('python3 -B -c "print(1)"', rules)
     assert not covered_by_bash_rule("python3 -B 記録/書いた.py", rules)
+    # kaku が使えるほかの skill の道具は、kiroku の record.py だけ（versions.py などには当たらない）
+    kaku = expected_rules("kaku")
+    assert covered_by_bash_rule(f'python3 -B "{root}/skills/kiroku/scripts/record.py" add-fact --folder "x"', kaku)
+    assert not covered_by_bash_rule(f'python3 -B "{root}/skills/kiroku/scripts/versions.py" revert', kaku)
+    assert not covered_by_bash_rule(f'python3 -B "{root}/skills/junbi/scripts/stage_switch.py"', kaku)
 
 
 def test_company_settings_keep_blocks_and_name_no_plugin_place() -> None:
