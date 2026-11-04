@@ -278,6 +278,24 @@ def test_without_the_event_date_it_switches_and_asks_for_the_date(shop) -> None:
     assert section(again, "交付申請の期限")[0] == "- 2027年5月10日（月）（あと55日）"
 
 
+def test_rerun_without_stage_keeps_the_stage(shop) -> None:
+    """期限が出なかった後に --event だけを足して流し直しても、日付を直しても、交付申請を飛ばさない。"""
+    shop.tool(code=1)
+    again = shop.tool("--event", "採択発表日=2027-03-10")
+    assert "今の段階「交付申請」のままです" in again
+    assert "段階は進めていません" in again
+    assert section(again, "交付申請の期限")[0] == "- 2027年5月10日（月）（あと55日）"
+    fixed = shop.tool("--event", "採択発表日=2027-03-12")
+    assert "前に残っていた 2027年3月10日（水） から直しました" in fixed
+    assert "今の段階「交付申請」のままです" in fixed
+    assert not (shop.folder / CASE_DIR / "3_実績報告").exists()
+    # 今の段階の期限にない出来事を渡したときは、次の段階へ進む
+    later = shop.run("--event", "交付決定日=2027-03-15")
+    assert later.returncode in (0, 1), later.stderr.decode("utf-8")
+    assert "「実績報告」へ切り替えました" in later.stdout.decode("utf-8")
+    assert (shop.folder / CASE_DIR / "3_実績報告" / "申請書").is_dir()
+
+
 def test_schedule_gives_an_estimate_when_no_date_is_recorded(tmp_path) -> None:
     """制度データに採択発表の予定（3月上旬）があれば、日付を渡さなくても「見込み」の期限を出す。"""
     shop = Shop(tmp_path, seido(schedule={"年月": "2027-03", "旬": "上旬"}))

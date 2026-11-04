@@ -82,6 +82,7 @@ class Outcome:
     notes: List[str] = field(default_factory=list)
     page_problem: str = ""
     show_only: bool = False
+    kept_for_event: bool = False  # 今の段階の出来事の日付だけを渡されたので、段階を進めなかった
 
     def target_row(self) -> Optional[deadlines.StageRow]:
         if self.status is None:
@@ -124,6 +125,21 @@ def _walk_rule(rule: Any, out: List[str]) -> None:
         parts = rule.get("期限")
         for part in parts if isinstance(parts, list) else []:
             _walk_rule(part, out)
+
+
+def stage_events(stage: Dict) -> List[str]:
+    """1つの段階の期限の決め方にある、出来事の名前。"""
+    out: List[str] = []
+    node = stage.get("期限")
+    _walk_rule(node.get("値") if isinstance(node, dict) else None, out)
+    return out
+
+
+def only_own_events(stage: Dict, events: List[str]) -> bool:
+    """渡された出来事が1つ以上あり、どれもこの段階の期限の決め方にあるか（期限が出なかった後の流し直しや、日付の直し）。"""
+    own = {event_ledger.key_of(n) for n in stage_events(stage)}
+    names = [parse_event(text)[0] for text in events]
+    return bool(names) and all(event_ledger.key_of(n) in own for n in names)
 
 
 def rule_events(data: Dict) -> List[str]:
@@ -286,6 +302,7 @@ def switch(folder: Path, case: str, stage: Optional[str] = None, events: Optiona
         raise SwitchError("段階のフォルダの名前が、書類を出す段階を順に数えた「1_申請」「2_交付申請」…の形になっていません"
                           f"（{'。'.join(numbering)}）。手続きの段階を読み取り役に読ませ直してください")
     current = folders.index(before.current_folder) if before.current_folder in folders else 0
+    kept_for_event = False
     if stage:
         wanted = nfc(stage.strip())
         if wanted not in folders:
@@ -295,6 +312,10 @@ def switch(folder: Path, case: str, stage: Optional[str] = None, events: Optiona
             raise SwitchError(f"今の段階（{folders[current]}）より前の段階（{wanted}）には切り替えません")
     elif show_only:
         index = current
+    elif before.current_folder in folders and only_own_events(stages[current], events):
+        # 今の段階の期限を出すための日付を渡し直しただけなので、段階は進めない（進めると前の段階へは戻れない）
+        index = current
+        kept_for_event = True
     else:
         index = current + 1
         if index >= len(folders):
@@ -303,7 +324,7 @@ def switch(folder: Path, case: str, stage: Optional[str] = None, events: Optiona
 
     out = Outcome(case=case, data_rel=path.relative_to(folder).as_posix(), title=before.title, today=today,
                   substituted=substituted, before=before.current, before_folder=before.current_folder,
-                  target=target, target_folder=target_folder, show_only=show_only)
+                  target=target, target_folder=target_folder, show_only=show_only, kept_for_event=kept_for_event)
 
     # 出来事：名前と日付と出典を、書く前にすべて確かめる
     planned: List[event_ledger.Event] = []
@@ -431,6 +452,9 @@ def report(out: Outcome) -> str:
                      f"（{event.state}。出典：{event.source}）{fix}")
     if out.switched:
         lines.append(f"- 段階：{out.before or '（まだありません）'} → {name}（今の段階）")
+    elif out.kept_for_event:
+        lines.append("- 渡した出来事は、今の段階の期限の決め方にあるので、段階は進めていません"
+                     "（次の段階へ進めるときは、その段階を --stage で渡す）")
     if not out.show_only:
         where = f"{deadlines.CASES_DIR}/{out.case}/{out.target_folder}/"
         if out.made:
