@@ -17,9 +17,11 @@
 
 期限の日付（Due）
 - 決まった日付：その日（と時刻）。
-- 出来事からの期間：出来事の日付を、制度データの「決まった期日」から取る（名前に出来事の名前を含むもの）。
-  予定の日付から出した期限は「見込み」。出来事の日付が分からなければ、日付を出さずに決め方を示す
-  （通知から読んだ出来事の日付と「確定」は、K1 の期限の台帳で持つ）。
+- 出来事からの期間：出来事の日付を、期限の台帳の「出来事」（`記録/期限の台帳.json`。lib/event_ledger.py。社長の答えか
+  通知の原本で確かめて、採択後の切り替えの道具が残したもの。M10）から先に取り、なければ制度データの「決まった期日」から取る
+  （名前に出来事の名前を含むもの）。予定の日付から出した期限は「見込み」、台帳の「確定」の日付から出した期限は見込みとしない。
+  台帳の日付を使った期限には、もとにした日（basis）を添える。出来事の日付が分からなければ、日付を出さずに決め方を示す
+  （見込みと確定の計算し直しの全体は、K1 の期限の台帳で作る）。
   か月・年は、同じ日の数字の日（応当日）。その日がない月は、その月の終わりの日にする（仮）。
 - 早いほう：日付の分かるもののうち早いほう。分からないものがあれば「遅くとも」その日（上限）とする。
 - 繰り返し（効果報告など）：事業の完了と決算の月が要るので、M3 では日付を出さない（K1）。
@@ -54,7 +56,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from lib import dates, place_text, places
+from lib import dates, event_ledger, place_text, places
 
 NEAR_DAYS = 30  # 近い締切の日数のはじめの値（SPEC F6。経営者・担当者が変える設定は K1）
 STRONG_DAYS = 7  # この日数の内の期限は強めて示す（SPEC F6）
@@ -117,6 +119,7 @@ class Due:
     how: str = ""  # 日付を出せないときの決め方の文
     check: bool = False  # 制度データで「要確認」か「資料で食い違い」
     sources: List[str] = field(default_factory=list)  # 出典（「要領8 p.26」）
+    basis: List[str] = field(default_factory=list)  # もとにした出来事の日付（期限の台帳のもの。「採択発表日 2027年3月10日（水）（確定。…）」）
 
     @property
     def dated(self) -> bool:
@@ -235,7 +238,8 @@ def source_text(node: Any) -> List[str]:
 class Plan:
     """1つの案件の制度データから、期限の日付を出す。"""
 
-    def __init__(self, data: Dict, case_round: Optional[int]) -> None:
+    def __init__(self, data: Dict, case_round: Optional[int],
+                 events: Optional[Sequence[event_ledger.Event]] = None) -> None:
         self.data = data if isinstance(data, dict) else {}
         seido = self.data.get("制度") if isinstance(self.data.get("制度"), dict) else {}
         self.data_round = round_of(seido.get("公募回"))
@@ -243,6 +247,16 @@ class Plan:
         fixed = self.data.get("決まった期日")
         self.fixed = [e for e in fixed if isinstance(e, dict) and isinstance(e.get("名前"), str)] \
             if isinstance(fixed, list) else []
+        self.events = list(events or [])  # 期限の台帳の、この案件の出来事（lib/event_ledger.py）
+
+    def ledger_due(self, event: Any) -> Optional[Due]:
+        """出来事の日付を、期限の台帳から取る。なければ None。"""
+        found = event_ledger.find(self.events, event) if isinstance(event, str) else None
+        if found is None:
+            return None
+        source = f"。出典：{found.source}" if found.source else ""
+        basis = f"{found.name} {dates.format_date(found.day)}（{found.state}{source}）"
+        return Due(first=found.day, last=found.day, estimate=found.state != event_ledger.CONFIRMED, basis=[basis])
 
     # ---- 決まった期日 ----
 
@@ -285,6 +299,9 @@ class Plan:
         key = unicodedata.normalize("NFKC", event).strip().rstrip("日")
         if not key:
             return None
+        recorded = self.ledger_due(event)  # 社長に確かめて残した日付を、制度データの予定より先に使う
+        if recorded is not None:
+            return recorded
         for entry in self.fixed:
             name = unicodedata.normalize("NFKC", entry["名前"])
             if key in name and self.round_ok(entry["名前"]):
@@ -336,7 +353,7 @@ class Plan:
             if first is None or last is None:
                 return Due(how=f"{text}（期間が読めません）")
             return Due(first=first, last=last, estimate=base.estimate or base.first != base.last,
-                       check=base.check, sources=list(base.sources))
+                       check=base.check, sources=list(base.sources), basis=list(base.basis))
         if kind == "早いほう":
             parts = [self.compute(r) for r in rule.get("期限") or []] if isinstance(rule.get("期限"), list) else []
             known = [p for p in parts if p.dated]
@@ -348,11 +365,13 @@ class Plan:
             last = min(p.last for p in known)
             times = {p.time for p in known if p.first == first and p.last == last}
             sources: List[str] = []
+            basis: List[str] = []
             for p in known:
                 sources += [s for s in p.sources if s not in sources]
+                basis += [b for b in p.basis if b not in basis]
             return Due(first=first, last=last, time=times.pop() if len(times) == 1 else "",
                        estimate=any(p.estimate for p in known), bound=bool(unknown) or any(p.bound for p in known),
-                       check=any(p.check for p in known), sources=sources)
+                       check=any(p.check for p in known), sources=sources, basis=basis)
         if kind == "繰り返し":
             window = rule.get("提出期間") if isinstance(rule.get("提出期間"), dict) else {}
             return Due(how=(f"{period_text(rule.get('間隔'))}ごとに{rule.get('回数')}回。"
@@ -613,8 +632,8 @@ def _remedies(stage: Dict) -> List[str]:
 
 
 def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Optional[List[str]],
-                ledger_problem: str) -> CaseStatus:
-    """1つの案件の段階・期限・作業・今の段階の必須の書類。"""
+                ledger_problem: str, events: Optional[Sequence[event_ledger.Event]] = None) -> CaseStatus:
+    """1つの案件の段階・期限・作業・今の段階の必須の書類。events は期限の台帳の、この案件の出来事。"""
     status = CaseStatus(name=case)
     try:
         from lib import seido_data
@@ -630,7 +649,7 @@ def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Option
     if not stages:
         status.problem = "制度データに手続きの段階がないため、期限を組み立てられませんでした"
         return status
-    plan = Plan(data, _case_round(folder, case))
+    plan = Plan(data, _case_round(folder, case), events)
     with_folder = [s for s in stages if _folder_of(s)]
     base = f"{CASES_DIR}/{case}"
     existing = set(_list_dirs(folder, base))
@@ -677,6 +696,7 @@ def _document_notes(folder: Path, status: CaseStatus, data: Dict, stage: Dict, l
     attached = _list_files(folder, f"{CASES_DIR}/{status.name}/{status.current_folder}/{ATTACH_DIR}") \
         if status.current_folder else []
     missing = []
+    forms = 0
     for doc in docs if isinstance(docs, list) else []:
         if not isinstance(doc, dict) or doc.get("区分") != REQUIRED or not isinstance(doc.get("名前"), str):
             continue
@@ -687,6 +707,7 @@ def _document_notes(folder: Path, status: CaseStatus, data: Dict, stage: Dict, l
         issuer = str(doc.get("発行元") or "")
         if _is_form(doc, stage, data):
             status.documents.append(DocumentRow(name, issuer, "様式で作る書類", "様式で作る（申請書）"))
+            forms += 1
             continue
         if ledger is not None and any(names_match(name, k) for k in ledger):
             state = "台帳にあり"
@@ -704,6 +725,9 @@ def _document_notes(folder: Path, status: CaseStatus, data: Dict, stage: Dict, l
     if missing:
         shown = "、".join(missing[:NOTE_NAMES_MAX]) + ("ほか" if len(missing) > NOTE_NAMES_MAX else "")
         notes.append(f"集める必須の書類のうち、書類の台帳と添付する書類に見当たらないもの {len(missing)}件（{shown}）")
+    if forms:
+        # 実験 E9 で、この件数に入らない様式の書類を「もうある」と読んだ応答があったため、数えていないことを書き添える（M10）
+        notes.append(f"様式で作る必須の書類 {forms}件は、これから作る申請書なので、集める書類の数には入れていません")
     return notes
 
 
@@ -758,8 +782,11 @@ def build(folder: Path, today: Optional[date] = None, near_days: int = NEAR_DAYS
         if sub_problem:
             problems.append(sub_problem)
         ledger, ledger_problem = _ledger_kinds(folder)
+        events, events_problem = event_ledger.events_by_case(folder)
+        if events_problem:
+            problems.append(events_problem)
         for name in names:
-            status = case_status(folder, name, submissions, ledger, ledger_problem)
+            status = case_status(folder, name, submissions, ledger, ledger_problem, events.get(name))
             cases.append(status)
             tasks += status.tasks
     groups, later, undated = classify(tasks, day, near_days)

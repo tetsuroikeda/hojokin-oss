@@ -58,6 +58,8 @@ def task_line(task: deadlines.Task, today) -> str:
             extra.append("過ぎたときの手：" + "／".join(task.remedies))
         else:
             extra.append("過ぎたときの手が資料に見当たりません")
+    if d.basis:  # 期限の台帳に残した出来事の日付から出した期限（lib/event_ledger.py。M10）
+        extra.append("もとにした日：" + "、".join(d.basis))
     if d.sources:
         extra.append("出典：" + "、".join(d.sources))
     if extra:
@@ -171,6 +173,8 @@ def _task_rows(tasks: List[deadlines.Task], today, overdue: bool = False) -> Lis
         cls = "overdue" if overdue else ("strong" if d.strong(today) else "")
         mark = f' <span class="mark">{_e(STRONG_MARK)}</span>' if d.strong(today) and not overdue else ""
         memo = list(t.notes)
+        if d.basis:
+            memo.append("もとにした日：" + "、".join(d.basis))
         if overdue:
             memo.append("過ぎたときの手：" + "／".join(t.remedies) if t.remedies else "過ぎたときの手が資料に見当たりません")
         rows.append(
