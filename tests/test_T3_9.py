@@ -1025,6 +1025,48 @@ def test_company_record_link_to_outside_is_not_read(company: Company) -> None:
     assert "外のファイルの名前" not in all_docx_text(company.folder) + all_docx_text(outside)
 
 
+SEIDO_SECRET = "外に置いた制度データの値"
+
+
+@pytest.mark.parametrize("where", ["記録", "記録/制度データ", "制度データのファイル", "記録/資料の本文", "案件の資料の本文"])
+def test_seido_data_link_to_outside_is_not_read(company: Company, where: str) -> None:
+    """制度データか案件の資料の一覧（その上のフォルダも）が外への別名なら、外を読まない
+    （外の値は、出力にも Word にも出ない。会社のフォルダにも外にも、何も書かない）。"""
+    texts = company.folder / "記録" / "資料の本文" / CASE
+    if "資料の本文" in where:
+        # 資料の一覧の「案内」は、Word の「制度の概要」に出る
+        listed = dict(DOC_LIST, 案内=[SEIDO_SECRET])
+        (texts / "資料の一覧.json").write_text(json.dumps(listed, ensure_ascii=False, indent=2), encoding="utf-8")
+    else:
+        data = seido()
+        data["数値の要件"][0]["基準"]["値"] = SEIDO_SECRET
+        company.put_seido(data)
+    # 中にあるときは、置いた値が Word に出る（外に移したときに出ないことが、読んでいないことの確かめになる）
+    ok(company.run(INPUT))
+    assert SEIDO_SECRET in Word(company.out).text
+    company.out.unlink()
+
+    outside = company.env.folder("外のフォルダ")
+    place = {"記録": company.folder / "記録", "記録/制度データ": company.folder / "記録" / "制度データ",
+             "制度データのファイル": company.folder / DATA_REL, "記録/資料の本文": company.folder / "記録" / "資料の本文",
+             "案件の資料の本文": texts}[where]
+    moved = outside / "移した中身"
+    place.rename(moved)
+    place.symlink_to(moved, target_is_directory=moved.is_dir())
+    outside_before = tree(outside)
+    before = tree(company.folder)
+    out = refused(company.run(INPUT))
+    assert "会社のフォルダの外" in out, out
+    assert SEIDO_SECRET not in out, out
+    assert tree(company.folder) == before and not company.out.exists()
+    assert tree(outside) == outside_before
+    assert SEIDO_SECRET not in all_docx_text(company.folder) + all_docx_text(outside)
+    # 案件を渡しても同じ
+    out = refused(company.run(INPUT, "--case", CASE))
+    assert "会社のフォルダの外" in out and SEIDO_SECRET not in out, out
+    assert tree(company.folder) == before and tree(outside) == outside_before
+
+
 def test_refuses_input_file_when_not_company_folder(company: Company) -> None:
     other = company.env.folder("ただのフォルダ")
     secret = other / "判定.json"

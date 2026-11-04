@@ -2,7 +2,8 @@
 
 案件ごとに `案件/<案件>/概要と流れ.docx` を書く。作り直すときも同じファイルを置き換える（「_v2」のような別のファイルを
 作らない。前の版は版の履歴に残る）。案件のフォルダや書き出す先が、別名（シンボリックリンク）などで会社のフォルダの外か
-`案件/` の外を指すとき、会社の記録が外を指すときは、読まずに・書かずに断る（DESIGN 5章。確かめは lib/places.py）。
+`案件/` の外を指すとき、会社の記録・制度データ・案件の資料の一覧（`記録/` やその中のフォルダも）が外を指すときは、
+読まずに・書かずに断る（DESIGN 5章。確かめは lib/places.py）。
 
 役割の分け方（DESIGN 4.6・6章）
 - 数字・期限・一覧は、制度データ（`記録/制度データ/<略称>_<公募回>.json`）と会社の記録（`記録/会社の記録.json`）から、
@@ -888,6 +889,13 @@ def load_record(folder: Path) -> Dict[str, Dict]:
     return {str(i["id"]): i for i in items if isinstance(i, dict) and "id" in i}
 
 
+def _check_read_place(folder: Path, path: Path, what: str) -> None:
+    """読む材料（資料の一覧・制度データと、その上のフォルダ）が、別名と「..」をたどった後も会社のフォルダの中にあるか
+    （lib/places.py）。外なら、読まずに GaiyouError。まだない場所も、別名をたどった先で比べる。"""
+    if not places.is_inside(folder, path):
+        raise _outside(what)
+
+
 def _check_out_place(folder: Path, path: Path, what: str) -> None:
     """path が、別名と「..」をたどった後も、会社のフォルダの `案件/` の中にあるか（lib/places.py）。外なら GaiyouError。"""
     from lib import case_folder
@@ -910,12 +918,22 @@ def write(folder: Path, case: Optional[str], data: Any) -> Tuple[Path, str, Dict
                            "社長の了承を得て会社のフォルダを作り、公式資料を取って制度データを作ってから、もう一度試してください"])
     # 制度データを読む道具は、同梱の pypdf まで読み込むので、ここで読み込む
     from lib import case_folder, seido_data, urakadori
+    from lib.official_docs import TEXT_DIR
 
+    # 読む材料（資料の一覧・制度データ）も、別名と「..」をたどった後に会社のフォルダの中にあるときだけ読む
+    # （外のフォルダの中の案件の一覧も見ない。DESIGN 5章）
+    _check_read_place(folder, folder / RECORDS_DIR / TEXT_DIR, f"資料の本文（{RECORDS_DIR}/{TEXT_DIR}/）")
+    _check_read_place(folder, urakadori.seido_dir(folder), f"制度データ（{RECORDS_DIR}/{urakadori.SEIDO_DIR}/）")
     try:
         case = urakadori.find_case(folder, case)
     except case_folder.CaseError as e:
         raise GaiyouError([f"案件を決められませんでした（{e}）"]) from e
+    listed_path = seido_data.doc_list_path(folder, case)
+    _check_read_place(folder, listed_path, f"案件の資料の一覧（{listed_path.relative_to(folder)}）")
     try:
+        # 置き場所は資料の一覧から決まる（上で確かめた）。制度データのファイルそのものも確かめてから読む
+        data_path = seido_data.seido_path(folder, case)
+        _check_read_place(folder, data_path, f"制度データ（{data_path.relative_to(folder)}）")
         path, seido = seido_data.load_data(folder, case)
         listed = seido_data.load_doc_list(folder, case)
     except (seido_data.DataMissing, seido_data.MergeError) as e:
