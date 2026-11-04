@@ -1,0 +1,8 @@
+# 試しのケース（TASKS M13）。保存した状態「書く前」を scaffold で戻し、開いたときの hook が会社のフォルダと
+# 認めること、戻した制度データ・会社の記録・公式資料から、補助の上限を資料名とページを付けて答えること
+# （SPEC 共通の要件「説明」：制度の説明には資料名・ページを示す）を見る。
+schema_version: "1.1"
+name: F0-戻した状態
+tags: [F0]
+context:
+  scaffold_script: scaffold.sh

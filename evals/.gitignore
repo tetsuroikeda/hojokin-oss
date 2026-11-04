@@ -1,0 +1,2 @@
+# eval の結果（claude plugin eval が evals/results/<日時>/ に書く）。会話の記録と手元の場所を含むので、リポに入れない
+results/
