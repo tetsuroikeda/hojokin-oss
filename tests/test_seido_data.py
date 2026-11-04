@@ -618,6 +618,11 @@ def test_screens_without_fields_or_buttons_are_counted(company) -> None:
     write_data(company, data)
     out = check_code(company.tool("--check"), 0)
     assert empty_count(out) == 0 and OK_LINE in out
+    # いちばん後ろの確認の画面は、提出のボタンしかなければ欄もボタンも空になるのが正しいので、数えない（読み直しても直らない）
+    data["申請画面"]["画面"][2]["押してよいボタン"] = []
+    write_data(company, data)
+    out = check_code(company.tool("--check"), 0)
+    assert empty_count(out) == 0 and OK_LINE in out
     # 流れは読めているのに画面が1つもない
     data["申請画面"]["画面"] = []
     write_data(company, data)
@@ -629,21 +634,22 @@ def test_screens_reread_in_the_same_chapter_replace_only_the_screens(company) ->
     """junbi の手順：申請の手続きの章で流れだけを読んだ後、申請画面だけを同じ章の名前で読み直して通すと、
     申請画面だけが差し替わり、ほかの項目は残る。まとめると、画面ごとの欄とボタンが入る。"""
     c = chapter_c()
-    c["制度データ"].update(screens_part([screen(1, "宣誓"), screen(2, "入力")]))
+    c["制度データ"].update(screens_part([screen(1, "宣誓"), screen(2, "入力"), screen(3, "確認")]))
     company.read(chapter_a())
     company.read(chapter_b())
     company.read(c)
     out = check_code(company.tool("--merge"), 1)
-    assert empty_count(out) == 2 and "  - 宣誓・入力（" in out
+    assert empty_count(out) == 2 and "  - 宣誓・入力（" in out  # いちばん後ろの確認の画面は数えない
     again = {"読み取り": {"章": c["読み取り"]["章"], "読んだページ": [{"資料": DOC, "ページ": 3}], "回目": 1},
              "制度データ": screens_part([screen(1, "宣誓", [field("宣誓事項1", "チェック", True)], ["次へ"]),
-                                       screen(2, "入力", [field("事業名"), field("従業員数", "数字")], ["戻る", "一時保存", "次へ"])])}
+                                       screen(2, "入力", [field("事業名"), field("従業員数", "数字")], ["戻る", "一時保存", "次へ"]),
+                                       screen(3, "確認")])}
     out = company.read(again)
     assert "申請画面（1件 → 1件）" in out and "残した項目（照らし直しました）：審査の段階、審査項目、手続きの段階" in out
     out = check_code(company.tool("--merge"), 0)
     assert empty_count(out) == 0 and OK_LINE in out
     data = company.data()
-    assert [s["押してよいボタン"] for s in data["申請画面"]["画面"]] == [["次へ"], ["戻る", "一時保存", "次へ"]]
+    assert [s["押してよいボタン"] for s in data["申請画面"]["画面"]] == [["次へ"], ["戻る", "一時保存", "次へ"], []]
     assert [f["名前"] for f in data["申請画面"]["画面"][1]["欄"]] == ["事業名", "従業員数"]
     assert [s["id"] for s in data["手続きの段階"]] == ["申請", "交付申請", "実績報告"]  # 同じ章のほかの項目は残った
 

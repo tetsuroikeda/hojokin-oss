@@ -27,6 +27,7 @@
      当たらない名前ごとに数え、足りないに数える（仮）。「1_申請」のようなフォルダの名前を書いた書類は、段階の id で書類を引く道具
      （概要と流れ.docx の必要書類、段階ごとの書類の一覧）から落ちるため。読み直させるときに渡せるよう、当たる名前の一覧も出す。
    - 欄も押してよいボタンもない申請画面（電子申請マニュアルの流れのページだけを読んだ形）。足りないに数える（波3）。
+     いちばん後ろの確認・提出の画面は数えない（提出のボタンしかなければ、空が正しい形）。
      入力シートに欄ができず、画面入力の守りが一時保存も次へも拒むため。2つの章が申請画面を読んで画面が二重になったら、まとめの結果に書く。
 3. 段階のフォルダを作る（make_stage_folders）
    - 制度データの「手続きの段階」のうち「フォルダ」のある段階から作る（DESIGN 4.5）。中は「申請書」と「添付する書類」。
@@ -523,6 +524,8 @@ def empty_screens(data: Dict) -> List[str]:
 
     このままでは、入力シートに欄ができず、画面入力の守りが一時保存も次へも拒む（F10、DESIGN 5章）。
     画面が1つもないのは、流れが「読み取れない」なら読み取れなかった項目に回し、読めているなら足りないに数える。
+    いちばん後ろの画面（確認・提出の画面）は数えない。提出のボタンしかない画面は、提出を押してよいボタンに入れないので、
+    欄もボタンも空になるのが正しい形のため（数えると、読み直しても直らない）。
     """
     part = data.get("申請画面")
     if not isinstance(part, dict):
@@ -532,8 +535,9 @@ def empty_screens(data: Dict) -> List[str]:
     if not screens:
         read = isinstance(flow, dict) and flow.get("状態") != UNREADABLE
         return ["（画面が1つもありません）"] if read else []
+    last = max(screens, key=lambda s: s.get("順番") if isinstance(s.get("順番"), int) else 0)
     return [str(s.get("名前") or f"{s.get('順番')}つ目の画面") for s in screens
-            if not s.get("欄") and not s.get("押してよいボタン")]
+            if s is not last and not s.get("欄") and not s.get("押してよいボタン")]
 
 
 def check(data: Any) -> CheckResult:
