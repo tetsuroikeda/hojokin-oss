@@ -718,7 +718,11 @@ class Texts:
         """path が、別名と「..」をたどった後も会社のフォルダの中か。外なら、読まずに OutsideError。"""
         if path in self._inside:
             return
-        problem = place_text.read_problem(self.company, path, f"資料の本文（{path.relative_to(self.company).as_posix()}）")
+        try:
+            shown = path.relative_to(self.company).as_posix()
+        except ValueError:  # ページの対応の「ファイル」が絶対の場所のとき（外なので、下で断る）
+            shown = path.name
+        problem = place_text.read_problem(self.company, path, f"資料の本文（{shown}）")
         if problem:
             raise OutsideError(problem)
         self._inside.add(path)
@@ -742,8 +746,7 @@ class Texts:
             out = []
             for info in index.get("ページ", []):
                 self.check_inside(doc_dir / info["ファイル"])
-                raw = (doc_dir / info["ファイル"]).read_text(encoding="utf-8")
-                out.append((label, normalize(doc_text._strip_header(raw))))
+                out.append((label, normalize(doc_text.read_page(doc_dir, info))))
             return out, []
         if index.get("種類") != "PDF":
             return [], [f"出典（{label} p.{page}）：{index.get('種類')} の資料にはページの番号がありません。ページを書かずに資料だけを示してください"]
@@ -754,8 +757,14 @@ class Texts:
         for n in range(page, end + 1):
             key = (doc_id, n)
             if key not in self._cache:
-                text = doc_text.page_text(doc_dir, printed_page=n)
-                self._cache[key] = normalize(text) if text is not None else None
+                # ページの対応から当たるページのファイルを引き、読む前に会社のフォルダの中かを確かめる
+                # （ページなしの経路と同じ。ページのファイル1つが外への別名のときも、外を読まない）
+                info = doc_text.find_page(index, printed_page=n)
+                if info is None:
+                    self._cache[key] = None
+                else:
+                    self.check_inside(doc_dir / info["ファイル"])
+                    self._cache[key] = normalize(doc_text.read_page(doc_dir, info))
             if self._cache[key] is None:
                 problems.append(f"出典の資料「{doc_id}」に p.{n} がありません")
             else:

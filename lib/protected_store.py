@@ -13,6 +13,8 @@
   控えは足すだけで、同じ場所の値は書き換えない（入れたときの値を残す）。
   控えにない台帳・資料の一覧の項目は、道具が置いた記録がないものとして、今の中身で確かめられたときだけ控えに採る
   （lib/originals_guard.py）。控えのファイルが消えたときは、そのことを知らせる（anchors_missing）。
+  控えまでの途中（`.hojokin/`・`.hojokin/一時/`）か控えそのものが別名（シンボリックリンク）なら、別名の先
+  （会社のフォルダの外かもしれない）の控えは読まず、書きもしない（SPEC F5、DESIGN 5章。anchor_link_problem）。
 
 ここは標準のライブラリだけで動く。版の履歴の置き場に入れるときだけ、同梱の dulwich（lib/history.py）を読み込む。
 """
@@ -27,7 +29,7 @@ import unicodedata
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-from lib import company, places
+from lib import company, place_text, places
 from lib.case_folder import OFFICIAL_DIR
 from lib.company_init import CASES_DIR, ORIGINAL_KINDS, ORIGINALS_DIR
 
@@ -147,6 +149,15 @@ def anchor_path(folder: Path) -> Path:
 ANCHOR_REL = f"{company.MARKER_DIR}/{company.TEMP_DIR}/{ANCHOR_FILE}"
 
 
+def anchor_link_problem(folder: Path) -> str:
+    """控えまでの途中（`.hojokin/`・`.hojokin/一時/`）か控えそのものが別名（シンボリックリンク）なら、その理由。なければ空。
+
+    別名の先（会社のフォルダの外かもしれない）の控えは読まず、書きもしない（SPEC F5、DESIGN 5章。lib/places.py）。
+    `.hojokin/設定.json` が別名のとき（lib/company.py の load_settings）と同じ扱い。
+    """
+    return place_text.write_problem(folder, ANCHOR_REL, f"原本の控え（{ANCHOR_REL}）を読まず、書きもしません") or ""
+
+
 def anchors_missing(folder: Path) -> bool:
     """控えのファイルがないか（先のない別名も、ないとみなす。読めないものは load_anchors の理由で知らせる）。"""
     return not os.path.exists(str(anchor_path(folder)))
@@ -169,7 +180,11 @@ def load_anchors(folder: Path) -> Tuple[Dict[str, dict], str]:
     """控えを読む。(場所 → {ハッシュ, 版の印, 種類}, 読めなかったときの理由)。なければ空で、理由も空。
 
     置き場所の決まりに合わない項目は捨てる（控えが書き換えられても、決まりの外には書き戻さない）。
+    控えまでの途中か控えそのものが別名なら、読まずに空と理由を返す（anchor_link_problem）。
     """
+    linked = anchor_link_problem(folder)
+    if linked:
+        return {}, linked
     path = anchor_path(folder)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -189,7 +204,13 @@ def load_anchors(folder: Path) -> Tuple[Dict[str, dict], str]:
 
 
 def save_anchors(folder: Path, anchors: Dict[str, dict]) -> None:
-    """控えを書く。書きかけのファイルが残らないよう、隣に書いてから置き換える。"""
+    """控えを書く。書きかけのファイルが残らないよう、隣に書いてから置き換える。
+
+    控えまでの途中か控えそのものが別名なら、何も書かない（例外も出さない。呼ぶ側はどれも、控えに書けなくても
+    処理を止めない作りのため。読むときは load_anchors が理由を返す）。
+    """
+    if anchor_link_problem(folder):
+        return
     path = anchor_path(folder)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".原本の印_", suffix=".tmp", dir=str(path.parent))
@@ -207,9 +228,12 @@ def remember(folder: Path, rel: str, digest: str, blob: str, kind: str) -> bool:
 
     同じ場所がもう控えにあれば、書き換えない（入れたときの値を残す）。版の印だけがなければ、同じハッシュのときに足す。
     控えに書けなくても、道具の処理は止めない（台帳と資料の一覧でも照らすため）。
+    控えまでの途中か控えそのものが別名なら、読まず・書かずに False（anchor_link_problem）。
     """
     rel = nfc(rel)
     if kind not in KINDS or not allowed_place(rel, kind):
+        return False
+    if anchor_link_problem(folder):
         return False
     try:
         anchors, problem = load_anchors(folder)

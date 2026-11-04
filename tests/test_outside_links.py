@@ -14,9 +14,13 @@ SPEC F5「会社のフォルダの外（デスクトップ、ダウンロード�
 想定する相手は、協力的な Claude と、Git を知らない社長のうっかり（作者の決定 B）。悪意のある書き換えへの備えは見ない。
 
 - 制度データ（lib/seido_data.py、skills/junbi/scripts/seido_data.py）：まとめる・確かめる・段階のフォルダ
-- 裏取り（lib/urakadori.py、skills/junbi/scripts/urakadori.py）：案件を決める・資料の本文・資料の一覧
+- 裏取り（lib/urakadori.py、skills/junbi/scripts/urakadori.py）：案件を決める・資料の本文（PDF の出典のページの
+  ファイル1つずつも）・資料の一覧
 - 書類の整理（lib/seiri.py）：原本の置き場への移動と、書類の台帳
 - 公式資料の取得（lib/official_docs.py・lib/case_folder.py）：案件のフォルダと資料の本文
+- 原本の控え（lib/protected_store.py の `.hojokin/一時/原本の印.json`。書類の整理と公式資料の取得が読む・足す）：
+  控えまでの途中（`.hojokin/`・`.hojokin/一時/`）か控えそのものが別名なら、読まず・書かない。控えに書けなくても
+  道具の処理は止めない作り（台帳と資料の一覧でも照らす）なので、道具は続けて終了コード 0
 - 今日の日付の差し替え（lib/company.py の load_settings）：別名なら読まず、差し替えのないものとして扱う（仮）
 - 原本と公式資料の照らし（lib/originals_guard.py）：外を指す資料の一覧は読まない
 
@@ -227,6 +231,40 @@ def test_urakadori_does_not_read_doc_text_outside(tmp_path, where: str) -> None:
     assert tree(c.folder) == before and tree(outside) == outside_before
 
 
+def pdf_page_file(c: sd.Company, printed: int) -> Path:
+    """資料の本文の、印刷された番号で引いたページのファイル（ページの対応から引く。ファイルの名前は決め打ちしない）。"""
+    doc_dir = c.texts / sd.DOC
+    index = json.loads((doc_dir / "ページの対応.json").read_text(encoding="utf-8"))
+    pages = [p for p in index["ページ"] if p.get("印刷されたページ") == printed]
+    assert len(pages) == 1, index
+    return doc_dir / pages[0]["ファイル"]
+
+
+@pytest.mark.parametrize("where", ["ページのファイル", "ページの対応"])
+def test_urakadori_does_not_read_pdf_page_outside(tmp_path, where: str) -> None:
+    """PDF の資料の、出典のページのファイル（ページの対応も）が外への別名なら、裏取りの道具は外のページを読まず、
+    章の結果を置かない（終了コード 2）。章1の出典は印刷の p.1（ずれ 1 なので、PDF の2ページ目のファイル）。"""
+    c = sd.Company(tmp_path)
+    c.add_docs()
+    # 中にあるときは、出典のページで照らして、章の結果を置く（外に移したときに断ることが、読んでいないことの確かめになる）
+    out = c.read(sd.chapter_a())
+    assert "根拠の文はどれも出典のページにあり" in out, out
+    reading = c.folder / sd.READING_REL
+    assert list(reading.glob("*.json")), out
+    for f in reading.glob("*.json"):
+        f.unlink()
+
+    outside = outside_folder(tmp_path)
+    page = pdf_page_file(c, 1)
+    move_out(page if where == "ページのファイル" else c.texts / sd.DOC / "ページの対応.json", outside)
+    before, outside_before = tree(c.folder), tree(outside)
+    out = c.read(sd.chapter_a(), code=2)
+    assert out.startswith("裏取りをしませんでした。何も書いていません。"), out
+    assert "会社のフォルダの外" in out and "根拠の文はどれも出典のページにあり" not in out, (where, out)
+    assert not list(reading.glob("*.json"))
+    assert tree(c.folder) == before and tree(outside) == outside_before
+
+
 def test_urakadori_full_data_does_not_read_doc_list_outside(merged: sd.Company) -> None:
     """案件の資料の一覧が外への別名なら、制度データの全体の置き場所（略称）を外の一覧で決めない。"""
     full = merged.data()
@@ -316,6 +354,71 @@ def test_ledger_place_link_without_ledger(tmp_path) -> None:
     assert (c.folder / "入れ口" / "決算書18.pdf").read_bytes() == data
 
 
+# ---- 原本の控え（.hojokin/一時/原本の印.json） ----
+
+
+def put_anchor(folder: Path, rel: str, digest: str) -> Path:
+    """原本の控えに、原本を1件足す（道具が置いたのと同じ形。前からある控えは残す）。"""
+    path = folder / company.MARKER_DIR / company.TEMP_DIR / "原本の印.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"守るもの": {}}
+    body["守るもの"][rel] = {"ハッシュ": digest, "版の印": "", "種類": "原本"}
+    path.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_organize_does_not_use_anchors_through_link(tmp_path) -> None:
+    """`.hojokin/` が外への別名なら、書類の整理は、原本の控えを外から読まず（外の値が出力に出ない）、外にも書かない。
+    控えを使えなくても台帳で整理を続ける作りなので、移して終了コード 0。"""
+    c = seiri_company(tmp_path)
+    # 台帳を作っておく（台帳がないのに控えに原本があると、整理する前に断るため）
+    sm.put(c, "入れ口/見積書.pdf", "見積書_ほしみ機工.pdf")
+    sm.organize(c, "入れ口/見積書.pdf", "見積・契約・請求", "見積書", "2026-10-27")
+    data = sm.put(c, "入れ口/決算書18.pdf", "決算書_第18期.pdf")
+    put_anchor(c.folder, f"原本/決算・税/{SECRET}.pdf", sm.sha256(data))
+    # 中にあるときは、控えの原本と同じ中身として断る（控えの場所が出る。外に移したときに出ないことが、読んでいないことの確かめになる）
+    out = sm.refused(sm.run_tool(c, "organize", *ORGANIZE))
+    assert SECRET in out and "同じ中身" in out, out
+    assert SECRET in sm.run_tool(c, "scan").stdout.decode("utf-8")
+
+    outside = outside_folder(tmp_path)
+    move_out(c.folder / company.MARKER_DIR, outside)
+    assert company.is_company_folder(c.folder)
+    outside_before = tree(outside)
+    found = sm.ok_json(sm.run_tool(c, "scan"))
+    assert [d["場所"] for d in found["新しい書類"]] == ["入れ口/決算書18.pdf"], found
+    assert SECRET not in json.dumps(found, ensure_ascii=False)
+    moved = sm.ok_json(sm.run_tool(c, "organize", *ORGANIZE))
+    assert SECRET not in json.dumps(moved, ensure_ascii=False)
+    assert moved["新しい場所"].startswith("原本/決算・税/"), moved
+    assert (c.folder / moved["新しい場所"]).read_bytes() == data
+    assert not (c.folder / "入れ口" / "決算書18.pdf").exists()
+    assert tree(outside) == outside_before
+
+
+@pytest.mark.parametrize("where", [".hojokin", ".hojokin/一時", "原本の印.json"])
+def test_anchors_link_is_not_read_or_written(tmp_path, where: str) -> None:
+    """原本の控え（その上の .hojokin/・.hojokin/一時/ も）が別名なら、控えを読まず（理由を返す）、書かず、足さない。"""
+    from lib import protected_store
+
+    folder = tmp_path / "会社"
+    (folder / company.MARKER_DIR).mkdir(parents=True)
+    rel = f"原本/決算・税/{SECRET}.pdf"
+    anchors = put_anchor(folder, rel, "b" * 64)
+    # 中にあるときは読める
+    assert protected_store.load_anchors(folder) == ({rel: {"ハッシュ": "b" * 64, "版の印": "", "種類": "原本"}}, "")
+
+    outside = outside_folder(tmp_path)
+    place = {".hojokin": folder / company.MARKER_DIR, ".hojokin/一時": anchors.parent, "原本の印.json": anchors}[where]
+    move_out(place, outside)
+    outside_before = tree(outside)
+    got, reason = protected_store.load_anchors(folder)
+    assert got == {} and "別名" in reason and SECRET not in reason, (where, reason)
+    assert protected_store.remember(folder, "原本/決算・税/新しい原本.pdf", "c" * 64, "", protected_store.ORIGINAL) is False
+    protected_store.save_anchors(folder, {"原本/決算・税/新しい原本.pdf": {"ハッシュ": "c" * 64, "版の印": "", "種類": "原本"}})
+    assert tree(outside) == outside_before
+
+
 # ---- 公式資料の取得（案件のフォルダと資料の本文） ----
 
 
@@ -371,6 +474,21 @@ def test_fetch_does_not_write_through_links(tmp_path, small_site, where: str) ->
     out = fetch_refused(c.fetch(data))
     assert "別名" in out and "会社のフォルダの外" in out and SECRET not in out, (where, out)
     assert tree(c.folder) == before and tree(outside) == outside_before
+
+
+def test_fetch_does_not_write_anchors_through_link(tmp_path, small_site) -> None:
+    """`.hojokin/` が外への別名なら、公式資料を取る道具は、原本の控え（.hojokin/一時/原本の印.json）を外に書かない。
+    控えに書けなくても処理は止めない作りなので、公式資料は取って終了コード 0（照らしは資料の一覧でも続く）。"""
+    c = t31.Company(tmp_path)
+    data = small_list(small_site)
+    outside = outside_folder(tmp_path)
+    move_out(c.folder / company.MARKER_DIR, outside)
+    assert company.is_company_folder(c.folder)
+    outside_before = tree(outside)
+    r = c.fetch(data)
+    assert r.returncode == 0, (t31.out(r), r.stderr.decode("utf-8"))
+    assert [p.name for p in (c.case(CASE) / "公式資料").iterdir()] == ["公募要領_第3回.html"]
+    assert tree(outside) == outside_before
 
 
 def test_case_folder_tools_do_not_follow_links(tmp_path) -> None:
