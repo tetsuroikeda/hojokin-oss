@@ -15,6 +15,10 @@
   - 重要な項目（締切・補助上限・補助率・数値の要件・必須書類・補助の対象にならない経費）が、1件以上あり、
     どの値も「値」か「要確認」で埋まっているか。読み取れない値、1件もない項目は、足りないとして終了コード 1
   - 確認済み（資料で食い違いも）なのに値が空のもの（""・空白だけ・[]・{}・中がどれも空）も、埋まっていないとして終了コード 1
+  - 任意の欄（数値の要件の満たせないとき、必須書類の有効期限、経費の例外 など）の「読み取れない」は、埋まっていないに数えない
+    （11/5 の作者の決定。M2c の基本要件④）。「任意の欄で読み取れない値」として別の列と行に出し、終了コード 0。
+    必須の欄（数値の要件の基準、締切の日時 など）の「読み取れない」と、任意の欄の値が空の確認済みは、今のまま数えて終了コード 1
+  - 読み取れない値のうち、「読み取れなかった項目」に同じ項目の問い合わせ文の案がないものを一覧に出す（終了コードには響かせない）
   - 出典のない値の数（出典がない、根拠の文がない、出典の資料が「資料」にない）。1つでもあれば終了コード 1
   - 名前の参照（M2c の直し・波2）。書類の「手続き」が手続きの段階の id にないもの（「1_申請」のようなフォルダの名前を書いた書類）、
     手続きの段階の「様式」が様式の名前にないものを、当たらない名前ごとに数えて出す。1つでもあれば足りないとして終了コード 1。
@@ -262,9 +266,10 @@ def refs_count(out: str) -> int:
 
 
 def all_important_filled(out: str) -> bool:
+    """重要な項目がどれも1件以上あり、埋まっていない値が0（任意の欄で読み取れない値は、数えない）。"""
     for name in IMPORTANT_NAMES:
-        entries, values, filled, unfilled = important_row(out, name)
-        if not (entries > 0 and values == filled and unfilled == 0):
+        entries, values, filled, unfilled, optional_unreadable = important_row(out, name)
+        if not (entries > 0 and values == filled + optional_unreadable and unfilled == 0):
             return False
     return True
 
@@ -311,11 +316,11 @@ def test_merge_makes_full_data_that_passes_schema(company) -> None:
     # 確かめた結果
     assert "形（スキーマ）：合っています" in out and "出典のない値：0" in out
     for name in ("締切", "補助上限", "補助率", "数値の要件", "必須書類", "補助の対象にならない経費"):
-        entries, values, filled, unfilled = important_row(out, name)
-        assert entries > 0 and values == filled and unfilled == 0, name
-    assert important_row(out, "補助上限") == [2, 3, 3, 0]   # 2区分の上限と、特例の上限
-    assert important_row(out, "補助率") == [2, 2, 2, 0]
-    assert important_row(out, "必須書類") == [2, 4, 4, 0]   # 内容と、有効期限・期数
+        entries, values, filled, unfilled, optional_unreadable = important_row(out, name)
+        assert entries > 0 and values == filled and unfilled == 0 and optional_unreadable == 0, name
+    assert important_row(out, "補助上限") == [2, 3, 3, 0, 0]   # 2区分の上限と、特例の上限
+    assert important_row(out, "補助率") == [2, 2, 2, 0, 0]
+    assert important_row(out, "必須書類") == [2, 4, 4, 0, 0]   # 内容と、有効期限・期数
     assert refs_count(out) == 0 and "当たる名前（" not in out  # 書類の手続きは、どれも手続きの段階の id
     assert "重要な項目はすべて値か「要確認」で埋まり、出典のない値は0件です" in out
     # 段階のフォルダは、いちばん前の段階だけ
@@ -356,12 +361,113 @@ def test_unreadable_important_value_is_not_filled(company) -> None:
     b["制度データ"]["書類"][1]["内容"] = unread("資料のこのページが読めない")
     read_all(company, b)
     out = check_code(company.tool("--merge"), 1)
-    assert important_row(out, "必須書類") == [2, 4, 3, 1]
+    assert important_row(out, "必須書類") == [2, 4, 3, 1, 0]
     assert "必須書類の埋まっていない値：書類「登記簿の写し」の内容（読み取れない）" in out
     assert "まだ足りないところがあります" in out
     assert (company.folder / DATA_REL).is_file()  # 制度データは置いた
     assert any(u["項目"] == "書類「登記簿の写し」の内容" and u["理由"] == "資料のこのページが読めない"
                for u in company.data()["読み取れなかった項目"])
+
+
+QUESTION_MISSING = "- 読み取れない値のうち、同じ項目の問い合わせ文の案がまだないもの："
+
+
+def question_missing_count(out: str) -> int:
+    for line in out.splitlines():
+        if line.startswith(QUESTION_MISSING):
+            return int(line[len(QUESTION_MISSING):])
+    return 0
+
+
+def optional_unread_a() -> dict:
+    a = chapter_a()
+    a["制度データ"]["数値の要件"][0]["満たせないとき"] = unread("満たせなかったときの扱いが、どのページにも書かれていない")
+    return a
+
+
+def optional_unread_b(where: str) -> dict:
+    b = chapter_b()
+    if where == "有効期限":
+        b["制度データ"]["書類"][1]["有効期限"] = unread("有効期限の数え方が書かれていない")
+    else:
+        b["制度データ"]["補助の対象にならない経費"][0]["例外"] = unread("対象になる場合が書かれていない")
+    return b
+
+
+@pytest.mark.parametrize("case", [
+    ("数値の要件", "数値の要件「労働時間あたりの出来高」の満たせないとき", [1, 3, 2, 0, 1]),
+    ("必須書類", "書類「登記簿の写し」の有効期限", [2, 4, 3, 0, 1]),
+    ("補助の対象にならない経費", "補助の対象にならない経費「中古の機械の購入費」の例外", [2, 4, 3, 0, 1]),
+])
+def test_unreadable_optional_field_is_not_counted_as_unfilled(company, case) -> None:
+    """任意の欄の「読み取れない」は、埋まっていないに数えず、読み取れない値の一覧と問い合わせ文の案に回す（11/5 の作者の決定）。"""
+    name, place, row = case
+    company.read(optional_unread_a() if name == "数値の要件" else chapter_a())
+    company.read(chapter_b() if name == "数値の要件" else optional_unread_b("有効期限" if name == "必須書類" else "例外"))
+    company.read(chapter_c())
+    out = check_code(company.tool("--merge"), 0)
+    assert important_row(out, name) == row
+    assert all_important_filled(out)
+    assert f"- {name}の任意の欄で読み取れない値：{place}（埋まっていないに数えず" in out
+    assert f"{name}の埋まっていない値" not in out
+    assert OK_LINE in out and "任意の欄で読み取れない値 1 は、埋まっていないに数えず、問い合わせ文の案に回します" in out
+    # 読み取れない値の一覧に出し、「読み取れなかった項目」に理由つきで入る。問い合わせ文の案がまだないことも出す
+    # （テストの章は加点・申請画面などを読んでいないので、ほかの読み取れない値も並ぶ）
+    assert f"\n- {place}\n" in out.split("\n読み取れない値：", 1)[1]
+    assert f"\n  - {place}\n" in out.split(QUESTION_MISSING, 1)[1]
+    entry = [u for u in company.data()["読み取れなかった項目"] if u["項目"] == place]
+    assert len(entry) == 1 and entry[0]["理由"] and not entry[0].get("問い合わせ文の案")
+    assert (company.case_dir() / "1_申請").is_dir()
+
+
+def test_question_written_for_unreadable_value_is_no_longer_listed(company) -> None:
+    """問い合わせ文の案が「読み取れなかった項目」に入れば、まだないものの一覧から外れる。確かめるだけでは書き換えない。"""
+    company.read(optional_unread_a())
+    company.read(chapter_b())
+    company.read(chapter_c())
+    merged = check_code(company.tool("--merge"), 0)
+    data = company.data()
+    place = "数値の要件「労働時間あたりの出来高」の満たせないとき"
+    for u in data["読み取れなかった項目"]:
+        if u["項目"] == place:
+            u["問い合わせ文の案"] = "労働時間あたりの出来高の要件を満たせなかったとき、補助金の返還などの扱いはありますか。"
+    before = write_data(company, data)
+    out = check_code(company.tool("--check"), 0)
+    assert f"\n  - {place}\n" in merged and f"\n  - {place}\n" not in out
+    assert question_missing_count(out) == question_missing_count(merged) - 1
+    assert f"- 数値の要件の任意の欄で読み取れない値：{place}" in out and OK_LINE in out
+    assert (company.folder / DATA_REL).read_bytes() == before
+
+
+@pytest.mark.parametrize("case", [
+    ("数値の要件", ("数値の要件", 0, "基準"), "数値の要件「労働時間あたりの出来高」の基準", [1, 2, 1, 1, 0]),
+    ("締切", ("決まった期日", 0, "日時"), "決まった期日「申請の締切」の日時", [1, 1, 0, 1, 0]),
+])
+def test_unreadable_required_field_is_still_unfilled(company, case) -> None:
+    """必須の欄の「読み取れない」は、今のまま埋まっていないに数える（終了コード 1）。"""
+    name, (key, index, sub), place, row = case
+    read_all(company)
+    check_code(company.tool("--merge"), 0)
+    data = company.data()
+    data[key][index][sub] = unread("資料のこのページが読めない")
+    before = write_data(company, data)
+    out = check_code(company.tool("--check"), 1)
+    assert important_row(out, name) == row
+    assert f"{name}の埋まっていない値：{place}（読み取れない）" in out
+    assert "任意の欄で読み取れない値：" not in out and NOT_OK_LINE in out
+    assert (company.folder / DATA_REL).read_bytes() == before
+
+
+def test_empty_confirmed_optional_field_is_still_unfilled(company) -> None:
+    """任意の欄でも、値が空の確認済みは、読み取り役の返し方の誤りなので埋まっていないに数える。"""
+    read_all(company)
+    check_code(company.tool("--merge"), 0)
+    data = company.data()
+    data["書類"][0]["期数"]["値"] = ""
+    write_data(company, data)
+    out = check_code(company.tool("--check"), 1)
+    assert important_row(out, "必須書類") == [2, 4, 3, 1, 0]
+    assert "必須書類の埋まっていない値：書類「決算書」の期数（値が空）" in out
 
 
 def test_empty_confirmed_important_value_is_not_filled(company) -> None:
@@ -378,8 +484,8 @@ def test_empty_confirmed_important_value_is_not_filled(company) -> None:
     out = check_code(company.tool("--merge"), 1)
     data = company.data()
     assert data["書類"][1]["内容"]["状態"] == "確認済み" and data["書類"][1]["内容"]["値"] == ""
-    assert important_row(out, "必須書類") == [2, 4, 3, 1]
-    assert important_row(out, "数値の要件") == [1, 2, 1, 1]   # 基準と、元の数字の決め方
+    assert important_row(out, "必須書類") == [2, 4, 3, 1, 0]
+    assert important_row(out, "数値の要件") == [1, 2, 1, 1, 0]   # 基準と、元の数字の決め方
     assert "必須書類の埋まっていない値：書類「登記簿の写し」の内容（値が空）" in out
     assert "数値の要件の埋まっていない値：数値の要件「労働時間あたりの出来高」の基準（値が空）" in out
     assert "まだ足りないところがあります" in out
@@ -401,9 +507,9 @@ def test_check_counts_every_empty_form_as_unfilled(company, empty) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     before = path.read_bytes()
     out = check_code(company.tool("--check"), 1)
-    assert important_row(out, "必須書類") == [2, 4, 3, 1]
-    assert important_row(out, "締切") == [1, 1, 0, 1]
-    assert important_row(out, "補助の対象にならない経費") == [2, 3, 2, 1]
+    assert important_row(out, "必須書類") == [2, 4, 3, 1, 0]
+    assert important_row(out, "締切") == [1, 1, 0, 1, 0]
+    assert important_row(out, "補助の対象にならない経費") == [2, 3, 2, 1, 0]
     assert "必須書類の埋まっていない値：書類「登記簿の写し」の内容（値が空）" in out
     assert "締切の埋まっていない値：決まった期日「申請の締切」の日時（値が空）" in out
     assert "補助の対象にならない経費の埋まっていない値：補助の対象にならない経費「中古の機械の購入費」の内容（値が空）" in out
@@ -416,7 +522,7 @@ def test_missing_important_item_is_reported(company) -> None:
     del b["制度データ"]["補助の対象にならない経費"]
     read_all(company, b)
     out = check_code(company.tool("--merge"), 1)
-    assert important_row(out, "補助の対象にならない経費") == [0, 0, 0, 0]
+    assert important_row(out, "補助の対象にならない経費") == [0, 0, 0, 0, 0]
     assert "補助の対象にならない経費：1件もありません" in out
     assert any(u["項目"] == "補助の対象にならない経費" for u in company.data()["読み取れなかった項目"])
 
