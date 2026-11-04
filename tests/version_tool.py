@@ -9,9 +9,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import company_tool as ct
 import hook_runner as hr
@@ -129,6 +131,26 @@ def start_context(output) -> str:
     hso = output["hookSpecificOutput"]
     assert hso["hookEventName"] == "SessionStart"
     return hso["additionalContext"]
+
+
+@contextlib.contextmanager
+def held_lock(folder: Path) -> Iterator[Path]:
+    """ほかのセッションの hook が版を残している間（版の錠を、動いている処理が持っている）にする。
+
+    錠には、このテストの処理（動いている）の番号を書く。hook は5秒待っても錠を取れず、その場面では版を残せない。
+    """
+    lock = folder / ".git" / "hojokin-record.lock"
+    lock.write_text(f"{os.getpid()}\n", encoding="ascii")
+    try:
+        yield lock
+    finally:
+        lock.unlink()
+
+
+def carried_notes(folder: Path) -> list:
+    """版の錠が取れなかった場面の控え（.hojokin/一時/版の記録/錠待ち/）の名前の一覧。"""
+    place = folder / ".hojokin" / "一時" / "版の記録" / "錠待ち"
+    return sorted(p.name for p in place.iterdir()) if place.is_dir() else []
 
 
 def git_leftovers(folder: Path) -> list:
