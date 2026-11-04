@@ -9,8 +9,14 @@
 3. `記録/資料の本文/<案件の名前>/<資料の id>/` に、ページごとの文字と、印刷されたページ番号との対応を置く（lib/doc_text.py）。
 4. `記録/資料の本文/<案件の名前>/資料の一覧.json` に、資料ごとの id・名前・公募回・版・URL・取得日・ハッシュ・
    ページのずれ・注記を、制度データの「資料」と同じ形で残す（M2c がそのまま制度データに写せるように）。
-5. 案件の回の資料が一つもなければ（まだ公表されていない）、「直近回である第◯回の資料に基づいている」と示す（SPEC F3）。
-   回の違う資料（第6回版の手引きなど）も、資料ごとに示す。
+   - 新しい回の資料（第9回の公募要領など）を取ったら、同じ名前の前の回の資料（第8回の公募要領）を「資料」から外し、
+     「前の回の資料」に移す（TASKS M14、F7）。公式資料のファイルと資料の本文は消さない（前の回と比べて、変わったページを
+     見つけるのに使う。lib/kaitei.py）。制度データの「資料」には入らないので、前の回の資料を指したままの値は、
+     まとめの確かめ（lib/seido_data.check）で「出典の資料が、制度データの「資料」にありません」になる。
+5. 回の案内（SPEC F3）。案内は、取り直した後の一覧の「資料」の全体で決める。
+   - 案件の回の資料が一つもなければ、「第9回の資料ではなく、直近回である第8回の資料に基づいています」と示す。
+   - 一部だけあれば（第9回の公募要領だけが出た、など）、案件の回のものがまだない資料を並べて、直近回の資料に基づくと示す。
+   - ほかの回の資料（第6回版の手引きなど）は、資料ごとに示す。
 
 書く前に、書く先（`案件/`、`案件/<案件の名前>/公式資料/`、`記録/資料の本文/<案件の名前>/` と、その中の資料ごとのフォルダ・
 資料の一覧.json）の途中のフォルダとそのものに、別名（シンボリックリンク）がないかを確かめる。前に置いた公式資料が別名のときも、
@@ -35,7 +41,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from lib import case_folder, dates, doc_text, place_text, protected_store
 
@@ -101,6 +107,7 @@ class FetchResult:
     notices: List[str] = field(default_factory=list)
     based_on_latest: bool = False
     list_file: str = ""
+    older: List[Dict] = field(default_factory=list)  # 前の回の資料（新しい回の資料に置き換えたもの）
 
     @property
     def complete(self) -> bool:
@@ -180,25 +187,67 @@ def file_stem(doc: Dict) -> str:
 
 
 def round_notices(seido: Dict, docs: List[Dict]):
-    """回についての案内。（案件の回の資料がなく、直近回の資料に基づくか、案内の文の一覧）を返す。"""
+    """回についての案内。（案件の回の資料がなく、直近回の資料に基づくか、案内の文の一覧）を返す。
+
+    docs は、案件の資料の一覧の「資料」（前の回の資料に置き換えたものを除く）。
+    - 案件の回の資料が1つもない：直近回の資料に基づく（真）と、その案内。
+    - 一部だけある（第9回の公募要領だけが出た、など）：直近回の資料に基づく（偽）。案件の回のものがまだない資料を並べて、
+      直近回の資料に基づくと示す（波3の M12a の文案。資料が公表されたかは、一覧を作った Claude が公式サイトで確かめる）。
+    - ほかの回の資料（第6回版の手引きなど）は、資料ごとに示す。
+    """
     target = seido.get("公募回", "")
     target_n = round_number(target)
     numbered = [(d, round_number(d.get("公募回", ""))) for d in docs]
     rounds = sorted({n for _d, n in numbered if n is not None})
     notices: List[str] = []
     based_on_latest = False
-    base_n = target_n
-    if target_n is not None and rounds and target_n not in rounds:
+    covered = target_n  # 上の案内で回を示した資料の回（資料ごとには示さない）
+    if target_n is not None and rounds:
         earlier = [n for n in rounds if n < target_n]
-        base_n = max(earlier) if earlier else max(rounds)
-        based_on_latest = True
-        notices.append(
-            f"{target}の資料はまだ公表されていないため、直近回である第{base_n}回の資料に基づいています。"
-            f"{target}の資料が公表されたら、取り直して作り直します。")
+        if target_n not in rounds:
+            covered = max(earlier) if earlier else max(rounds)
+            based_on_latest = True
+            notices.append(
+                f"{target}の資料ではなく、直近回である第{covered}回の資料に基づいています。"
+                f"{target}の資料が公表されたら、取り直して作り直します。")
+        elif earlier:
+            covered = max(earlier)
+            names = "・".join(f"「{d['名前']}」" for d, n in numbered if n == covered)
+            notices.append(
+                f"{target}の資料のうち、{target}のものがまだない資料（{names}）は、直近回である第{covered}回の資料に基づいています。"
+                f"{target}の資料が公表されたら、取り直して作り直します。")
     for d, n in numbered:
-        if n is not None and n != base_n:
+        if n is not None and n != target_n and n != covered:
             notices.append(f"「{d['名前']}」は、{d['公募回']}の資料に基づいています。")
     return based_on_latest, notices
+
+
+def set_aside_older(entries: List[Dict], older: List[Dict], fetched_ids: List[str]) -> Tuple[List[Dict], List[Dict]]:
+    """今回取った資料と同じ名前で、回が前の資料を「資料」から外し、「前の回の資料」に移す（TASKS M14）。
+
+    返すのは（資料、前の回の資料）。新しい回の資料は、外した資料の場所に並べる（制度データの章の並びを変えないため）。
+    今回取り直した資料が「前の回の資料」にあれば、そこから外す。回の番号のない資料（全公募回共通など）は外さない。
+    """
+    fetched = [e for e in entries if e.get("id") in fetched_ids]
+    out: List[Dict] = []
+    moved: List[Dict] = []
+    for entry in entries:
+        if entry.get("id") in fetched_ids:
+            if entry not in out:
+                out.append(entry)
+            continue
+        n = round_number(str(entry.get("公募回", "")))
+        newer = [f for f in fetched if f.get("名前") == entry.get("名前") and n is not None
+                 and (round_number(str(f.get("公募回", ""))) or 0) > n]
+        if newer:
+            moved.append(entry)
+            for f in newer:  # 外した資料の場所に、新しい回の資料を置く
+                if f not in out:
+                    out.append(f)
+        else:
+            out.append(entry)
+    kept_older = [e for e in older if e.get("id") not in fetched_ids and all(e.get("id") != m.get("id") for m in moved)]
+    return out, kept_older + moved
 
 
 # ---- 取る ----
@@ -377,9 +426,16 @@ def _list_entry(result: DocResult, today: str, previous: Optional[Dict]) -> Dict
     return entry
 
 
-def write_list(company: Path, case: str, seido: Dict, results: List[DocResult], based_on_latest: bool,
-               notices: List[str], today: str) -> Path:
-    """資料の一覧.json を書く。前の一覧にあって今回取らなかった資料は残す。"""
+OLDER_KEY = "前の回の資料"
+
+
+def write_list(company: Path, case: str, seido: Dict, results: List[DocResult], today: str) -> Tuple[Path, bool, List[str]]:
+    """資料の一覧.json を書く。前の一覧にあって今回取らなかった資料は残す。
+
+    今回取った資料と同じ名前の前の回の資料は「前の回の資料」に移す（set_aside_older）。回の案内は、取り直した後の
+    「資料」の全体で決める（取り直しで一部の資料だけを渡しても、案内が消えないように）。
+    返すのは（場所、直近回の資料に基づくか、案内の文の一覧）。
+    """
     path = company / RECORDS_DIR / TEXT_DIR / case_folder.safe_name(case) / LIST_FILE
     previous: Dict = {}
     if path.exists():
@@ -388,6 +444,7 @@ def write_list(company: Path, case: str, seido: Dict, results: List[DocResult], 
         except ValueError:
             previous = {}
     entries = {e.get("id"): e for e in previous.get("資料", []) if isinstance(e, dict)}
+    older = [e for e in previous.get(OLDER_KEY, []) if isinstance(e, dict)]
     places = dict(previous.get("置き場所", {}))
     for r in results:
         old = entries.get(r.doc["id"])
@@ -400,18 +457,23 @@ def write_list(company: Path, case: str, seido: Dict, results: List[DocResult], 
             if blob:
                 place["版の印"] = blob
             places[r.doc["id"]] = place
+    fetched = [r.doc["id"] for r in results if r.status in (GOT, SAME)]
+    docs, older = set_aside_older(list(entries.values()), older, fetched)
+    based_on_latest, notices = round_notices(seido, docs)
     data = {
         "案件": case,
         "制度": seido,
         "案件の回": seido.get("公募回"),
         "直近回の資料に基づく": based_on_latest,
         "案内": notices,
-        "資料": list(entries.values()),
+        "資料": docs,
         "置き場所": places,
     }
+    if older:
+        data[OLDER_KEY] = older
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return path
+    return path, based_on_latest, notices
 
 
 NOT_PLACED = "公式資料も資料の本文も置いていません"
@@ -467,8 +529,8 @@ def fetch_all(company: Path, data: Dict, downloader: Callable[[str, Path], str] 
         r = fetch_one(company, official, doc, downloader)
         make_text(company, case, r)
         result.docs.append(r)
-    result.based_on_latest, result.notices = round_notices(seido, data["資料"])
-    path = write_list(company, case, seido, result.docs, result.based_on_latest, result.notices, today.isoformat())
+    path, result.based_on_latest, result.notices = write_list(company, case, seido, result.docs, today.isoformat())
+    result.older = [e for e in json.loads(path.read_text(encoding="utf-8")).get(OLDER_KEY, []) if isinstance(e, dict)]
     result.list_file = str(path.relative_to(company))
     return result
 
@@ -508,6 +570,10 @@ def report(result: FetchResult) -> str:
     lines.append("")
     for notice in result.notices:
         lines.append(f"- {notice}")
+    if result.older:
+        names = "・".join(f"「{e.get('名前')}」（{e.get('公募回')}、{e.get('id')}）" for e in result.older)
+        lines.append(f"- 新しい回の資料に置き換えた前の回の資料：{names}。資料の一覧の「{OLDER_KEY}」に移した"
+                     "（ファイルと資料の本文は残し、変わったページを見つけるのに使う）")
     lines.append(f"- 書類フォルダ：{case_folder.CASES_DIR}/{result.case}/（公式資料は {case_folder.OFFICIAL_DIR}/ に、読み取り専用で置いた）")
     lines.append(f"- ページごとの文字：{RECORDS_DIR}/{TEXT_DIR}/{result.case}/（出典は印刷されたページ番号で示す）")
     lines.append(f"- 資料の一覧：{result.list_file}")
