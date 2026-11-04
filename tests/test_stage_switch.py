@@ -269,7 +269,7 @@ def test_without_the_event_date_it_switches_and_asks_for_the_date(shop) -> None:
     assert (shop.folder / CASE_DIR / "2_交付申請" / "申請書").is_dir()
     deadline = section(out, "交付申請の期限")
     assert deadline[0] == "- 日付はまだ出せません（「採択発表日」から2か月。「採択発表日」の日付が分かってから出します）"
-    assert any("--event で渡し直してください" in x for x in deadline)
+    assert any("決め方にある出来事（採択発表日）の日付を" in x and "--event で渡し直してください" in x for x in deadline)
     assert not (shop.folder / LEDGER).exists()
 
     again = shop.tool("--stage", "2_交付申請", "--event", "採択発表日=2027-03-10")
@@ -357,8 +357,12 @@ def test_refusals_write_nothing(shop, args, message) -> None:
 
 
 def test_backward_and_past_the_last_stage_are_refused(shop) -> None:
-    # 効果報告の期限（毎年の繰り返し）は、事業の完了と決算の月が分かるまで日付が出ない（終了コード 1）
-    shop.tool("--stage", "4_効果報告", "--event", "採択発表日=2027-03-10", code=1)
+    # 効果報告の期限（毎年の繰り返し）は、事業の完了と決算の月が分かるまで日付が出ない（終了コード 1）。
+    # 渡せる出来事はないので、--event で渡し直すようには促さない
+    out = shop.tool("--stage", "4_効果報告", "--event", "採択発表日=2027-03-10", code=1)
+    deadline = section(out, "効果報告の期限")
+    assert "- 毎年の期限は、事業の完了と決算の月が分かってから出します（期限の台帳で扱います）" in deadline
+    assert not any("--event" in x for x in deadline)
     before = shop.snapshot()
     assert "今の段階（4_効果報告）より前の段階（2_交付申請）には切り替えません" in shop.tool("--stage", "2_交付申請", code=2)
     assert "今の段階（4_効果報告）が、フォルダのある最後の段階です" in shop.tool(code=2)

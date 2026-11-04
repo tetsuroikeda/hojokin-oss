@@ -400,6 +400,19 @@ def _due_line(row: deadlines.StageRow, today: date) -> str:
     return text
 
 
+def _undated_hint(rule: Any) -> str:
+    """期限の日付が出せないときに、次にすること。決め方に出来事があるときだけ、その日付を渡し直すよう促す。"""
+    value = rule.get("値") if isinstance(rule, dict) else None
+    events: List[str] = []
+    _walk_rule(value, events)
+    if events:
+        return ("期限の日付はまだ出せません。決め方にある出来事（" + "・".join(events) + "）の日付を、通知の原本の日付か社長の答えで"
+                "確かめて、--event で渡し直してください（推測で日付を入れない）")
+    if isinstance(value, dict) and value.get("種類") == "繰り返し":
+        return "毎年の期限は、事業の完了と決算の月が分かってから出します（期限の台帳で扱います）"
+    return "制度データに、この段階の期限の決め方がありません。資料を確かめ、なければ事務局への問い合わせ文の案を作ってください"
+
+
 def report(out: Outcome) -> str:
     today_text = dates.format_date(out.today) + ("（日付を差し替えています）" if out.substituted else "")
     name = str(out.target.get("名前") or out.target_folder)
@@ -442,8 +455,7 @@ def report(out: Outcome) -> str:
         if isinstance(rule, dict) and isinstance(rule.get("注記"), str):
             lines.append(f"- 制度データの注記：{rule['注記']}")
         if d is not None and not d.dated:
-            lines.append("- 期限の日付はまだ出せません。決め方にある出来事の日付（通知の原本の日付か、社長の答え）を確かめて、"
-                         "--event で渡し直してください（推測で日付を入れない）")
+            lines.append(f"- {_undated_hint(rule)}")
     start = out.target.get("始まる条件")
     if isinstance(start, dict):
         lines.append(f"- 始まる条件：{_valued(start)}")
