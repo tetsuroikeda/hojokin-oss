@@ -986,6 +986,54 @@ def test_link_to_a_folder_that_cannot_be_read_is_recorded_as_a_link(company) -> 
         locked.chmod(0o755)
 
 
+STORED_CODE = """
+import hashlib
+from pathlib import Path
+folder, digest, blob_id = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+if (folder / ".git").is_dir():
+    from dulwich.repo import Repo
+    repo = Repo(str(folder))
+    print(json.dumps(blob_id.encode("ascii") in repo.object_store))
+else:
+    store = folder / "記録" / "版"
+    print(json.dumps(any(hashlib.sha256(p.read_bytes()).hexdigest() == digest
+                         for p in store.rglob("*") if p.is_file() and not p.is_symlink())))
+"""
+
+
+def stored_anywhere(company: vt.Company, data: bytes) -> bool:
+    """その中身が、版の履歴の置き場のどこかにあるか（Git の形は .git の中身、版のファイルの形は 記録/版/ のファイル）。"""
+    blob_id = hashlib.sha1(b"blob %d\x00" % len(data) + data).hexdigest()
+    return ct.py_json(STORED_CODE, str(company.folder), hashlib.sha256(data).hexdigest(), blob_id)
+
+
+def test_folder_replaced_by_a_link_to_outside_is_not_read(company) -> None:
+    """履歴にある書類の途中のフォルダを、社長が会社のフォルダの外への別名に置き換えても、別名の先の書類を読まず、
+    版の置き場に写さない（同期されるフォルダなら、クラウドにも上がらない）。Git と同じく、別名そのものを残し、
+    中にあった書類は消したことにする。外のフォルダは変えない。"""
+    inside = b"%PDF-1.4 inside"
+    company.write("入れ口/束/見積書.pdf", inside)
+    company.say("見積書を入れた")
+    assert "入れ口/束/見積書.pdf" in company.tracked()
+    outside = company.env.folder("外のフォルダ")
+    secret = b"%PDF-1.4 outside, not for the company folder"
+    (outside / "見積書.pdf").write_bytes(secret)
+    before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in outside.iterdir()}
+    shutil.rmtree(company.folder / "入れ口" / "束")
+    (company.folder / "入れ口" / "束").symlink_to(outside, target_is_directory=True)
+
+    assert sorted(company.pending()) == [["入れ口/束", "足した"], ["入れ口/束/見積書.pdf", "消した"]]
+    company.say("フォルダを差し替えた")
+    company.stop()
+    tracked = company.tracked()
+    assert "入れ口/束" in tracked and "入れ口/束/見積書.pdf" not in tracked
+    assert company.log("入れ口/束/見積書.pdf")[0]["変更"] == "消した"
+    assert not stored_anywhere(company, secret)
+    assert stored_anywhere(company, inside)  # 前の版は残る
+    assert {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in outside.iterdir()} == before
+    assert company.pending() == []
+
+
 def test_files_that_vanish_while_recording_are_skipped(company) -> None:
     """一覧を作った後に消えたファイルと、中身を書く前に消えたファイルは飛ばし、ほかのファイルは残す
     （消えたことは、次の場面で比べ直して残す）。"""

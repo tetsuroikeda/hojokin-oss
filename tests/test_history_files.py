@@ -239,10 +239,10 @@ def test_changed_version_file_is_not_handed_out(company) -> None:
     assert any("合いません" in p for p in problems) and any("書き込める" in p for p in problems), problems
 
 
-@pytest.mark.parametrize("where", [vt.STORE, f"{vt.STORE}/案件"])
+@pytest.mark.parametrize("where", [vt.STORE, f"{vt.STORE}/案件", SCENES])
 def test_store_behind_a_link_is_not_written(company, where) -> None:
-    """記録/版/ か、その中のフォルダが外への別名なら、版のファイルを書かずに（外を変えずに）、版の記録が止まったことを
-    開いたときに伝える。.git も作らない。"""
+    """記録/版/ か、その中のフォルダ（版ごとの記録の _版の一覧 を含む）が外への別名なら、版のファイルを書かずに
+    （外を変えずに）、版の記録が止まったことを開いたときに伝える。.git も作らない。"""
     company.say("その1を作って")
     company.write(SONO1, blob("docx", 1))
     company.stop()
@@ -261,6 +261,89 @@ def test_store_behind_a_link_is_not_written(company, where) -> None:
     assert not any(word in context for word in ("補助プログラム（Python）が動かない", "xcode-select")), context
     assert tree(outside) == before
     assert not (company.folder / ".git").exists()
+
+
+@pytest.mark.parametrize("where", [vt.STORE, SCENES])
+def test_scene_records_behind_a_link_are_not_read(company, where) -> None:
+    """版ごとの記録（_版の一覧）か、その上が外への別名なら、別名の先の記録を読まない（履歴として示さない・
+    戻す元にしない）。版の道具は別名だと言って断る。版ごとの記録のファイルそのものが別名でも読まない。"""
+    company.say("その1を作って")
+    company.write(SONO1, blob("docx", 1))
+    company.stop()
+    outside = company.env.folder("外のフォルダ")
+    place = company.folder / where
+    moved = outside / "移した置き場"
+    place.rename(moved)
+    place.symlink_to(moved, target_is_directory=True)
+    # 外の記録に、会社のフォルダにない書類の版を足しておく（読めば、履歴に出てくる）
+    outside_scenes = moved if where == SCENES else moved / "_版の一覧"
+    scene_file = sorted(p for p in outside_scenes.iterdir() if p.suffix == ".json")[-1]
+    fake = json.loads(scene_file.read_text(encoding="utf-8"))
+    fake["書類"][0]["書類"] = "記録/外の書類.md"
+    (outside_scenes / ("9" * 20 + "_" + "f" * 12 + ".json")).write_text(json.dumps(fake, ensure_ascii=False),
+                                                                         encoding="utf-8")
+    assert_reads_refused(company)
+
+
+# 版の履歴を読む入口（履歴・今の書類・変わったもの・版の一覧・原本と公式資料を戻す元）を1つずつ呼び、
+# 読めたらその結果を、断ったらその理由を返す
+READS_CODE = """
+from pathlib import Path
+folder, digest = Path(sys.argv[1]), sys.argv[2]
+calls = {
+    "log": lambda: [r.document for r in history.log(folder)],
+    "tracked": lambda: history.tracked_documents(folder),
+    "pending": lambda: [c.path for c in history.pending_changes(folder)],
+    "versions": lambda: history.version_list(folder),
+    "find": lambda: history.find_by_sha256(folder, digest) is not None,
+}
+out = {}
+for name, call in calls.items():
+    try:
+        out[name] = "読んだ：" + json.dumps(call(), ensure_ascii=False)
+    except history.HistoryDamaged as e:
+        out[name] = "断った：" + str(e)
+print(json.dumps(out, ensure_ascii=False))
+"""
+
+
+def assert_reads_refused(company: vt.Company) -> None:
+    """版の履歴を読む入口が、どれも別名だと言って断り、別名の先の記録（外の書類）を読まない。"""
+    digest = hashlib.sha256(blob("docx", 1)).hexdigest()
+    for name, text in ct.py_json(READS_CODE, str(company.folder), digest).items():
+        assert text.startswith("断った：") and "別名" in text and "外の書類" not in text, (name, text)
+
+
+def test_deposit_behind_a_link_is_refused_and_nothing_moves(company) -> None:
+    """原本を置く前に預ける所（記録/版/_預け/）が外への別名なら、外に書かずに断り、書類も動かさない（落ちない）。"""
+    from test_seiri_min import put
+    from test_seiri_min import refused as seiri_refused
+    from test_seiri_min import run_tool as seiri_tool
+
+    data = put(company, "入れ口/決算書18.pdf", "決算書_第18期.pdf")
+    outside = company.env.folder("外のフォルダ")
+    (company.folder / vt.STORE / "_預け").symlink_to(outside, target_is_directory=True)
+    out = seiri_refused(seiri_tool(company, "organize", "--path", "入れ口/決算書18.pdf", "--category", "決算・税",
+                                   "--kind", "決算書", "--date", "2025-04-01"))
+    assert "預けられませんでした" in out and "別名" in out and "移していません" in out, out
+    assert list(outside.iterdir()) == []
+    assert (company.folder / "入れ口/決算書18.pdf").read_bytes() == data
+    assert not (company.folder / "原本/決算・税/2025-04-01_決算書.pdf").exists()
+
+
+def test_scene_file_that_is_a_link_is_not_read(company) -> None:
+    """版ごとの記録のファイルそのものが外への別名なら、先を読まずに断る。"""
+    company.say("その1を作って")
+    company.write(SONO1, blob("docx", 1))
+    company.stop()
+    outside = company.env.folder("外のフォルダ")
+    scene_file = sorted(p for p in (company.folder / SCENES).iterdir() if p.suffix == ".json")[-1]
+    fake = json.loads(scene_file.read_text(encoding="utf-8"))
+    fake["書類"][0]["書類"] = "記録/外の書類.md"
+    target = outside / "外の記録.json"
+    target.write_text(json.dumps(fake, ensure_ascii=False), encoding="utf-8")
+    (company.folder / SCENES / ("9" * 20 + "_" + "f" * 12 + ".json")).symlink_to(target)
+    assert_reads_refused(company)
 
 
 # ---- 守り ----

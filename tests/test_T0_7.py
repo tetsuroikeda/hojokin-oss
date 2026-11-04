@@ -22,6 +22,10 @@ SPEC：整理と処理の前後で、原本と公式資料を比べる。
   控えにある入れたときの中身で照らして戻し、知らせる（応答の終わりには一度だけ）。
   控えにない項目（控えのファイルを消した、置き場の中の場所を台帳に足した）は、台帳の値だけでは書き戻さず、
   原本を別の中身に置き換えない・置き場にファイルを作らない・社長が直接入れた書類を上書きしない。知らせ続ける。
+- 版の持ち方は2つ（DESIGN 10章。TASKS M0c）。どのテストも、Git の形と、版のファイルの形（同期されるフォルダの形）の
+  両方で流す。版のファイルの形では、道具が置く前に中身を `記録/版/_預け/` に預け、戻す元はそれと版のファイルから
+  sha256 で探す。時間のかかるテストは、版のファイルの形の側を slow にする（同じ応答の中で書き換えたものを戻す
+  テストは、どちらの形も速いテストに残す）。
 """
 
 from __future__ import annotations
@@ -67,15 +71,26 @@ TOUKI = "原本/登記・名簿/2026-10-22_履歴事項全部証明書.pdf"
 MITSUMORI = "原本/見積・契約・請求/2026-10-20_見積書_つばさ台フードシステム.pdf"
 
 
-class World:
-    """公式資料を取り、入れ口に3件を入れた会社のフォルダ。"""
+DEPOSIT = f"{vt.STORE}/_預け"  # 版のファイルの形で、道具が置く前に中身を預ける所（lib/history_files.py）
+# 両方の形。版のファイルの形の側は slow にする（時間のかかるテスト）
+FORMS_HEAVY = [vt.GIT, pytest.param(vt.FILES, marks=pytest.mark.slow)]
 
-    def __init__(self, tmp_path: Path) -> None:
-        self.company = vt.Company(tmp_path)
-        settings = self.company.folder / ".hojokin" / "設定.json"
-        data = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
-        data["今日の日付"] = TODAY
-        settings.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+def make_company(tmp_path: Path, form: str) -> vt.Company:
+    """道具で用意した会社のフォルダ（今日の日付を決めておく）。"""
+    company = vt.Company(tmp_path, form=form)
+    settings = company.folder / ".hojokin" / "設定.json"
+    data = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
+    data["今日の日付"] = TODAY
+    settings.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return company
+
+
+class World:
+    """公式資料を取り、入れ口に3件を入れた会社のフォルダ。form は版の持ち方（tests/version_tool.py）。"""
+
+    def __init__(self, tmp_path: Path, form: str = vt.GIT) -> None:
+        self.company = make_company(tmp_path, form)
         self.site = Site()
         self.lists = tmp_path / "一覧"
         self.lists.mkdir()
@@ -109,9 +124,9 @@ class World:
         self.site.close()
 
 
-@pytest.fixture
-def world(tmp_path, downloads_files):
-    w = World(tmp_path)
+@pytest.fixture(params=FORMS_HEAVY)
+def world(request, tmp_path, downloads_files):
+    w = World(tmp_path, request.param)
     c = w.company
     c.say("省力化の第9回の準備をして")
     w.fetch(OFFICIAL_IDS)
@@ -314,10 +329,29 @@ def test_change_recorded_at_prompt_is_restored_from_earlier_version(world) -> No
     assert protected(c) == before
 
 
-def test_official_changed_in_same_response_is_restored(tmp_path, downloads_files) -> None:
+def deposit_of(company: vt.Company, data: bytes) -> Path:
+    """版のファイルの形で、道具が置く前に中身を預けた所（名前は中身の sha256）。"""
+    return company.folder / DEPOSIT / sha256(data)
+
+
+def assert_kept_before_placing(company: vt.Company, data: bytes) -> None:
+    """道具が置く前に、中身を版の履歴の置き場に入れた（Git の形は .git、版のファイルの形は 記録/版/_預け/）。"""
+    if company.form == vt.FILES:
+        path = deposit_of(company, data)
+        assert path.read_bytes() == data
+        assert stat.S_IMODE(path.stat().st_mode) == 0o444
+        return
+    code = ("from dulwich.repo import Repo\n"
+            "repo = Repo(sys.argv[1])\n"
+            "print(json.dumps(repo.object_store[sys.argv[2].encode()].as_raw_string().hex()))")
+    assert bytes.fromhex(ct.py_json(code, str(company.folder), blob_id(data))) == data
+
+
+@pytest.mark.parametrize("form", vt.FORMS)
+def test_official_changed_in_same_response_is_restored(tmp_path, downloads_files, form) -> None:
     """同じ応答の中で取った公式資料を、その場のコードで書き換えても、応答の終わりに取ったときのバイト列に戻す。
     書き換えた中身は「入れたときの1版」にならず、取り直しても改訂と取り違えない。"""
-    w = World(tmp_path)
+    w = World(tmp_path, form)
     try:
         c = w.company
         ids = OFFICIAL_IDS + (SCHEDULE_ID,)
@@ -331,13 +365,17 @@ def test_official_changed_in_same_response_is_restored(tmp_path, downloads_files
         places = doc_list(c)["置き場所"]
         for place in places.values():
             assert place["版の印"] == blob_id(fetched[place["ファイル"]][0])
+        for data, _mode in fetched.values():
+            assert_kept_before_placing(c, data)
+        pdf = [p for p in w.official_files() if p.endswith(".pdf")][0]
         for rel in (word, html):
             make_writable(c.folder / rel)
         (c.folder / word).write_bytes(b"PK\x03\x04 written in place")
         (c.folder / html).write_bytes(b"<html>changed</html>")
+        os.unlink(c.folder / pdf)  # 消したものも戻す
 
         reason = stop_reason(c.stop())
-        assert "戻しました" in reason and word in reason and html in reason
+        assert "戻しました" in reason and word in reason and html in reason and pdf in reason
         assert "戻せませんでした" not in reason
         assert protected(c) == fetched
         # 版は取ったときの1版だけで、その中身は取ったときのバイト列
@@ -358,6 +396,57 @@ def test_official_changed_in_same_response_is_restored(tmp_path, downloads_files
         w.close()
 
 
+@pytest.mark.parametrize("form", vt.FORMS)
+def test_original_changed_in_same_response_is_restored(tmp_path, form) -> None:
+    """社長が入れ口に入れた書類を整理して原本にしたのと同じ応答の中で、その場のコードが原本を消した（読み取り専用でも
+    消せる）・書き換えたものを、応答の終わりに入れたときのバイト列に戻す。書き換えた中身は版に残らず、原本の場所の版は
+    入れたときの1版だけで、その中身も入れたときのバイト列（開き直しても同じ）。"""
+    c = make_company(tmp_path, form)
+    sources = put_three(c)
+    c.say("書類を入れたので整理して")
+    organize_three(c)
+    moved = dict(zip(sources, (KESSAN, TOUKI, MITSUMORI)))
+    for rel in sources:
+        assert_kept_before_placing(c, sources[rel])
+    os.unlink(c.folder / KESSAN)
+    make_writable(c.folder / TOUKI)
+    (c.folder / TOUKI).write_bytes(b"%PDF-1.7 overwritten")
+
+    reason = stop_reason(c.stop())
+    assert "戻しました" in reason and KESSAN in reason and TOUKI in reason
+    assert "戻せませんでした" not in reason and MITSUMORI not in reason
+    after = protected(c)
+    assert {path: after[path] for path in moved.values()} == {moved[rel]: (data, 0o444) for rel, data in sources.items()}
+    one_version_each(c, moved.values())
+    for rel, path in moved.items():
+        assert version_hashes(c, path) == [sha256(sources[rel])], path
+    assert c.pending() == []
+    assert c.stop(active=True) is None
+    c.start("startup")
+    assert protected(c) == after
+
+
+def test_files_form_restores_from_inbox_version_when_deposit_is_gone(tmp_path) -> None:
+    """版のファイルの形で、預けた中身が消されていても、入れ口に入れたときの版（社長が送ったときに残る）に同じ中身が
+    あれば、それで戻す（すべての版のファイルから sha256 で探す）。"""
+    c = make_company(tmp_path, vt.FILES)
+    sources = put_three(c)
+    c.say("書類を入れたので整理して")
+    assert "入れ口/scan0001.pdf" in c.tracked()
+    organize_three(c)
+    data = sources["入れ口/scan0001.pdf"]
+    deposit = deposit_of(c, data)
+    make_writable(deposit)
+    deposit.unlink()
+    make_writable(c.folder / TOUKI)
+    (c.folder / TOUKI).write_bytes(b"%PDF-1.7 overwritten")
+    reason = stop_reason(c.stop())
+    assert "戻しました" in reason and TOUKI in reason and "戻せませんでした" not in reason
+    assert protected(c)[TOUKI] == (data, 0o444)
+    one_version_each(c, [TOUKI])
+    assert c.store_problems() == []
+
+
 def test_unrestorable_change_is_reported_once_and_kept(world) -> None:
     """版の履歴に入れたときの中身がないもの（版の履歴の置き場から中身が失われた）は、消さずに知らせる。
     応答の終わりには一度だけ伝え、開いたときは伝え直す。"""
@@ -366,8 +455,12 @@ def test_unrestorable_change_is_reported_once_and_kept(world) -> None:
     world.fetch([SCHEDULE_ID])
     html = [p for p in world.official_files() if p.endswith(".html")][0]
     # 取ったときに預けた中身を、版の履歴の置き場から消す（まだ版にしていないので、ほかに中身はない）
-    blob = doc_list(c)["置き場所"][SCHEDULE_ID]["版の印"]
-    loose = c.folder / ".git" / "objects" / blob[:2] / blob[2:]
+    if c.form == vt.FILES:
+        digest = next(d["ハッシュ"] for d in doc_list(c)["資料"] if d["id"] == SCHEDULE_ID)
+        loose = c.folder / DEPOSIT / digest
+    else:
+        blob = doc_list(c)["置き場所"][SCHEDULE_ID]["版の印"]
+        loose = c.folder / ".git" / "objects" / blob[:2] / blob[2:]
     os.chmod(str(loose), 0o644)
     loose.unlink()
     make_writable(c.folder / html)
@@ -396,7 +489,10 @@ def test_ledger_and_list_pointing_outside_are_not_written(world) -> None:
     c.write("記録/メモ.json", payload)
     assert c.stop() is None
     # 2. 台帳と資料の一覧に、その中身で、置き場の外を指す項目を足す（記録/ は Claude が直せる）
-    watched = (".claude/settings.json", ".hojokin/設定.json", ".git/config", f"{vt.APPLICATION}/その1・2.docx")
+    # 版の履歴の置き場（Git の形は .git/、版のファイルの形は 記録/版/）も、書かない場所に入れる
+    store_file = ".git/config" if c.form == vt.GIT else f"{vt.STORE}/_預け/x.json"
+    watched = (".claude/settings.json", ".hojokin/設定.json", f"{vt.APPLICATION}/その1・2.docx")
+    watched += ((store_file,) if c.form == vt.GIT else ())
     c.write(f"{vt.APPLICATION}/その1・2.docx", b"PK\x03\x04 sono1")
     c.say("台帳を直して")
     snapshot = {rel: ((c.folder / rel).read_bytes(), stat.S_IMODE((c.folder / rel).stat().st_mode)) for rel in watched}
@@ -407,7 +503,7 @@ def test_ledger_and_list_pointing_outside_are_not_written(world) -> None:
     settings = c.folder / ".claude/settings.json"
     hojokin_settings = c.folder / ".hojokin/設定.json"
     data = json.loads((c.folder / LEDGER).read_text(encoding="utf-8"))
-    outside = [".claude/settings.json", ".git/config", f"{vt.APPLICATION}/その1・2.docx", "記録/メモ2.json",
+    outside = [".claude/settings.json", store_file, f"{vt.APPLICATION}/その1・2.docx", "記録/メモ2.json",
                "原本/../.claude/settings.json", str(settings), "原本/でたらめ/x.json", "入れ口/x.json"]
     for rel in outside:
         data["原本"].append({"場所": rel, "ハッシュ": sha256(payload), "版の印": blob_id(payload)})
@@ -435,7 +531,7 @@ def test_ledger_and_list_pointing_outside_are_not_written(world) -> None:
         assert pdf in text  # 資料の一覧から消えた公式資料は、控えで照らし続けて知らせる
     for rel, value in snapshot.items():
         assert ((c.folder / rel).read_bytes(), stat.S_IMODE((c.folder / rel).stat().st_mode)) == value, rel
-    for rel in ("記録/メモ2.json", "入れ口/x.json", "原本/でたらめ"):
+    for rel in ("記録/メモ2.json", "入れ口/x.json", "原本/でたらめ") + (() if c.form == vt.GIT else (store_file,)):
         assert not (c.folder / rel).exists(), rel
     # 同じことでは、応答の終わりに続けさせない
     c.say("わかった")

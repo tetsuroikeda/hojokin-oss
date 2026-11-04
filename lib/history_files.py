@@ -13,8 +13,10 @@
     ├─ 案件/2026_省力化（一般型）第9回/1_申請/申請書/その1.docx/    書類ごとのフォルダ（会社のフォルダからの場所のまま）
     │    ├─ 2026年11月04日 15時30分12秒 ツール 3f2a1b9.docx            版のファイル（丸ごとの写し。読み取り専用）
     │    └─ 2026年11月04日 16時02分40秒 社長 8c41d0e.docx
-    └─ _版の一覧/                                                     版ごとの記録（1件1ファイル。読み取り専用）
-         └─ 01730701812000000000_3f2a1b9c0d4e.json
+    ├─ _版の一覧/                                                     版ごとの記録（1件1ファイル。読み取り専用）
+    │    └─ 01730701812000000000_3f2a1b9c0d4e.json
+    └─ _預け/                                                         原本・公式資料を置く前に預けた中身（読み取り専用）
+         └─ 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08   名前は中身の印（sha256）
 
 - 版ごとの記録（Git の版に当たる）：版の印（40桁の英数字）、順、日時（日本時間。今日の日付の差し替えを含む）、
   だれ（ツール・社長）、理由、書類ごとの 書類・変更（足した・変えた・消した）・案件・段階・版のファイル・大きさ・
@@ -33,6 +35,11 @@
 - `記録/版/` とその中のフォルダが別名（シンボリックリンク）なら、版を残さず・読まずに断る（lib/places.py。別名の先の、
   会社のフォルダの外に書かない・外を読まないため）。版のファイルを取り出すときは、中身の印が記録と同じことを
   確かめ、違えば HistoryDamaged で断る（社長が Finder で版のファイルを開いて直してしまったときなど）。
+- 原本と公式資料は、道具が置く前に中身を `_預け/` に預ける（deposit。lib/protected_store.py の store が呼ぶ）。
+  Git の形で .git に中身を入れるのと同じ役目で、同じ応答の中でその場のコードに書き換えられたり消されたりしても、
+  応答の終わりの照らし（lib/originals_guard.py）が、まだ版になっていない中身を戻せるようにするため。
+  戻す元は、預けた中身と、すべての版のファイルから、中身の印（sha256）が同じものを探す（find_by_sha256。
+  入れ口に入れたときの版など、ほかの場所の版でも中身が同じならよい）。預けは版の履歴には数えない（log に出ない）。
 
 同じ会社のフォルダを2台のパソコンから同時に使わないよう案内する（DESIGN 10章）。同時に使ったときの食い違いは、
 期間中は扱わない。標準のライブラリだけで動く（/usr/bin/python3 の 3.9）。
@@ -57,6 +64,8 @@ from lib import history, history_form, places
 
 STORE_DIR = history_form.STORE_DIR
 SCENE_DIR = f"{STORE_DIR}/_版の一覧"
+DEPOSIT_DIR = f"{STORE_DIR}/_預け"
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
 STATE_DIR = history.STATE_DIR
 INDEX_FILE = "版のファイルの索引.json"
 WORK_DIR = f"{STATE_DIR}/書きかけ"
@@ -87,9 +96,10 @@ def _damaged(text: str) -> history.HistoryDamaged:
 # ---- 置き場の確かめ ----
 
 def check_store(folder: Path) -> None:
-    """`記録/版/` とその上（`記録/`）が別名でないかを確かめる（lib/places.py）。別名なら HistoryDamaged。"""
+    """`記録/版/_版の一覧/` とその上（`記録/`・`記録/版/`）が別名でないかを確かめる（lib/places.py）。
+    別名なら HistoryDamaged（版ごとの記録を、別名の先から読まない・書かない）。"""
     try:
-        places.no_link_on_the_way(folder, STORE_DIR)
+        places.no_link_on_the_way(folder, SCENE_DIR)
     except places.PlaceError as error:
         raise _damaged(
             f"{error.link} が別名（シンボリックリンク）になっているため、版を残さず、読みもしません（別名の先の、"
@@ -163,8 +173,12 @@ def _scene(folder: Path, name: str) -> dict:
     if cached is not None:
         return cached
     rel = f"{SCENE_DIR}/{name}"
+    path = Path(folder) / rel
+    if os.path.islink(str(path)):
+        # 途中のフォルダは check_store が確かめる。版ごとの記録のファイルそのものが別名なら、先を読まない
+        raise _damaged(f"版ごとの記録（{rel}）が別名（シンボリックリンク）になっているため、読みません")
     try:
-        value = json.loads((Path(folder) / rel).read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
     except ValueError as error:
         raise _damaged(f"版ごとの記録（{rel}）が JSON として読めません（{error}）") from error
     ok = (isinstance(value, dict) and isinstance(value.get("版"), str) and VERSION_ID.match(value["版"])
@@ -709,10 +723,101 @@ def version_list(folder: Path) -> List[dict]:
     return rows
 
 
+# ---- 原本・公式資料の預け ----
+
+def _deposit_rel(sha256: str) -> str:
+    return f"{DEPOSIT_DIR}/{sha256}"
+
+
+def deposit(folder: Path, path: Path) -> str:
+    """原本・公式資料の中身を、道具が置く前に `記録/版/_預け/<sha256>` に読み取り専用で預け、中身の印（sha256）を返す。
+
+    Git の形で中身を .git に入れる（lib/protected_store.py の store）のと同じ役目。同じ中身がもう預けてあれば、
+    書き直さない。書きかけは `.hojokin/一時/版の記録/書きかけ/` に写してから移す（半端な預けを残さない）。
+    置き場の途中が別名なら HistoryDamaged（別名の先に書かない）。中身を読む間に大きさが変われば OSError。
+    """
+    folder = Path(folder)
+    check_store(folder)
+    checker = places.LinkChecker(folder)
+    work = folder / WORK_DIR
+    work.mkdir(parents=True, exist_ok=True)
+    with open(str(path), "rb") as src:  # 書きかけを作る前に開く（読めないときに、書きかけを残さない）
+        size = os.fstat(src.fileno()).st_size
+        fd, tmp = tempfile.mkstemp(prefix=TMP_PREFIX, dir=str(work))
+        try:
+            digest = hashlib.sha256()
+            total = 0
+            with os.fdopen(fd, "wb") as out:
+                for chunk in iter(lambda: src.read(history.CHUNK_BYTES), b""):
+                    total += len(chunk)
+                    digest.update(chunk)
+                    out.write(chunk)
+            if total != size:
+                raise OSError(f"{path} の中身が、読む間に変わりました")
+            sha = digest.hexdigest()
+            if deposited(folder, sha, checker) is not None:
+                return sha
+            final = _place(folder, _deposit_rel(sha), checker)
+            os.chmod(tmp, FILE_MODE)
+            os.replace(tmp, str(final))  # 壊れた預け（中身が名前の印と違う）は、正しい中身で置き換える
+            return sha
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp)
+
+
+def deposited(folder: Path, sha256: str, checker: Optional[places.LinkChecker] = None) -> Optional[bytes]:
+    """預けた中身（中身の印が sha256 と同じもの）。預けていない・中身が違う・別名なら None（別名の先は読まない）。"""
+    if not SHA256.match(sha256 or ""):
+        return None
+    rel = _deposit_rel(sha256)
+    try:
+        (checker or places.LinkChecker(folder)).no_link_on_the_way(rel)
+    except places.PlaceError:
+        return None
+    path = Path(folder) / rel
+    try:
+        if not stat_mode.S_ISREG(os.lstat(str(path)).st_mode):
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return data if hashlib.sha256(data).hexdigest() == sha256 else None
+
+
+def find_by_sha256(folder: Path, sha256: str, document: Optional[str] = None) -> Optional[bytes]:
+    """中身の印が sha256 と同じ中身を、版の置き場から探す（原本・公式資料を戻す元。lib/originals_guard.py）。なければ None。
+
+    預けた中身を先に見て、なければ、すべての版のファイルから同じ印のものを新しい方から探す（document の場所の版を
+    先にする。入れ口に入れたときの版など、ほかの場所の版でも中身が同じならよい）。読み出した中身は印で確かめる。
+    版ごとの記録の置き場の途中が別名なら、HistoryDamaged（別名の先は読まない）。
+    """
+    folder = Path(folder)
+    check_store(folder)
+    checker = places.LinkChecker(folder)
+    data = deposited(folder, sha256, checker)
+    if data is not None:
+        return data
+    target = history.nfc(document) if document is not None else None
+    found: List[dict] = []
+    for scene in reversed(_scenes(folder)):
+        for item in scene["書類"]:
+            if item["変更"] != history.DELETED and not item["別名"] and item["sha256"] == sha256:
+                found.append(item)
+    found.sort(key=lambda i: i["書類"] != target)  # 同じ場所の版を先に（並びは新しい順のまま）
+    for item in found:
+        try:
+            return read_version(folder, item, checker)
+        except (history.HistoryDamaged, OSError):
+            continue  # その版のファイルが消された・書き換えられた・読めないなど。ほかの版を探す
+    return None
+
+
 def verify(folder: Path) -> List[str]:
     """版の置き場が壊れていないかを確かめる（Git の形の fsck に当たる）。見つかった問題の一覧（なければ空）。
 
     版ごとの記録が読めること、版のファイルがあり、読み取り専用で、中身が記録の印と同じこと。
+    預けた中身も、読み取り専用で、中身の印が名前と同じこと。
     """
     problems = []
     try:
@@ -732,4 +837,20 @@ def verify(folder: Path) -> List[str]:
                 read_version(Path(folder), item, checker)
             except (history.HistoryDamaged, OSError) as error:
                 problems.append(str(error))
+    try:
+        checker.no_link_on_the_way(DEPOSIT_DIR)
+        names = sorted(os.listdir(str(Path(folder) / DEPOSIT_DIR)))
+    except places.PlaceError:
+        return problems + [f"{DEPOSIT_DIR} が別名（シンボリックリンク）になっています"]
+    except OSError:
+        names = []
+    for name in names:
+        if not SHA256.match(name):
+            continue  # Finder が作る .DS_Store など
+        rel = _deposit_rel(name)
+        with contextlib.suppress(OSError):
+            if stat_mode.S_IMODE(os.lstat(str(Path(folder) / rel)).st_mode) & 0o222:
+                problems.append(f"預けた中身（{rel}）が書き込める形になっています")
+        if deposited(Path(folder), name, checker) is None:
+            problems.append(f"預けた中身（{rel}）が、名前の印（sha256）と合いません")
     return problems

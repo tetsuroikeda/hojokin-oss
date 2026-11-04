@@ -239,7 +239,7 @@ from dulwich.index import ConflictedIndexEntry, IndexEntry, cleanup_mode  # noqa
 from dulwich.object_store import tree_lookup_path  # noqa: E402
 from dulwich.objects import Blob, Commit  # noqa: E402
 
-from lib import case_folder, company, history_form  # noqa: E402
+from lib import case_folder, company, history_form, places  # noqa: E402
 
 ADDED = "足した"
 MODIFIED = "変えた"
@@ -598,8 +598,17 @@ def _work_files(folder: Path, repo: Optional[Repo],
 
 def _exists_exactly(folder: Path, rel: str) -> Optional[str]:
     """その名前のファイルが（大文字と小文字・濁点の形を区別して）あれば、実際の場所を返す。なければ None。
-    途中のフォルダを読めなければ _UnreadableDir（あるかどうか分からないので、消したことにしない）。"""
+    途中のフォルダを読めなければ _UnreadableDir（あるかどうか分からないので、消したことにしない）。
+
+    途中のフォルダが別名（シンボリックリンク）なら、たどらずに None（Git と同じく、別名そのものだけを残す。
+    別名の先の、会社のフォルダの外を読まないため。lib/places.py）。"""
     parts = rel.split("/")
+    if len(parts) > 1:
+        try:
+            if places.first_link(folder, "/".join(parts[:-1])) is not None:
+                return None
+        except places.PlaceError:
+            return None  # 会社のフォルダからの場所として正しくない名前は、ないものとして扱う
     current = str(folder)
     for i, part in enumerate(parts):
         try:
@@ -1199,3 +1208,25 @@ def quick_changes(folder: Path) -> Tuple[List[Change], Set[str]]:
     finally:
         repo.close()
     return changes, known_dirs
+
+
+# ---- 原本・公式資料の預けと、戻す元（版のファイルの形。TASKS M0c） ----
+
+def deposit(folder: Path, path: Path) -> str:
+    """原本・公式資料の中身を、道具が置く前に版の置き場に預ける（lib/protected_store.py の store が呼ぶ）。
+
+    版のファイルの形は `記録/版/_預け/<sha256>` に読み取り専用で置き、中身の印（sha256）を返す
+    （lib/history_files.py）。Git の形は lib/protected_store.py が .git に入れるので、ここでは何もせずに空を返す。
+    """
+    files_form = _files(folder)
+    return "" if files_form is None else files_form.deposit(folder, path)
+
+
+def find_by_sha256(folder: Path, sha256: str, document: Optional[str] = None) -> Optional[bytes]:
+    """中身の印（sha256）が同じ中身を、版の置き場から探す（lib/originals_guard.py の find_content が呼ぶ）。
+
+    版のファイルの形は、預けた中身と、すべての版のファイルから探す（lib/history_files.py）。Git の形は None
+    （lib/originals_guard.py が、版の印とその場所の版から探す）。
+    """
+    files_form = _files(folder)
+    return None if files_form is None else files_form.find_by_sha256(folder, sha256, document)
