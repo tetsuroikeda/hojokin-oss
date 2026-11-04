@@ -228,7 +228,7 @@ def check_base() -> None:
     title = mk.item_text(BY_NAME["（2）事業計画名"])
     summary = mk.item_text(BY_NAME["（3）事業計画の概要"])
     check(len(title) <= 32, f"事業計画名が30字程度（{len(title)}字）")
-    check(80 <= len(summary) <= 120, f"事業計画の概要が100字程度（{len(summary)}字）")
+    check(80 <= len(summary) <= 100, f"事業計画の概要が100字以内（目安100字。{len(summary)}字）")
     for v in (mk.PLAN_CORRECT, mk.PLAN_MIXED, mk.PLAN_QUESTION):
         data = json.loads((MAT / v / "本文.json").read_text(encoding="utf-8"))
         check([i["本文"] for i in data["項目"]] == [mk.item_text(it) for it in VARIANTS[v]], f"{v}/本文.json が作る元と同じ")
