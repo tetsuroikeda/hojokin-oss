@@ -171,12 +171,10 @@ def _forms(seido: Optional[dict]) -> List[dict]:
 
 
 def _mapped_items(seido: Optional[dict]) -> List[Tuple[str, dict]]:
+    """対応づけた様式の項目と、項目の表の欄（「項目：欄：欄の名前」）の書き込む位置。"""
     out = []
     for form in _forms(seido):
-        for entry in form.get("項目") or []:
-            pos = entry.get("書き込む位置") if isinstance(entry, dict) else None
-            if isinstance(pos, dict) and pos.get("範囲"):
-                out.append((str(entry.get("名前")), pos))
+        out += yw.item_positions(form)
     return out
 
 
@@ -188,6 +186,10 @@ def _unmapped_items(seido: Optional[dict]) -> List[str]:
                 continue
             pos = entry.get("書き込む位置")
             if isinstance(pos, dict) and (pos.get("範囲") or pos.get("シート")):
+                continue
+            subs = [s for s in entry.get("欄") or [] if isinstance(s, dict)]
+            if subs and all(isinstance(s.get("書き込む位置"), dict) and (s["書き込む位置"].get("範囲") or
+                                                                        s["書き込む位置"].get("シート")) for s in subs):
                 continue
             out.append(str(entry.get("名前")))
     return out
