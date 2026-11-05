@@ -80,6 +80,45 @@ def test_unreadable_with_value_unsourced_and_missing_conflict_are_reported() -> 
     assert rep.missing_conflicts == [answer["資料どうしの食い違い"][0]["項目"]]
 
 
+@pytest.mark.parametrize("name", ["省力化_第8回.json", "持続化_第20回.json"])
+def test_unreadable_places_filled_with_guesses_are_misses(name) -> None:
+    """読み取れない項目は空けたまま：正解で「読み取れない」の場所を、推測の値で埋めて確認済みにした写しは、その場所がすべて外れる。
+    「読み取れなかった項目」の一覧を消した写しも、一覧の項目がすべて外れる。"""
+    answer = load(name)
+    places = sc.unreadable_places(answer)
+    assert places, "正解に「読み取れない」の場所がない"
+    got = copy.deepcopy(answer)
+    for path, _node in places:
+        target = sc.resolve(got, answer, path)
+        target.update({"値": "推測で埋めた値 30日", "出典": [{"資料": "要領8", "ページ": 30}], "根拠の文": "x", "状態": "確認済み"})
+        target.pop("理由", None)
+    got["読み取れなかった項目"] = []
+    rep = sc.compare(got, answer)
+    missed = [p for p in rep.misses() if p.category == "読み取れない項目"]
+    assert len([p for p in missed if p.where.endswith("（読み取れないのまま）")]) == len(places)
+    assert len([p for p in missed if p.where.startswith("読み取れなかった項目「")]) == len(answer["読み取れなかった項目"])
+    assert rep.rate < 1.0
+    assert not rep.filled_unreadable  # 「確認済み」にしたので、こちらの見方では見つからない（上の点で見つける）
+
+
+def test_reviewer_case_three_guesses_are_found() -> None:
+    """確かめ役の試し（加点のかかる日数・区分ごとの上限・手続きの段階の期限を推測で埋め、読み取れなかった項目も消す）が通らない。"""
+    answer = load("省力化_第8回.json")
+    got = copy.deepcopy(answer)
+    got["加点"]["項目"][0]["かかる日数"] = {"値": {"数": 30, "単位": "日"}, "出典": [{"資料": "要領8", "ページ": 30}],
+                                       "根拠の文": "x", "状態": "確認済み"}
+    got["加点"]["区分ごとの上限"] = {"値": 3, "出典": [{"資料": "要領8", "ページ": 30}], "根拠の文": "x", "状態": "確認済み"}
+    got["手続きの段階"][1]["期限"] = {"値": "交付決定から30日", "出典": [{"資料": "要領8", "ページ": 26}], "根拠の文": "x",
+                                "状態": "確認済み"}
+    got["読み取れなかった項目"] = []
+    rep = sc.compare(got, answer)
+    missed = {p.where for p in rep.misses()}
+    assert any("区分ごとの上限" in w for w in missed)
+    assert any("かかる日数" in w for w in missed)
+    assert any("研修動画" in w and "期限" in w for w in missed)
+    assert rep.rate < 1.0
+
+
 def test_kept_eval_output_matches_answer() -> None:
     """eval（T3-7）で残した会社のフォルダの制度データを、正解と突き合わせる（HOJOKIN_T3_7_KEPT。なければ飛ばす）。"""
     kept = os.environ.get("HOJOKIN_T3_7_KEPT")

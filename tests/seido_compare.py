@@ -4,7 +4,9 @@
 必須書類、締切、要件（数値の要件と数値でない要件）、審査項目、加点、様式の項目と文字数、補助額、審査の段階、
 手続きの段階（期限の決め方）、採択後の書類、補助の対象にならない経費（上限と品目）。あわせて、
 - すべての値に出典ページ（HTML のページなど、ページのない資料は資料名だけでよい）
-- 読み取れない項目は、値を推測で埋めずに空けたまま（「読み取れない」の値に、値が入っていない）
+- 読み取れない項目は、値を推測で埋めずに空けたまま：正解で「読み取れない」の場所ごとに、作った方の同じ場所（配列の件は名前で対にする）が
+  「読み取れない」で値が空かを、一致率の点（読み取れない項目）に数える。正解の「読み取れなかった項目」の項目が、作った方の一覧にあるかも点に数える。
+  作った方の「読み取れない」に値が入っていないかも見る（filled_unreadable）
 - 正解に含めた資料どうしの食い違いが、すべて示されている
 
 照らし方：
@@ -112,6 +114,64 @@ def _list(data: Dict, key: str) -> List[Dict]:
     return [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []
 
 
+ABSENT_ITEM = object()    # 対になる件がない
+MISSING_FIELD = object()  # 件はあるが、その欄がない
+_NAME_KEYS = ("名前", "区分", "項目", "id")
+
+
+def unreadable_places(answer: Dict) -> List[Tuple[List[Any], Dict]]:
+    """正解で「読み取れない」の出典つき値の、データの中の道と値（資料・資料どうしの食い違い・読み取れなかった項目は除く）。"""
+    out: List[Tuple[List[Any], Dict]] = []
+
+    def visit(node: Any, path: List[Any]) -> None:
+        if isinstance(node, dict) and "値" in node and "状態" in node:
+            if node["状態"] == "読み取れない":
+                out.append((path, node))
+            return
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if path == [] and k in ("資料", "資料どうしの食い違い", "読み取れなかった項目"):
+                    continue
+                visit(v, path + [k])
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                visit(v, path + [i])
+
+    visit(answer, [])
+    return out
+
+
+def resolve(got: Dict, answer: Dict, path: List[Any]) -> Any:
+    """正解の道を、作った方のデータでたどる。配列の件は名前（名前・区分・項目・id）で対にする（名前がなければ同じ順番）。"""
+    node_a: Any = answer
+    node_g: Any = got
+    for part in path:
+        if isinstance(part, int):
+            item_a = node_a[part]
+            if not isinstance(node_g, list):
+                return MISSING_FIELD
+            key = next((k for k in _NAME_KEYS if isinstance(item_a, dict) and item_a.get(k)), None)
+            if key:
+                cand = _find(node_g, item_a[key], key)
+            else:
+                cand = node_g[part] if part < len(node_g) else None
+            if cand is None:
+                return ABSENT_ITEM
+            node_a, node_g = item_a, cand
+        else:
+            node_a = node_a[part]
+            if not isinstance(node_g, dict) or part not in node_g:
+                return MISSING_FIELD
+            node_g = node_g[part]
+    return node_g
+
+
+def urakadori_label(path: List[Any], data: Dict) -> str:
+    from lib import urakadori
+
+    return urakadori.readable(path, data)
+
+
 def _first_stage_id(data: Dict) -> Optional[str]:
     stages = _list(data, "手続きの段階")
     if not stages:
@@ -192,6 +252,26 @@ def compare(got: Dict, answer: Dict) -> Report:
         if isinstance(c.get("上限"), dict) and _value(c["上限"]) is not None:
             point("補助の対象にならない経費", f"補助の対象にならない経費「{c.get('名前')}」の上限",
                   other is not None and same_value(c["上限"], other.get("上限")))
+
+    # 読み取れない項目：正解で「読み取れない」の場所は、作った方でも「読み取れない」で値が空のまま（推測で埋めない）。
+    # 件そのものがないときは、件の点（上）で外れに数えるので、ここでは数えない。欄がないときは外れ
+    for path, _node in unreadable_places(answer):
+        found = resolve(got, answer, path)
+        if found is ABSENT_ITEM:
+            continue
+        where = urakadori_label(path, answer)
+        if found is MISSING_FIELD:
+            point("読み取れない項目", f"{where}（読み取れないのまま）", False, "欄がない")
+            continue
+        ok = (isinstance(found, dict) and found.get("状態") == "読み取れない"
+              and found.get("値") in (None, "", [], {}))
+        point("読み取れない項目", f"{where}（読み取れないのまま）", ok,
+              "" if ok else f"作った方は {found.get('状態') if isinstance(found, dict) else '形が違う'}、値 {_value(found)!r}")
+    # 読み取れなかった項目の一覧：正解の項目が、作った方の一覧にもある（理由と問い合わせ文の案を社長に示すため）
+    for entry in _list(answer, "読み取れなかった項目"):
+        name = entry.get("項目")
+        other = _find(_list(got, "読み取れなかった項目"), name, "項目")
+        point("読み取れない項目", f"読み取れなかった項目「{name}」", other is not None, "" if other else "一覧にない")
 
     # 資料どうしの食い違い：正解の項目がすべて示されている
     for conflict in _list(answer, "資料どうしの食い違い"):
