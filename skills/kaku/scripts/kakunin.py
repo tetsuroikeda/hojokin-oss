@@ -10,7 +10,8 @@
       `案件/<案件>/<段階>/申請書/根拠対照表.xlsx` に行を足す（なければ作る）。--replace なら置き換える。
   python3 -B <この場所>/kakunin.py prepare [--case] [--stage] [--seido]
       コードの確かめが通ったら、審査役に渡すものを `記録/審査に渡すもの/` にまとめ、確かめの番号を出す。
-      通らなければ何も書かない（審査役を呼ばない）。
+      通らなければ何も書かない（審査役を呼ばない）。Excel の様式（その3 など）の数式のセルの値は、LibreOffice で
+      計算し直した写し（`.hojokin/一時/計算し直した写し/`）から渡す。様式のファイルは変えない。
   python3 -B <この場所>/kakunin.py result [--number 確かめ-0001] [--json]
       hook が保存した審査役の結果（`記録/審査役の結果/<確かめの番号>.json`）を読み、指摘を重さごとに出す。
   python3 -B <この場所>/kakunin.py finish [--case] [--stage] [--seido]
@@ -147,6 +148,12 @@ def do_prepare(folder, args, kk) -> int:
     print(f"- 渡したもの：{'、'.join(done['渡したもの'])}")
     for name, why in done["渡していないもの"].items():
         print(f"- 渡していないもの：{name}（{why}）")
+    for rel, recalc in done.get("数式の計算し直し", {}).items():
+        if recalc["計算し直した"]:
+            print(f"- {rel} の数式のセルの値は、計算し直した写し（{recalc['写し']}）から渡しました（{rel} は変えていません）。")
+        else:
+            print(f"- {rel}：{kk.RECALC_FAILED}。数式のセルの値は前の計算の値のまま渡し、そのことを計画書の本文に書きました"
+                  f"（{recalc['理由']}）。社長に伝えてください。")
     print("次に、審査役（subagent の hojokin:shinsa）を呼び、次の文をそのまま渡してください：")
     print(f"「{done['フォルダ']}/ にあるものをすべて読み、申請書を確かめてください。確かめの番号は {number} です。」")
     print(f"審査役が終わったら、result で結果がそろったかを確かめてください（保存先：{kk.RESULTS_DIR}/{number}.json）。")

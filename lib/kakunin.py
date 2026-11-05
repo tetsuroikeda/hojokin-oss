@@ -15,6 +15,12 @@
    会社の記録の書き方の決まりと過去に受けた指摘、文体の基準の C、コードの確かめの結果をまとめ、最後に控え
    （確かめの番号と申請書のハッシュ）を置く（DESIGN 8章）。審査役はプラグインのフォルダを読めない
    （会社のフォルダの外を読む道具は hook が拒む）ので、文体の基準の C もここに写す。書いたときの考えの経過は渡さない。
+   - Excel の様式（その3 など）の数式のセル（省力化指数・投資回収期間など）は、書く道具がセルを書いた後も、ファイルに
+     前の計算の値（0 や空）が残る。そこで、LibreOffice で計算し直した写し（`.hojokin/一時/計算し直した写し/`。毎回
+     上書きする）から数式のセルの値を取り、様式の数の書式（小数の桁など）で渡す。様式のファイルそのものは計算し直して
+     保存し直さない（LibreOffice で保存し直すと様式の部品が変わるため。DESIGN 5章）。LibreOffice が動かないときは、
+     前の値のまま渡し、そのことを計画書の本文に一言書く（止めない。TASKS B19 の直し）。
+     コードの確かめ（check）は入力の欄だけを読むので、写しは使わない。
 3. 審査役の結果（review）：hook が保存した `記録/審査役の結果/<確かめの番号>.json`（lib/shinsa_result.py）を読む。
 4. 完成の記録（complete）：コードの確かめが通り、今の控えの番号の審査役の結果が保存されていて、報告の文が保存した
    ときのまま（報告のハッシュが合う）、審査役が確かめたときの申請書のハッシュが今の申請書と合い、要修正が0件の
@@ -26,11 +32,15 @@ openpyxl は使わない（標準のライブラリで Word・Excel の XML を�
 
 from __future__ import annotations
 
+import datetime
 import json
+import os
 import posixpath
 import re
+import shutil
 import unicodedata
 import xml.etree.ElementTree as ET
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -856,13 +866,20 @@ def _word_sections(blob: bytes, rel: str, seido: Optional[dict]) -> List[str]:
     return out
 
 
-def _sheet_rows_text(blob: bytes, rel: str, only: Optional[str] = None) -> List[str]:
+def _sheet_rows_text(blob: bytes, rel: str, only: Optional[str] = None,
+                     values: Optional[Dict[str, Dict[str, str]]] = None) -> List[str]:
+    """シートごとに、行のセルの文字を並べる。values（シート → セル → 文字）があれば、そのセルは values の文字にする
+    （計算し直した数式の値）。"""
     out = []
     for sheet_name, grid in _sheets(blob, rel):
         if only and sheet_name != only:
             continue
         out += [f"### シート「{sheet_name}」", ""]
         rows = _by_row(grid)
+        for ref, shown in ((values or {}).get(sheet_name) or {}).items():
+            m = input_sheet._REF.fullmatch(ref)
+            if m:
+                rows.setdefault(int(m.group(2)), {})[m.group(1)] = shown
         for r in sorted(rows):
             cells = [rows[r][c].replace("\n", " ") for c in sorted(rows[r], key=_col_key) if rows[r][c].strip()]
             if cells:
@@ -883,7 +900,9 @@ def _input_sheet_text(blob: bytes, rel: str) -> List[str]:
     return out
 
 
-def plan_text(folder: Path, files: Dict[str, Path], seido: Optional[dict], number: str, case: str, stage: str) -> str:
+def plan_text(folder: Path, files: Dict[str, Path], seido: Optional[dict], number: str, case: str, stage: str,
+              recalcs: Optional[Dict[str, dict]] = None) -> str:
+    """計画書の本文。recalcs（recalc_forms の戻り値）があれば、Excel の様式の数式のセルは、計算し直した値にする。"""
     out = [f"# 計画書の本文（確かめの番号：{number}）", "", f"案件：{case}　段階：{stage}", "",
            "申請書のファイルから、道具が文字を取り出したものです。様式の説明の青字は除いています。", ""]
     for rel, path in sorted(files.items()):
@@ -894,8 +913,14 @@ def plan_text(folder: Path, files: Dict[str, Path], seido: Optional[dict], numbe
         blob = _read_bytes(path, rel)
         if suffix in WORD_SUFFIXES:
             out += _word_sections(blob, rel, seido)
+        elif suffix in EXCEL_SUFFIXES and name == input_sheet.FILE_NAME:
+            out += _input_sheet_text(blob, rel)
         elif suffix in EXCEL_SUFFIXES:
-            out += _input_sheet_text(blob, rel) if name == input_sheet.FILE_NAME else [f"## {rel}", ""] + _sheet_rows_text(blob, rel)
+            done = (recalcs or {}).get(rel)
+            out += [f"## {rel}", ""]
+            if done is not None:
+                out += [recalc_line(done), ""]
+            out += _sheet_rows_text(blob, rel, values=done.get("値") if done else None)
         elif suffix in TEXT_SUFFIXES:
             out += [f"## {rel}", "", blob.decode("utf-8", errors="replace"), ""]
     return "\n".join(out).rstrip() + "\n"
@@ -963,8 +988,289 @@ def _json_text(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
-def prepare(folder: Path, case: str, stage: str, seido: Optional[dict], plugin_root: Path) -> dict:
-    """コードの確かめが通ったら、審査役に渡すものをまとめ、控えを置く。通らなければ NotPassed（何も書かない）。"""
+# ---------------------------------------------------------------- Excel の様式の数式の値（計算し直した写し。TASKS B19）
+
+RECALC_DIR = ".hojokin/一時/計算し直した写し"
+RECALC_WORK = "作業"
+RECALC_FAILED = "数式の値は計算し直せなかった（Excel で開いて保存すると直る）"
+GENERAL = "General"
+# 組み込みの数の書式（番号 → 書式。日付の14は、日本の既定の形）
+BUILTIN_FORMATS = {0: GENERAL, 1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00", 9: "0%", 10: "0.00%",
+                   14: "yyyy/m/d", 22: "yyyy/m/d"}
+_DATE_TOKENS = re.compile(r"yyyy|yy|mm|m|dd|d", re.I)
+EXCEL_EPOCH = datetime.date(1899, 12, 30)
+
+
+def _excel_form(rel: str, path: Path) -> bool:
+    """申請書の Excel の様式か（入力シート・根拠対照表・財務モデルは除く）。"""
+    name = places.nfc(path.name)
+    return path.suffix.lower() in EXCEL_SUFFIXES and rel != MODEL_FILE and \
+        name not in (input_sheet.FILE_NAME, konkyo.FILE_NAME)
+
+
+def number_formats(parts: Dict[str, bytes]) -> List[str]:
+    """セルの書式の番号（セルの s）ごとの、数の書式の文字。"""
+    S = input_sheet.S
+    try:
+        styles = ET.fromstring(parts["xl/styles.xml"])
+    except (KeyError, ET.ParseError):
+        return []
+    codes: Dict[int, str] = {}
+    fmts = styles.find(f"{{{S}}}numFmts")
+    for f in list(fmts) if fmts is not None else []:
+        try:
+            codes[int(f.get("numFmtId", ""))] = f.get("formatCode") or ""
+        except ValueError:
+            continue
+    out = []
+    xfs = styles.find(f"{{{S}}}cellXfs")
+    for xf in list(xfs) if xfs is not None else []:
+        try:
+            fid = int(xf.get("numFmtId", "0"))
+        except ValueError:
+            fid = 0
+        out.append(codes.get(fid, BUILTIN_FORMATS.get(fid, GENERAL)))
+    return out
+
+
+def _sections(code: str) -> List[str]:
+    """数の書式を「;」で節に分ける（"…" と […] の中の「;」では分けない）。"""
+    out, cur, quoted, bracket = [], "", False, False
+    for ch in code:
+        if ch == '"' and not bracket:
+            quoted = not quoted
+        elif ch == "[" and not quoted:
+            bracket = True
+        elif ch == "]" and not quoted:
+            bracket = False
+        if ch == ";" and not quoted and not bracket:
+            out.append(cur)
+            cur = ""
+            continue
+        cur += ch
+    out.append(cur)
+    return out
+
+
+def _tokens(section: str) -> List[Tuple[str, str]]:
+    """書式の1つの節を、（種類、文字）に分ける。種類は 文字・数・日付・百分率・指数・不明。"""
+    out: List[Tuple[str, str]] = []
+    i = 0
+    while i < len(section):
+        ch = section[i]
+        if ch == '"':
+            end = section.find('"', i + 1)
+            end = len(section) if end < 0 else end
+            out.append(("文字", section[i + 1:end]))
+            i = end + 1
+        elif ch == "\\" and i + 1 < len(section):
+            out.append(("文字", section[i + 1]))
+            i += 2
+        elif ch in "_*" and i + 1 < len(section):
+            i += 2  # 幅をそろえる空き・埋める文字は、文字にしない
+        elif ch == "[":
+            end = section.find("]", i)
+            end = len(section) if end < 0 else end
+            inner = section[i + 1:end]
+            if inner.startswith("$"):
+                out.append(("文字", inner[1:].split("-", 1)[0]))  # 通貨の印（[$¥-411] の ¥）
+            i = end + 1  # 色・条件は文字にしない
+        elif ch in "0#?.,":
+            out.append(("数", ch))
+            i += 1
+        elif ch == "%":
+            out += [("百分率", ""), ("文字", "%")]
+            i += 1
+        elif ch in "Ee" and section[i + 1:i + 2] in ("+", "-"):
+            out.append(("指数", ""))
+            i += 2
+        elif ch.lower() in "ymdhs":
+            m = _DATE_TOKENS.match(section, i)
+            if m is None or ch.lower() in "hs":
+                out.append(("不明", ch))
+                i += 1
+            else:
+                out.append(("日付", m.group(0).lower()))
+                i = m.end()
+        elif ch == "@":
+            out.append(("不明", ch))
+            i += 1
+        else:
+            out.append(("文字", ch))
+            i += 1
+    return out
+
+
+def _general(value: float) -> str:
+    if value != value or value in (float("inf"), float("-inf")):
+        return str(value)
+    if value == int(value) and abs(value) < 1e15:
+        return str(int(value))
+    return format(value, ".10g")
+
+
+def format_number(value: float, code: str) -> str:
+    """数を、様式の数の書式（小数の桁・桁区切り・百分率・通貨の印・前後の文字・日付）で見せる文字にする。
+    読めない書式（指数・時刻など）は、書式を使わずに見せる。"""
+    sections = _sections(code or GENERAL)
+    section, sign = sections[0], "-" if value < 0 else ""
+    if value < 0 and len(sections) >= 2 and sections[1].strip():
+        section, sign = sections[1], ""
+    elif value == 0 and len(sections) >= 3 and sections[2].strip():
+        section = sections[2]
+    if section.strip().lower() in ("general", "") or "general" in section.lower():
+        return sign + _general(abs(value))
+    tokens = _tokens(section)
+    kinds = {k for k, _t in tokens}
+    if kinds & {"指数", "不明"}:
+        return sign + _general(abs(value))
+    if "日付" in kinds and "数" not in kinds:
+        try:
+            day = EXCEL_EPOCH + datetime.timedelta(days=int(value))
+        except (OverflowError, ValueError):
+            return _general(value)
+        parts = {"yyyy": f"{day.year:04d}", "yy": f"{day.year % 100:02d}", "mm": f"{day.month:02d}",
+                 "m": str(day.month), "dd": f"{day.day:02d}", "d": str(day.day)}
+        return "".join(parts[t] if k == "日付" else t for k, t in tokens)
+    if "数" not in kinds:
+        return sign + _general(abs(value))
+    pattern = "".join(t for k, t in tokens if k == "数")
+    whole, _dot, frac = pattern.partition(".")
+    digits = sum(1 for ch in frac if ch in "0#?")
+    amount = abs(value) * (100 if "百分率" in kinds else 1)
+    try:
+        rounded = Decimal(repr(amount)).quantize(Decimal(1).scaleb(-digits), rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return sign + _general(abs(value))
+    shown = format(rounded, f"{',' if ',' in whole.strip(',') else ''}.{digits}f")
+    first = next(n for n, (k, _t) in enumerate(tokens) if k == "数")
+    last = max(n for n, (k, _t) in enumerate(tokens) if k == "数")
+    before = "".join(t for k, t in tokens[:first] if k == "文字")
+    after = "".join(t for k, t in tokens[last + 1:] if k == "文字")
+    if rounded == 0:
+        sign = ""
+    return f"{sign}{before}{shown}{after}".strip()
+
+
+def shown_value(raw: str, kind: str, code: str) -> str:
+    """計算し直したセルの値（セルの文字と、セルの種類 t）を、見せる文字にする。"""
+    if kind == "b":
+        return "TRUE" if raw.strip() == "1" else "FALSE"
+    if kind not in ("", "n"):
+        return raw  # 文字・誤り（#VALUE! など）はそのまま
+    try:
+        value = float(raw)
+    except ValueError:
+        return raw
+    return format_number(value, code)
+
+
+def formula_values(original, recalced) -> Dict[str, Dict[str, str]]:
+    """様式（yoshiki_excel.Book）の数式のセルごとに、計算し直した写しの値を、元の様式の数の書式で見せる文字。"""
+    formats = number_formats(original.parts)
+    by_name = {sh.name: sh for sh in recalced.sheets}
+    out: Dict[str, Dict[str, str]] = {}
+    for sh in original.sheets:
+        if not sh.formulas:
+            continue
+        other = by_name.get(sh.name)
+        if other is None:
+            raise ValueError(f"計算し直した写しに、シート「{sh.name}」がありません")
+        values = {}
+        for ref in sh.formulas:
+            cell = other.grid.cells.get(ref)
+            try:
+                style = int(sh.grid.cells[ref].attrs.get("s", "0"))
+            except ValueError:
+                style = 0
+            code = formats[style] if 0 <= style < len(formats) else GENERAL
+            raw = other.grid.texts.get(ref, "") if cell is not None else ""
+            values[ref] = shown_value(raw, cell.attrs.get("t", "") if cell is not None else "", code)
+        out[sh.name] = values
+    return out
+
+
+def _runnable(path: Optional[str]) -> bool:
+    return bool(path) and os.path.isfile(str(path)) and os.access(str(path), os.X_OK)
+
+
+def _recalc_copy(folder: Path, src: Path, name: str, soffice: str) -> Tuple[str, bytes]:
+    """src の写しを LibreOffice で計算し直し、`.hojokin/一時/計算し直した写し/<name>` に上書きして置く。"""
+    from lib import libreoffice
+    from lib.docx_min import write_replacing
+
+    work_rel = f"{RECALC_DIR}/{RECALC_WORK}"
+    _no_link(folder, work_rel, "書きません")
+    work = places.actual(folder, work_rel, partial=True)
+    shutil.rmtree(str(work), ignore_errors=True)
+    work.mkdir(parents=True)
+    try:
+        data = libreoffice.recalc_xlsx(src, work, soffice).read_bytes()
+    finally:
+        shutil.rmtree(str(work), ignore_errors=True)
+    rel = f"{RECALC_DIR}/{name}"
+    _no_link(folder, rel, "書きません")
+    write_replacing(places.actual(folder, rel, partial=True), data)
+    return rel, data
+
+
+def recalc_forms(folder: Path, files: Dict[str, Path], soffice: Optional[str] = None) -> Dict[str, dict]:
+    """申請書の Excel の様式（その3 など）のうち数式のあるものを、LibreOffice で計算し直した写しから、数式のセルの値を取る。
+
+    様式のファイルは変えない。戻り値は、申請書の場所 → {"計算し直した", "写し", "値"（シート → セル → 見せる文字）, "理由"}。
+    LibreOffice がない・動かない・写しが読めないときは「計算し直した」が False で、値は None（前の値のまま渡す。止めない）。
+    soffice を省くと、LibreOffice を決まった場所と Spotlight で探す（lib/libreoffice.py）。
+    """
+    from lib import libreoffice, yoshiki_excel
+
+    targets = []
+    for rel, path in sorted(files.items()):
+        if not _excel_form(rel, path):
+            continue
+        blob = _read_bytes(path, rel)
+        try:
+            book = yoshiki_excel.Book(blob)
+        except ValueError:
+            continue  # 様式として読めないものは、前のとおり文字だけを渡す
+        if any(sh.formulas for sh in book.sheets):
+            targets.append((rel, path, blob, book))
+    out: Dict[str, dict] = {}
+    if not targets:
+        return out
+    if soffice is None:
+        soffice = libreoffice.find_soffice()
+    for rel, path, blob, book in targets:
+        done: Dict[str, Any] = {"計算し直した": False, "写し": None, "値": None, "理由": ""}
+        try:
+            if not _runnable(soffice):
+                raise libreoffice.LibreOfficeError("LibreOffice が見つかりません")
+            copy_rel, data = _recalc_copy(folder, path, places.nfc(path.name), str(soffice))
+            done.update({"計算し直した": True, "写し": copy_rel,
+                         "値": formula_values(book, yoshiki_excel.Book(data))})
+        except (libreoffice.LibreOfficeError, OSError, ValueError) as e:
+            done.update({"計算し直した": False, "値": None, "理由": str(e)})
+        if _read_bytes(path, rel) != blob:  # 様式のファイルは変えない（DESIGN 5章）
+            raise CheckError(f"{rel} が、数式を計算し直している間に変わりました。作者に知らせてください")
+        out[rel] = done
+    return out
+
+
+def recalc_line(done: dict) -> str:
+    """計画書の本文の、Excel の様式の節の頭に置く一言。"""
+    if done.get("計算し直した"):
+        return ("（数式のセル（省力化指数・投資回収期間・伸び率など）の値は、道具が LibreOffice で計算し直した写しから取り、"
+                "様式の数の書式（小数の桁など）で示しています。様式のファイルそのものは変えていません。）")
+    why = f"理由：{done['理由']}。" if done.get("理由") else ""
+    return (f"（{RECALC_FAILED}。数式のセルの値は、ファイルに残っていた前の計算の値のままで、0 や空のことがあります。"
+            f"{why}）")
+
+
+def prepare(folder: Path, case: str, stage: str, seido: Optional[dict], plugin_root: Path,
+            soffice: Optional[str] = None) -> dict:
+    """コードの確かめが通ったら、審査役に渡すものをまとめ、控えを置く。通らなければ NotPassed（何も書かない）。
+
+    Excel の様式の数式のセルは、LibreOffice（soffice。省くと探す）で計算し直した写しの値を渡す（recalc_forms）。
+    """
     report = check(folder, case, stage, seido)
     if not report["通った"]:
         raise NotPassed(report)
@@ -974,6 +1280,7 @@ def prepare(folder: Path, case: str, stage: str, seido: Optional[dict], plugin_r
     number = next_number(folder)
     files = application_files(folder, case, stage)
     hashes = shinsa_result.file_hashes(folder, case, stage)
+    recalcs = recalc_forms(folder, files, soffice)
     # 先に前の控えを消す（まとめている途中に、前の控えに審査役の結果が結び付かないように）
     for name in (shinsa_result.NOTE_FILE,) + PACKAGE_FILES:
         rel = f"{PACKAGE_DIR}/{name}"
@@ -985,7 +1292,7 @@ def prepare(folder: Path, case: str, stage: str, seido: Optional[dict], plugin_r
     missing: Dict[str, str] = {}
     evidence_rel = f"{shinsa_result.application_rel(case, stage)}/{konkyo.FILE_NAME}"
     evidence_rows = konkyo.read(_read_bytes(files[evidence_rel], evidence_rel))
-    given[PLAN_FILE] = plan_text(folder, files, seido, number, case, stage)
+    given[PLAN_FILE] = plan_text(folder, files, seido, number, case, stage, recalcs)
     given[SEIDO_FILE] = _json_text(seido_extract(seido))
     given[EVIDENCE_FILE] = f"# 根拠対照表（{evidence_rel}）\n\n" + konkyo.as_markdown(evidence_rows)
     questions, why = _questions(folder)
@@ -1023,8 +1330,9 @@ def prepare(folder: Path, case: str, stage: str, seido: Optional[dict], plugin_r
     }
     # 控えは最後に置く（hook は控えがあるときだけ、審査役の結果を保存する）
     _write_text(folder, shinsa_result.NOTE_REL, _json_text(note))
+    recalced = {rel: {k: done[k] for k in ("計算し直した", "写し", "理由")} for rel, done in recalcs.items()}
     return {"確かめの番号": number, "フォルダ": PACKAGE_DIR, "渡したもの": sorted(given), "渡していないもの": missing,
-            "コードの確かめ": report}
+            "数式の計算し直し": recalced, "コードの確かめ": report}
 
 
 # ---------------------------------------------------------------- 審査役の結果
