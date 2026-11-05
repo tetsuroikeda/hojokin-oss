@@ -8,14 +8,18 @@ SPEC：制度データと会社の記録から、概要と流れの Word を作�
   道具（skills/junbi/scripts/gaiyou_word.py）を、Claude が Bash で動かすのと同じく、社長の Mac と同じ /usr/bin/python3 で
   プラグインの写しから動かす。制度データと会社の記録は、先にスキーマを通ることを確かめる。
 - できた Word を zip と XML で読み、見出しの後の表を節ごとに取り出して、制度データと1件ずつ突き合わせる。
+  - 節の並び：応募までに読む節が前、採択された後の手続きの注意と書類が後ろの2つの節（11/6 のリハーサルの指摘。中身は減らさない）。
+    制度の概要には、全体の流れの1行、区分ごとの補助上限・補助率の短い表、特例ごとに1行の表（区分で違う値は1つの欄に並べる）が入る
   - 要件：数値の要件と数値でない要件が、同じ順で1件も欠けずに並び、値（基準・計算式・内容など）と出典が一致する
-  - 義務と返還の条件：満たせないときのある数値の要件、してはいけないこと、申請より後の手続きの段階の注意が、1件ずつ一致する
+  - 義務と返還の条件：満たせないときのある数値の要件、してはいけないこと（前の節）、申請より後の手続きの段階の注意
+    （後ろの「採択された後の手続きで守ること」）が、1件ずつ一致する
   - 補助額の見込み：選んだ区分・特例の上限と補助率、会社の記録の経費から計算した額（円未満切り捨て、上限で頭打ち、
     上乗せ）と自己負担の目安が一致する。上限が読み取れない区分では、見込みを出さない
   - 流れと期限：すべての手続きの段階が順番どおりに並び、期限の決め方の文（決まった日付／出来事からの期間／早いほう／
     繰り返し）と出典が一致する。決まった期日も一致する
   - 加点：種類の数・区分ごとの上限と、すべての項目が一致する
-  - 必要書類：手続きの段階ごとに、その段階で使う書類だけが、区分（必須・条件付き・任意）とともに並ぶ
+  - 必要書類：手続きの段階ごとに、その段階で使う書類だけが、区分（必須・条件付き・任意）とともに並ぶ。
+    申請の段階の書類は前の節、ほかの段階の書類は後ろの「採択された後の手続きで出す書類」
   - すべてに出典：上の節のどの行にも出典があり、制度データの値の出典（資料の名前とページ。回の違う資料は回も）と、
     会社の記録の出典がそのまま出る。読み取れない値は、出典の代わりに「読み取れませんでした（理由）」を出す。
     要確認・資料で食い違いの値には印と注記が付く
@@ -57,6 +61,8 @@ RECORD_SCHEMA = json.loads((REPO_ROOT / "schema" / "会社の記録.schema.json"
 LABELS = {"要領T": "公募要領", "手引T2": "交付申請の手引き（第2回）", "日程T": "スケジュールのページ"}
 UNREAD = "読み取れませんでした"
 NOT_JUDGED = "まだ確かめていません"
+LATER_NOTES = "採択された後の手続きで守ること"  # 後ろにまとめる節（lib/gaiyou.py の LATER_NOTES・LATER_DOCS）
+LATER_DOCS = "採択された後の手続きで出す書類"
 
 
 # ---- 架空の制度データ（テストのためだけに作った値） ----
@@ -404,6 +410,12 @@ class Word:
         """節の中の、見出しでない段落（表の後の空の段落は除く）。"""
         return [t for s, h, t in self.paragraphs if h == h1 and s is None and t]
 
+    def overview(self) -> list:
+        """制度の概要の、Claude が書いた説明の文の段落（道具が入れる「全体の流れ：」の段落の前まで）。"""
+        paras = self.section_paragraphs("制度の概要")
+        end = next((i for i, t in enumerate(paras) if t.startswith("全体の流れ：")), len(paras))
+        return paras[:end]
+
 
 @pytest.fixture
 def company(tmp_path) -> Company:
@@ -429,18 +441,64 @@ def test_fixtures_follow_schemas() -> None:
 
 
 def test_sections_and_header(word: Word) -> None:
+    # 応募までに読む節を前に、採択された後の手続きの注意と書類を後ろにまとめる（11/6 のリハーサルの指摘）
     assert word.headings(1) == [
-        "制度の概要", "自社が満たす要件", "義務と返還の条件", "補助額の見込み", "申請から効果報告までの流れと期限",
-        "加点", "必要書類", "資料で分からなかったこと", "資料どうしで書き方が違うところ", "出典の資料",
+        "制度の概要", "自社が満たす要件", "補助額の見込み", "加点", "応募申請で出す書類", "義務と返還の条件",
+        "申請から効果報告までの流れと期限", LATER_NOTES, LATER_DOCS,
+        "資料で分からなかったこと", "資料どうしで書き方が違うところ", "出典の資料",
     ]
     head = word.paragraphs[1][2]
     assert f"案件：{CASE}" in head
     assert "制度：テスト用 作業改善補助金（一般型）" in head
     assert "第3回の資料に基づく" in head
     assert NOTICE in head  # 直近回の資料に基づくことを示す（SPEC F3）
-    # 説明の文は Claude が書いたもの（渡したとおり、段落に分けて入る）
-    assert word.section_paragraphs("制度の概要") == INPUT["制度の概要"]
+    # 読み方：応募までに読む節と、後ろにまとめた節を示す
+    assert any(f"後ろの「{LATER_NOTES}」と「{LATER_DOCS}」にまとめています" in t for _s, h, t in word.paragraphs if h is None)
+    # 説明の文は Claude が書いたもの（渡したとおり、段落に分けて入る）。その後に、全体の流れを1行で
+    assert word.overview() == INPUT["制度の概要"]
+    assert word.section_paragraphs("制度の概要")[len(INPUT["制度の概要"])] == (
+        "全体の流れ：応募申請 → 採択発表 → 交付申請 → 補助事業の実施 → 実績報告 → 効果報告\n"
+        "必要なときだけの手続き：計画変更の承認")
     assert INPUT["流れの説明"] in word.section_paragraphs("申請から効果報告までの流れと期限")
+    assert any("採択された後に読むところ" in p for p in word.section_paragraphs(LATER_NOTES))
+
+
+# ---- 補助額と特例（区分ごとの表は短く、特例は特例ごとに1行。11/6 のリハーサルで特例の欄が縦に長かった） ----
+
+
+def test_amounts_and_specials(word: Word) -> None:
+    rows = word.table("制度の概要", "補助額（区分ごと）")
+    assert rows == [
+        ["従業員5人以下", "750万円", "1/2", "公募要領 p.1"],
+        ["従業員6〜20人", "1,500万円", "1/2", "公募要領 p.1"],
+        ["従業員21人以上", f"{UNREAD}（上限が書かれていない）", "1/2", "公募要領 p.1"],
+    ]
+    rows = word.table("制度の概要", "特例（補助上限・補助率が変わるとき）")
+    # 2つの区分にある同じ特例は1行にまとめ、使える区分を添える
+    assert rows == [
+        ["小規模の補助率", "補助率の置き換え：2/3\n使える区分：従業員5人以下、従業員6〜20人\n条件：小規模事業者", "公募要領 p.1"],
+        ["創業の補助率", "補助率の置き換え：3/4\n使える区分：従業員5人以下\n条件：創業から5年以内", "公募要領 p.1"],
+        ["賃上げ特例", "上限の置き換え：2,000万円\n使える区分：従業員6〜20人\n条件：賃上げを大きく行う", "公募要領 p.2"],
+        ["地域の上乗せ", "上限の上乗せ：【要確認】100万円\n※裏取り：上乗せの額が根拠の文にありません\n使える区分：従業員6〜20人",
+         "スケジュールのページ"],
+    ]
+
+
+def test_specials_with_values_by_region() -> None:
+    """区分で値が違う特例（上限の置き換え）は、1つの欄に区分ごとに並べる。条件が区分で違えば、条件も区分ごとに。"""
+    from lib import gaiyou
+
+    amounts = [
+        {"区分": "5人以下", "上限": sv(7500000, "要領T", 1), "補助率": sv("1/2", "要領T", 1),
+         "特例": [{"名前": "賃上げ", "種類": "上限の置き換え", "値": sv(10000000, "要領T", 2), "条件": sv("賃上げする", "要領T", 2)}]},
+        {"区分": "6〜20人", "上限": sv(15000000, "要領T", 1), "補助率": sv("1/2", "要領T", 1),
+         "特例": [{"名前": "賃上げ", "種類": "上限の置き換え", "値": sv(20000000, "要領T", 3), "条件": sv("大きく賃上げする", "要領T", 3)}]},
+    ]
+    ctx = gaiyou.Context({"制度": seido()["制度"], "資料": seido()["資料"], "補助額": amounts, "手続きの段階": []}, {})
+    assert gaiyou.special_rows(ctx, amounts) == [
+        ["賃上げ", "上限の置き換え：\n・5人以下：1,000万円\n・6〜20人：2,000万円\n条件（5人以下）：賃上げする\n条件（6〜20人）：大きく賃上げする",
+         "公募要領 p.2\n公募要領 p.3"],
+    ]
 
 
 # ---- 要件 ----
@@ -507,8 +565,9 @@ def test_duties_and_refunds_match_seido(word: Word) -> None:
     assert rows[0][1] == "交付決定の前に発注しない"
     assert rows[1][1] == "【資料で食い違い】同じ経費で他の補助金を受けない\n※手引では国と自治体の補助金"
 
-    # 申請より後の手続きの段階の注意（申請の段階の注意は入らない）
-    rows = word.table("義務と返還の条件", "採択後の手続きで守ること")
+    # 申請より後の手続きの段階の注意（申請の段階の注意は入らない）。後ろの節にまとめる
+    assert [b for a, b, _r in word.tables if a == "義務と返還の条件"] == ["満たせないと返還などがある数値の要件", "してはいけないこと"]
+    rows = word.table(LATER_NOTES)
     stages = sorted(data["手続きの段階"], key=lambda s: s["順番"])[1:]
     notes = [(s["名前"], n) for s in stages for n in s.get("注意", [])]
     assert [(r[0], r[1]) for r in rows] == [(name, n["値"]) for name, n in notes]
@@ -775,12 +834,14 @@ def test_documents_match_seido_by_stage(word: Word) -> None:
     ids = {s["id"] for s in stages}
     groups.append(("どの手続きで使うか分からない書類", [d for d in data["書類"] if not set(d["手続き"]) & ids]))
     groups = [(title, docs) for title, docs in groups if docs]
-    titles = [b for a, b, _rows in word.tables if a == "必要書類"]
-    assert titles == [title for title, _docs in groups] == [
+    # 申請の段階の書類は前の節に、採択された後の手続きの書類は後ろの節に、段階ごとに並ぶ
+    assert [rows[0] for a, b, rows in word.tables if a == "応募申請で出す書類"] == [["書類", "区分", "決まり", "出典"]]
+    titles = [b for a, b, _rows in word.tables if a == LATER_DOCS]
+    assert ["応募申請で出す書類"] + titles == [title for title, _docs in groups] == [
         "応募申請で出す書類", "交付申請で出す書類", "実績報告で出す書類", "どの手続きで使うか分からない書類"]
     order = {"必須": 0, "条件付き": 1, "任意": 2}
     for title, docs in groups:
-        rows = word.table("必要書類", title)
+        rows = word.table(title) if title == "応募申請で出す書類" else word.table(LATER_DOCS, title)
         docs = sorted(docs, key=lambda d: order[d["区分"]])  # 区分の中は制度データの順
         assert [(r[0], r[1]) for r in rows] == [(d["名前"], d["区分"]) for d in docs], title
         for row, d in zip(rows, docs):
@@ -794,12 +855,13 @@ def test_documents_match_seido_by_stage(word: Word) -> None:
                 assert f"効く審査項目：{'、'.join(d['効く審査項目'])}" in body
             assert cell_sources(row[3]) == srcs(*nodes), d["名前"]
     # 応募申請の書類は、必須 → 条件付き → 任意
-    assert [r[0] for r in word.table("必要書類", "応募申請で出す書類")] == ["決算書", "登記簿の写し", "見積書", "賃上げ表明書", "会社案内"]
+    assert [r[0] for r in word.table("応募申請で出す書類")] == ["決算書", "登記簿の写し", "見積書", "賃上げ表明書", "会社案内"]
 
 
 # ---- すべてに出典 ----
 
-SECTIONS = ("自社が満たす要件", "義務と返還の条件", "補助額の見込み", "申請から効果報告までの流れと期限", "加点", "必要書類")
+SECTIONS = ("制度の概要", "自社が満たす要件", "補助額の見込み", "加点", "応募申請で出す書類", "義務と返還の条件",
+            "申請から効果報告までの流れと期限", LATER_NOTES, LATER_DOCS)
 
 
 def test_every_row_has_source(word: Word) -> None:
@@ -845,14 +907,14 @@ def test_rewrite_replaces_same_file(company: Company) -> None:
     ok(company.run(changed))
     assert company.listing() == before  # ほかのファイルは増えない（_v2 や書きかけの一時ファイルを残さない）
     assert company.out.read_bytes() != first
-    assert Word(company.out).section_paragraphs("制度の概要") == ["説明の文を直しました。"]
+    assert Word(company.out).overview() == ["説明の文を直しました。"]
     assert not list(company.folder.rglob("__pycache__")) and not list(company.env.plugin.rglob("__pycache__"))
 
 
 def test_text_that_xml_cannot_hold_is_cleaned(company: Company) -> None:
     data = dict(INPUT, 制度の概要="改ページの\x0cあとの文\x01です")
     ok(company.run(data))
-    assert Word(company.out).section_paragraphs("制度の概要") == ["改ページの\nあとの文です"]
+    assert Word(company.out).overview() == ["改ページの\nあとの文です"]
 
 
 def _bad(**changes):
@@ -1079,11 +1141,11 @@ def test_refuses_input_file_when_not_company_folder(company: Company) -> None:
 
 def test_reads_input_from_stdin_or_file_inside_company_folder(company: Company) -> None:
     ok(company.run(INPUT, "--input", "-"))
-    assert Word(company.out).section_paragraphs("制度の概要") == INPUT["制度の概要"]
+    assert Word(company.out).overview() == INPUT["制度の概要"]
     inner = company.folder / "記録" / "概要の判定.json"
     inner.write_text(json.dumps(dict(INPUT, 制度の概要="中のファイルの説明です。"), ensure_ascii=False), encoding="utf-8")
     for where in (str(inner), "記録/概要の判定.json"):  # 相対の場所は、今いるフォルダでなく会社のフォルダから解く
         company.out.unlink()
         # 標準入力は JSON でない（ファイルを読まなければ断られるので分かる）
         ok(company.run("{ JSON でない", "--input", where))
-        assert Word(company.out).section_paragraphs("制度の概要") == ["中のファイルの説明です。"]
+        assert Word(company.out).overview() == ["中のファイルの説明です。"]
