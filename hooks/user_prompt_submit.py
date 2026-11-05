@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import hand_edit_hooks
 import version_hooks
 from lib import browser_guard
 
@@ -17,4 +18,5 @@ from lib import browser_guard
 def handle(data: dict, folder: Path) -> Optional[dict]:
     browser_guard.user_prompt_submit(data, folder)
     version_hooks.user_prompt_submit(data, folder)
-    return None
+    # 社長が申請書を手で直していれば、前の版との差分を渡す（B5。版の記録が「社長」で残した後に）
+    return hand_edit_hooks.add(None, folder, "UserPromptSubmit")
