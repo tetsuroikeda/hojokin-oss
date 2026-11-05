@@ -89,10 +89,42 @@ def parse(argv):
     kijun.add_argument("--input", required=True, help="決算の内訳（会社のフォルダの中の JSON）")
     kijun.add_argument("--into", help="基準年度を置き換える財務モデルの指定（会社のフォルダの中の JSON）")
     kijun.add_argument("--json", action="store_true", help="JSON で出す")
+    compare = sub.add_parser("compare", help="実績を財務モデルに入れて、計画と比べる（採択後の実績報告・効果報告）")
+    compare.add_argument("--folder", help="会社のフォルダ（${CLAUDE_PROJECT_DIR}）。なければ今いるフォルダ")
+    compare.add_argument("--spec", required=True, help="応募のときの財務モデルの指定（会社のフォルダの中の JSON）")
+    compare.add_argument("--actual", required=True, help="その年の実績（会社のフォルダの中の JSON。記録/一時/実績.json）")
+    compare.add_argument("--seido", help="数値の要件を読む制度データ（省くと 記録/制度データ/ の直下の1つ）")
+    compare.add_argument("--target", type=float, help="応募のときに自分で定めた目標値（1人当たり給与支給総額の伸び。%）")
+    compare.add_argument("--grant", type=int, help="補助金の交付額（円。交付決定通知書か確定の通知から）")
+    compare.add_argument("--json", action="store_true", help="JSON で出す")
     args = parser.parse_args(argv)
-    if args.command not in ("build", "kijun"):
-        raise Refused("build か kijun を付けてください")
+    if args.command not in ("build", "kijun", "compare"):
+        raise Refused("build・kijun・compare のどれかを付けてください")
     return args
+
+
+def run_compare(folder: Path, args) -> int:
+    """実績を財務モデルに入れて計画と比べる（B31c。SPEC F12・T12-4）。満たさない要件があっても、比べられたら終了コード 0。"""
+    from lib import jisseki, youken, zaimu
+    try:
+        raw_spec, _ = read_json_inside(folder, args.spec, "財務モデルの指定")
+        actual, _ = read_json_inside(folder, args.actual, "実績")
+        seido, _path = find_seido(folder, args.seido)
+        if seido is None:
+            raise Refused("制度データがありません（数値の要件と返還の条件を読むため。--seido で渡してください）")
+        spec = zaimu.parse_spec({k: v for k, v in raw_spec.items() if k != "説明"} if isinstance(raw_spec, dict) else raw_spec)
+        result = jisseki.compare(spec, seido, actual, target=args.target, grant=args.grant)
+    except Refused as e:
+        print(f"しませんでした：{e}。")
+        return REFUSED
+    except (youken.YoukenError, zaimu.SpecError, jisseki.JissekiError) as e:
+        print(f"しませんでした：{e}。")
+        return REFUSED
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=1))
+    else:
+        print(jisseki.report(result), end="")
+    return OK
 
 
 def read_json_inside(folder: Path, given: str, what: str):
@@ -377,6 +409,8 @@ def main(argv) -> int:
         return BROKEN
     if args.command == "kijun":
         return run_kijun(folder, args)
+    if args.command == "compare":
+        return run_compare(folder, args)
 
     try:
         if args.spec == "-":

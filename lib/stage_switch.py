@@ -159,6 +159,36 @@ def rule_events(data: Dict) -> List[str]:
     return out
 
 
+def event_stages(data: Dict) -> List[str]:
+    """出来事の段階（フォルダも期限の決め方も持たず、条件付きでもない段階。持続化の「交付決定」など）の id。
+
+    期限の決め方には出てこないが、日付を台帳に残しておくと、事前着手の確かめ（交付決定の前の発注）と事業期間中の
+    義務の時期に使える（B31c）。渡されても段階は進めない。
+    """
+    out = []
+    for stage in deadlines._stages(data):
+        if deadlines._folder_of(stage) or "期限" in stage or stage.get("条件付き") is True:
+            continue
+        name = stage.get("id") or stage.get("名前")
+        if isinstance(name, str) and event_ledger.key_of(name):
+            out.append(name)
+    return out
+
+
+def known_events(data: Dict) -> List[str]:
+    """渡せる出来事の名前：期限の決め方にある出来事と、出来事の段階。"""
+    out = rule_events(data)
+    keys = {event_ledger.key_of(n) for n in out}
+    return out + [n for n in event_stages(data) if event_ledger.key_of(n) not in keys]
+
+
+def only_event_stages(data: Dict, events: List[str]) -> bool:
+    """渡された出来事が1つ以上あり、どれも期限の決め方にない（出来事の段階だけ）か。そのときは段階を進めない。"""
+    rule_keys = {event_ledger.key_of(n) for n in rule_events(data)}
+    names = [parse_event(text)[0] for text in events]
+    return bool(names) and all(event_ledger.key_of(n) not in rule_keys for n in names)
+
+
 def next_year(folder: Path, case: str, stage: Dict, stage_folder: str) -> int:
     """繰り返しの報告の段階で、次に出す回（提出版のない、いちばん前の回）。繰り返しでないか、すべて出したら 0。"""
     rule = deadlines.repeat_rule(stage)
@@ -335,6 +365,10 @@ def switch(folder: Path, case: str, stage: Optional[str] = None, events: Optiona
         # 今の段階の期限を出すための日付を渡し直しただけなので、段階は進めない（進めると前の段階へは戻れない）
         index = current
         kept_for_event = True
+    elif before.current_folder in folders and only_event_stages(data, events):
+        # 交付決定のように、どの段階の期限の決め方にもない出来事の日付だけを渡された。日付を残し、段階は進めない（B31c）
+        index = current
+        kept_for_event = True
     elif before.current_folder in folders and next_year(folder, case, stages[current], folders[current]):
         # 繰り返しの報告の段階で、まだ出していない回がある（1年目を出したら、次は2年目。B31a）
         index = current
@@ -351,7 +385,7 @@ def switch(folder: Path, case: str, stage: Optional[str] = None, events: Optiona
 
     # 出来事：名前と日付と出典を、書く前にすべて確かめる
     planned: List[event_ledger.Event] = []
-    known = rule_events(data)
+    known = known_events(data)
     for text in events:
         name, day = parse_event(text)
         match = next((k for k in known if event_ledger.key_of(k) == event_ledger.key_of(name)), None)
@@ -486,8 +520,8 @@ def report(out: Outcome) -> str:
     if out.switched:
         lines.append(f"- 段階：{out.before or '（まだありません）'} → {name}（今の段階）")
     elif out.kept_for_event:
-        lines.append("- 渡した出来事は、今の段階の期限の決め方にあるので、段階は進めていません"
-                     "（次の段階へ進めるときは、その段階を --stage で渡す）")
+        lines.append("- 渡した出来事は、今の段階の期限の決め方にあるか、どの段階の期限にもない出来事（交付決定など）なので、"
+                     "日付だけを残し、段階は進めていません（次の段階へ進めるときは、その段階を --stage で渡す）")
     if not out.show_only:
         where = f"{deadlines.CASES_DIR}/{out.case}/{out.target_folder}/"
         if out.made:
