@@ -5,6 +5,8 @@
    今の段階は、段階のフォルダのうち、いちばん進んだもの（M3 と同じ決め方）。
 2. 切り替える先：渡された段階のフォルダの名前（2_交付申請 など）。なければ、今の段階の次の、フォルダのある段階。
    今の段階より前の段階は断る。今の段階を渡したときは、段階は変えずに、出来事の記録と一覧だけを行う（交付決定日を残すときなど）。
+   今の段階が繰り返しの報告（効果報告）で、まだ出していない回があれば、段階は進めずに次の回にする。繰り返しの報告の段階では、
+   次に出す回の年のフォルダ（「4_効果報告/2年目」。中は「申請書」と「添付する書類」）も作る（B31a）。
 3. 出来事の日付（採択発表日など。社長の答えか通知の原本で確かめたもの）を渡されたら、期限の台帳の「出来事」に「確定」として残す
    （lib/event_ledger.py）。名前は、制度データの手続きの段階の期限の決め方にある出来事の名前だけを受け付ける。
    今日（差し替えを含む。lib/dates.py）より後の日付は断る（通知の日付の打ち間違いと見る。仮）。
@@ -83,6 +85,12 @@ class Outcome:
     page_problem: str = ""
     show_only: bool = False
     kept_for_event: bool = False  # 今の段階の出来事の日付だけを渡されたので、段階を進めなかった
+    year: int = 0  # 繰り返しの報告の段階で、次に出す回（「2」なら 4_効果報告/2年目。B31a）
+    year_made: List[str] = field(default_factory=list)  # 作った年のフォルダ
+
+    def where(self) -> str:
+        """書類を置く段階のフォルダ（繰り返しの報告は年のフォルダ）。"""
+        return deadlines.year_folder(self.target_folder, self.year) if self.year else self.target_folder
 
     def target_row(self) -> Optional[deadlines.StageRow]:
         if self.status is None:
@@ -149,6 +157,47 @@ def rule_events(data: Dict) -> List[str]:
         node = stage.get("期限")
         _walk_rule(node.get("値") if isinstance(node, dict) else None, out)
     return out
+
+
+def event_stages(data: Dict) -> List[str]:
+    """出来事の段階（フォルダも期限の決め方も持たず、条件付きでもない段階。持続化の「交付決定」など）の id。
+
+    期限の決め方には出てこないが、日付を台帳に残しておくと、事前着手の確かめ（交付決定の前の発注）と事業期間中の
+    義務の時期に使える（B31c）。渡されても段階は進めない。
+    """
+    out = []
+    for stage in deadlines._stages(data):
+        if deadlines._folder_of(stage) or "期限" in stage or stage.get("条件付き") is True:
+            continue
+        name = stage.get("id") or stage.get("名前")
+        if isinstance(name, str) and event_ledger.key_of(name):
+            out.append(name)
+    return out
+
+
+def known_events(data: Dict) -> List[str]:
+    """渡せる出来事の名前：期限の決め方にある出来事と、出来事の段階。"""
+    out = rule_events(data)
+    keys = {event_ledger.key_of(n) for n in out}
+    return out + [n for n in event_stages(data) if event_ledger.key_of(n) not in keys]
+
+
+def only_event_stages(data: Dict, events: List[str]) -> bool:
+    """渡された出来事が1つ以上あり、どれも期限の決め方にない（出来事の段階だけ）か。そのときは段階を進めない。"""
+    rule_keys = {event_ledger.key_of(n) for n in rule_events(data)}
+    names = [parse_event(text)[0] for text in events]
+    return bool(names) and all(event_ledger.key_of(n) not in rule_keys for n in names)
+
+
+def next_year(folder: Path, case: str, stage: Dict, stage_folder: str) -> int:
+    """繰り返しの報告の段階で、次に出す回（提出版のない、いちばん前の回）。繰り返しでないか、すべて出したら 0。"""
+    rule = deadlines.repeat_rule(stage)
+    count = rule.get("回数") if rule is not None else None
+    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+        return 0
+    entries, _problem = deadlines._submissions(folder)
+    sent = {nfc(str(e.get("段階") or "")).strip().strip("/") for e in entries if nfc(str(e.get("案件") or "")) == nfc(case)}
+    return next((n for n in range(1, count + 1) if deadlines.year_folder(stage_folder, n) not in sent), 0)
 
 
 def _case_of(ov: deadlines.Overview, case: str) -> Optional[deadlines.CaseStatus]:
@@ -316,6 +365,13 @@ def switch(folder: Path, case: str, stage: Optional[str] = None, events: Optiona
         # 今の段階の期限を出すための日付を渡し直しただけなので、段階は進めない（進めると前の段階へは戻れない）
         index = current
         kept_for_event = True
+    elif before.current_folder in folders and only_event_stages(data, events):
+        # 交付決定のように、どの段階の期限の決め方にもない出来事の日付だけを渡された。日付を残し、段階は進めない（B31c）
+        index = current
+        kept_for_event = True
+    elif before.current_folder in folders and next_year(folder, case, stages[current], folders[current]):
+        # 繰り返しの報告の段階で、まだ出していない回がある（1年目を出したら、次は2年目。B31a）
+        index = current
     else:
         index = current + 1
         if index >= len(folders):
@@ -324,11 +380,12 @@ def switch(folder: Path, case: str, stage: Optional[str] = None, events: Optiona
 
     out = Outcome(case=case, data_rel=path.relative_to(folder).as_posix(), title=before.title, today=today,
                   substituted=substituted, before=before.current, before_folder=before.current_folder,
-                  target=target, target_folder=target_folder, show_only=show_only, kept_for_event=kept_for_event)
+                  target=target, target_folder=target_folder, show_only=show_only, kept_for_event=kept_for_event,
+                  year=next_year(folder, case, target, target_folder))
 
     # 出来事：名前と日付と出典を、書く前にすべて確かめる
     planned: List[event_ledger.Event] = []
-    known = rule_events(data)
+    known = known_events(data)
     for text in events:
         name, day = parse_event(text)
         match = next((k for k in known if event_ledger.key_of(k) == event_ledger.key_of(name)), None)
@@ -354,6 +411,8 @@ def switch(folder: Path, case: str, stage: Optional[str] = None, events: Optiona
         rel_case = f"{case_folder.CASES_DIR}/{case_folder.safe_name(case)}"
         for sub in case_folder.STAGE_SUBDIRS:
             problem = place_text.write_problem(folder, f"{rel_case}/{target_folder}/{sub}", STAGE_ACTION)
+            if not problem and out.year:
+                problem = place_text.write_problem(folder, f"{rel_case}/{out.where()}/{sub}", STAGE_ACTION)
             if problem:
                 raise SwitchError(problem)
         # 書く
@@ -366,17 +425,23 @@ def switch(folder: Path, case: str, stage: Optional[str] = None, events: Optiona
             out.made, _wanted = seido_data.make_stage_folders(folder, case, data, only=[target_folder])
         except case_folder.CaseError as error:
             raise SwitchError(str(error)) from error
+        if out.year:
+            base = case_folder.case_dir(folder, case) / out.where()
+            for path in [base] + [base / sub for sub in case_folder.STAGE_SUBDIRS]:
+                if not path.is_dir():
+                    path.mkdir(parents=True)
+                    out.year_made.append(path.relative_to(folder).as_posix())
         out.switched = index != current or not before.current_folder
 
     ov = deadlines.build(folder, today=today)
     out.status = _case_of(ov, case)
     if not show_only and status_view.page_wanted(folder, ov):
         try:
-            out.page_problem = status_view.write_page(folder, status_view.render_page(ov, nfc(folder.name))) or ""
+            out.page_problem = status_view.write_all(folder, ov) or ""
         except Exception as error:  # 画面が作れなくても、切り替えは済んでいる
             out.page_problem = f"{status_view.PAGE_NAME} を作れませんでした（{type(error).__name__}: {error}）"
 
-    out.docs, out.unlisted = doc_rows(folder, case, data, target, target_folder)
+    out.docs, out.unlisted = doc_rows(folder, case, data, target, out.where())
     out.forms = [f for f in target.get("様式") or [] if isinstance(f, str)] if isinstance(target.get("様式"), list) else []
     out.cautions = _cautions(target)
     if _before_decision(data, target):
@@ -437,6 +502,8 @@ def _undated_hint(rule: Any) -> str:
 def report(out: Outcome) -> str:
     today_text = dates.format_date(out.today) + ("（日付を差し替えています）" if out.substituted else "")
     name = str(out.target.get("名前") or out.target_folder)
+    if out.year:
+        name += f"（{out.year}{deadlines.YEAR_WORD}）"
     if out.show_only:
         head = f"{name}の書類の一覧と期限です（案件：{out.case}。何も書いていません）。"
     elif out.switched:
@@ -453,14 +520,18 @@ def report(out: Outcome) -> str:
     if out.switched:
         lines.append(f"- 段階：{out.before or '（まだありません）'} → {name}（今の段階）")
     elif out.kept_for_event:
-        lines.append("- 渡した出来事は、今の段階の期限の決め方にあるので、段階は進めていません"
-                     "（次の段階へ進めるときは、その段階を --stage で渡す）")
+        lines.append("- 渡した出来事は、今の段階の期限の決め方にあるか、どの段階の期限にもない出来事（交付決定など）なので、"
+                     "日付だけを残し、段階は進めていません（次の段階へ進めるときは、その段階を --stage で渡す）")
     if not out.show_only:
         where = f"{deadlines.CASES_DIR}/{out.case}/{out.target_folder}/"
         if out.made:
             lines.append(f"- 段階のフォルダを作りました：{where}（中は「申請書」と「添付する書類」）")
         else:
             lines.append(f"- 段階のフォルダは、もうあります：{where}")
+        if out.year:
+            year_where = f"{deadlines.CASES_DIR}/{out.case}/{out.where()}/"
+            lines.append(f"- {out.year}{deadlines.YEAR_WORD}の書類は {year_where} に置きます"
+                         + ("（作りました。中は「申請書」と「添付する書類」）" if out.year_made else "（もうあります）"))
     if out.page_problem:
         lines.append(f"- {out.page_problem}")
 
@@ -480,6 +551,12 @@ def report(out: Outcome) -> str:
             lines.append(f"- 制度データの注記：{rule['注記']}")
         if d is not None and not d.dated:
             lines.append(f"- {_undated_hint(rule)}")
+        if row.years:
+            lines.append("- 回ごとの期限（5年先までの期限。提出版を記録した回は済み）：")
+            for y in row.years:
+                mark = "（提出済み）" if y.submitted else ("（次に出す回）" if y.number == row.next_year else "")
+                days = "" if y.submitted else y.due.days_text(out.today)
+                lines.append(f"  - {y.number}{deadlines.YEAR_WORD}：{y.due.label()}" + (f"（{days}）" if days else "") + mark)
     start = out.target.get("始まる条件")
     if isinstance(start, dict):
         lines.append(f"- 始まる条件：{_valued(start)}")

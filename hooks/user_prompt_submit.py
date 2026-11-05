@@ -1,8 +1,9 @@
 """UserPromptSubmit（社長が送ったとき）。DESIGN 4.1 の処理。
 
 - `/hojokin:nyuryoku` が呼ばれたときの画面入力の許可の記録（S4。lib/browser_guard.py）。
-- 社長が手で変えたファイルを「社長」として履歴に残すこと、指摘らしい言葉への一言、
-  発言にある外の場所の控えは、後のタスクでここに足す。
+- 社長が手で変えたファイルを「社長」として履歴に残すこと（version_hooks）、発言にある外の場所の控え（B10）、
+  【質問】の答え（B15）、社長が申請書を手で直した差分（B5）。
+- 指摘らしい言葉への一言（B4。shiteki_hooks）。手直しの差分の一言と並べて渡す。
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from typing import Optional
 
 import hand_edit_hooks
 import version_hooks
-from lib import browser_guard
+from lib import browser_guard, view_only
 
 
 def handle(data: dict, folder: Path) -> Optional[dict]:
@@ -30,5 +31,16 @@ def handle(data: dict, folder: Path) -> Optional[dict]:
         shitsumon_hooks.user_prompt_submit(data, folder)
     except Exception:
         pass
+    # 指摘・訂正らしい言葉があれば、「記録に残すか判断する」という一言を添える（B4）。落ちても、ほかの処理は止めない
+    output: Optional[dict] = None
+    try:
+        import shiteki_hooks
+
+        text = shiteki_hooks.note(data)
+        if text:
+            output = view_only.add_context(None, text)
+            output["hookSpecificOutput"]["hookEventName"] = "UserPromptSubmit"
+    except Exception:
+        output = None
     # 社長が申請書を手で直していれば、前の版との差分を渡す（B5。版の記録が「社長」で残した後に）
-    return hand_edit_hooks.add(None, folder, "UserPromptSubmit")
+    return hand_edit_hooks.add(output, folder, "UserPromptSubmit")

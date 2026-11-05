@@ -74,8 +74,32 @@ def main(argv) -> int:
     if args.json:
         print(json.dumps(found, ensure_ascii=False, indent=2))
     else:
-        print(record.relevant_text(found))
+        head = check_lines(found, record)
+        print(("\n".join(head) + "\n\n" if head else "") + record.relevant_text(found))
     return 0
+
+
+CHECK_MAX = 20  # 先頭に並べる、確かめが要る事実の数
+
+
+def check_lines(found: dict, record) -> list:
+    """先頭に置く「使い回す前に確かめる変わりうる情報」の一覧（SPEC F13「変わりうる情報は確認する」。B7）。
+
+    記録がある会社の2件目の申請で、変わりうる情報を確かめずに初稿に使わないよう、項目に当たるかどうかに関わらず、
+    確かめが要る事実を先に並べる（どれを書く文に使うかは Claude が判断し、使うものだけを1問にまとめて確かめる）。
+    """
+    checks = [f for f in found["事実"] if f["使う前に確かめる"]]
+    if not checks:
+        return []
+    lines = [f"## 使い回す前に確かめる変わりうる情報（{len(checks)}件）",
+             "書く文に使うものは、書く前の最初の質問の1問目で「前回は◯でしたが、変わりましたか」とまとめて確かめる。"
+             "確かめずに初稿に使わない（変わらなければ record.py confirm、変わったら record.py update-fact）。"]
+    for f in checks[:CHECK_MAX]:
+        lines.append(f"- [{f['id']}] {f['名前']}：{record.short(record.value_text(f['値']), 60)}"
+                     f"（最後に確かめた日 {f['最後に確かめた日']}）")
+    if len(checks) > CHECK_MAX:
+        lines.append(f"- ほか{len(checks) - CHECK_MAX}件（下の事実の「変わりうる情報」を見る）")
+    return lines
 
 
 if __name__ == "__main__":

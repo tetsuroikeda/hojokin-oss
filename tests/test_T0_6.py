@@ -77,11 +77,13 @@ def refused(r: subprocess.CompletedProcess) -> str:
 
 
 def working_files(folder: Path) -> dict:
-    """作業のファイル（会社のフォルダからの場所 → 中身）。版の履歴（.git、版のファイルの置き場）とその場限りの置き場は除く。"""
+    """作業のファイル（会社のフォルダからの場所 → 中身）。版の履歴（.git、版のファイルの置き場）とその場限りの置き場は除く。
+    応答の終わりに作り直す今の状態の画面と Excel（見るだけ。版に入れない。B27）も除く。"""
     found = {}
     for path in folder.rglob("*"):
         rel = path.relative_to(folder).as_posix()
-        if rel.startswith((".git/", ".hojokin/一時/", vt.STORE + "/")) or not path.is_file():
+        if rel.startswith((".git/", ".hojokin/一時/", vt.STORE + "/")) or not path.is_file() \
+                or rel in ("今の状態.html", "今の状態.xlsx"):
             continue
         found[rel] = path.read_bytes()
     return found

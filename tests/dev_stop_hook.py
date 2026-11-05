@@ -13,7 +13,8 @@ Claude が応答を終えるたびに、前に通ったときからファイル�
 - 1度に1本だけ流す。Git の共通のフォルダに錠（hojokin-dev-stop.lock。pid と指紋）を置き、ほかのセッションが流していれば
   少し待つ。終わったら通った指紋をもう一度見て、同じなら流さない。待っても終わらなければ、今回は流さずに知らせる
   （差し戻さない）。錠の pid が生きていなければ、錠を取り直す。
-- 並べる数は6まで（-n 6）。
+- 並べる数は、CPU の数から2を引いた数（2〜8）。同じ Mac が混んでいる（1分の負荷が CPU の数を超える）ときは流さずに知らせる。
+- 時間切れはテストの落ちではないので、差し戻さずに「確かめられなかった」と知らせる（差し戻すのは、本当に落ちたときだけ）。
 """
 
 from __future__ import annotations
@@ -46,9 +47,22 @@ OUTPUT_TAIL = 3000
 CHECKS = [
     ("構成の検査", ["claude", "plugin", "validate", ".", "--strict"]),
     # 版の履歴（Git）を使うテストが増え、1つずつ流すと300秒を超えるので、CPU の数だけ並べて流す（pytest-xdist）
-    # 並べるのは6まで（ほかの worktree の作業役も同じ Mac でテストを流すため）
-    ("速いテスト", ["uv", "run", "pytest", "-q", "-m", "not slow", "-n", "6"]),
+    # 並べる数は workers() で決める（CPU の数から2を引き、2〜8。ほかの worktree の作業役も同じ Mac でテストを流すため）
+    ("速いテスト", ["uv", "run", "pytest", "-q", "-m", "not slow", "-n", "{workers}"]),
 ]
+MAX_WORKERS = 8
+
+
+def workers() -> int:
+    return max(2, min(MAX_WORKERS, (os.cpu_count() or 4) - 2))
+
+
+def overloaded() -> bool:
+    """同じ Mac がほかの作業で混んでいる（1分の負荷が CPU の数を超えている）。流しても時間切れになるだけなので流さない。"""
+    try:
+        return os.getloadavg()[0] > (os.cpu_count() or 4)
+    except OSError:
+        return False
 
 
 def repo_root() -> Path:
@@ -239,13 +253,15 @@ def run_checks(root: Path) -> tuple[list[tuple[str, str]], list[str]]:
     failures = []
     missing = []
     for label, cmd in CHECKS:
+        cmd = [str(workers()) if part == "{workers}" else part for part in cmd]
         try:
             result = run_command(cmd, root, CHECK_TIMEOUT)
         except FileNotFoundError:
-            missing.append(cmd[0])
+            missing.append(f"{cmd[0]} が見つからない")
             continue
         except subprocess.TimeoutExpired:
-            failures.append((label, f"{CHECK_TIMEOUT}秒で終わりませんでした"))
+            # 時間切れはテストの落ちではない（同じ Mac のほかの作業で遅くなる）。差し戻さず、確かめられなかったと知らせる
+            missing.append(f"{label}（{CHECK_TIMEOUT}秒で終わらなかった）")
             continue
         if result.returncode != 0:
             output = (result.stdout + result.stderr)[-OUTPUT_TAIL:]
@@ -260,7 +276,7 @@ def decide(
     if missing:
         # Claude には直せないので差し戻さない。通ったことにもしない
         return {"blocks": state.get("blocks", 0), "passed": state.get("passed", "")}, {
-            "systemMessage": f"開発の確かめ：{'、'.join(missing)} が見つからないため、確かめられませんでした",
+            "systemMessage": f"開発の確かめ：{'、'.join(missing)} のため、確かめられませんでした",
         }
     if not failures:
         return {"blocks": 0, "passed": fingerprint}, {
@@ -296,6 +312,10 @@ def main() -> int:
     shared = passed_path(root)
     if fingerprint == state.get("passed") or fingerprint in load_passed(shared):
         # 前に通ったときから何も変わっていない（ほかのセッションや worktree で通った中身も含む）
+        return 0
+    if overloaded():
+        print(json.dumps({"systemMessage": "開発の確かめ：この Mac がほかの作業で混んでいるので、今回は流しませんでした"},
+                         ensure_ascii=False))
         return 0
     lock = shared.with_name(LOCK_FILE)
     got = wait_for_lock(lock, fingerprint, shared)

@@ -27,6 +27,16 @@
 
 - 版の履歴は、保存したときのもの（何件もの版）は戻さない。公式資料が入っているため。戻した状態の版は1件になる。
   前の版を使うケース（T0-9 など）は、ケースの scaffold で版を足す。
+
+「もと」のある戻し方（書いた後・1件目の途中・1件目を終えた など）は、もとの段階を戻した上に、次を順に足す（TASKS B7・B4）。
+- 財務モデル・計画書・表の欄・その3・質問の記録（書いた後。_write_plan）
+- 制度データ・公式資料・段階のフォルダ・概要と流れ（2件目の案件の準備。もとのない戻し方と同じ形）
+- 計画書の書き換え：計画書の材料の本文の一部を差し替えて、その項目を書き直す（わざと入れた誤りや、社長の手直しを入れた形）
+- 会社の記録に足す：回答表の行（聞いて答えてもらった形）と、決まった事実・書き方の決まりを、記録の道具（lib/company_record.py）で足す。
+  回答表から作り直せるので、記録のファイルを保存しない（DESIGN 11章「作り直せないものがない段階は、戻し方の JSON だけを置く」）
+- 記録を空にする・消す：記録なしで比べるための形（T13-3 の「記録なし」）
+- 提出版を残す：担当者が「提出した」と伝えた形（kiroku の versions.py submit。期限の一覧で、その段階が済んだものになる）
+- 最後に進める日付：ここまでを、もとの段階の日付のまま作り、最後に今日の日付を進める（変わりうる情報の確かめが要る形にする）
 - 標準のライブラリと、プラグインの lib/ だけで動く（/usr/bin/python3 の 3.9 でも動く書き方にする）。
 - 終了コード：0 戻した。1 戻せなかった（理由を標準エラーに書く）。
 """
@@ -209,8 +219,13 @@ def answer_rows(path: Path) -> List[Dict[str, str]]:
 
 
 def _questions(target: Path, item: Dict, when: str) -> int:
-    """回答表から、聞き取りの記録（記録/質問の記録.json）を作る（社長に聞いて答えてもらった形。答えが空けの行は除く）。"""
-    rows = [r for r in answer_rows(PLUGIN_ROOT / item["回答表"]) if r["答え"] and r["答え"] != "（空け）"]
+    """回答表から、聞き取りの記録（記録/質問の記録.json）を作る（社長に聞いて答えてもらった形。答えが空けの行は除く）。
+
+    「除く ID」があれば、その行（例：2件目のことだけの I 節の行）も除く（1件目では聞いていない形）。
+    """
+    skip = set(item.get("除く ID", []))
+    rows = [r for r in answer_rows(PLUGIN_ROOT / item["回答表"]) if r["答え"] and r["答え"] != "（空け）"
+            and r["ID"] not in skip]
     entries = []
     for n, r in enumerate(rows, 1):
         entries.append({"番号": f"質問-{n:04d}", "案件": item["案件"], "段階": item["段階"], "聞いた日時": when,
@@ -312,13 +327,147 @@ def _write_plan(target: Path, recipe: Dict, plan_name: Optional[str]) -> Dict:
     return out
 
 
+def _place_case_items(target: Path, downloads: Path, recipe: Dict) -> int:
+    """制度データ・公式資料・段階のフォルダ・概要と流れを置く（案件の準備）。置いた公式資料の数を返す。"""
+    for item in recipe.get("制度データ", []):
+        dest = target / item["先"]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(str(PLUGIN_ROOT / item["元"]), str(dest))
+    official = sum(_place_official(target, downloads, item) for item in recipe.get("公式資料", []))
+    for item in recipe.get("段階のフォルダ", []):
+        _make_stages(target, item)
+    for item in recipe.get("概要と流れ", []):
+        _make_gaiyou(target, item)
+    return official
+
+
+def _set_today(target: Path, day: str) -> None:
+    from lib import company, dates
+
+    settings = target / company.MARKER_DIR / company.SETTINGS_FILE
+    data = json.loads(settings.read_text(encoding="utf-8")) if settings.is_file() else {}
+    data[dates.TODAY_KEY] = day
+    settings.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+def _rewrite_plan(target: Path, recipe: Dict) -> int:
+    """計画書の書き換え：材料の本文の一部を差し替えて、その項目を製品の道具（yoshiki.py write）で書き直す。
+
+    戻し方の形：[{"材料": "<計画書の材料のフォルダ>", "項目": "<項目の名前>", "置き換え": [["前", "後"], …]}]
+    「前」が本文になければ RestoreError（材料が変わったときに気づくため）。
+    """
+    count = 0
+    for item in recipe.get("計画書の書き換え", []):
+        plan = json.loads((PLUGIN_ROOT / item["材料"] / "本文.json").read_text(encoding="utf-8"))
+        found = [it for it in plan["項目"] if it["名前"] == item["項目"]]
+        if not found:
+            raise RestoreError(f"計画書の材料に項目「{item['項目']}」がありません")
+        text = found[0]["本文"]
+        for before, after in item["置き換え"]:
+            if before not in text:
+                raise RestoreError(f"項目「{item['項目']}」の本文に「{before}」がありません")
+            text = text.replace(before, after, 1)
+        path = target / "記録" / "一時" / "書く文.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        where = []
+        if item.get("案件"):  # 案件や制度データが2つ以上あるとき
+            where += ["--case", item["案件"]]
+        if item.get("制度データ"):
+            where += ["--seido", item["制度データ"]]
+        _tool("kaku/scripts/yoshiki.py", target, "write", "--item", item["項目"], *where,
+              "--input", "記録/一時/書く文.txt")
+        count += 1
+    return count
+
+
+def _source(target: Path, spec: Dict, default_question: str = ""):
+    """戻し方の出典（{"種類": "社長の発言", "発言": …} など）を、記録の道具の出典にする。"""
+    from lib import company_record as cr
+
+    kind = spec.get("種類", "質問")
+    return cr.make_source(target, kind, file=spec.get("ファイル"), question=spec.get("質問") or (
+        default_question if kind == "質問" else None), utterance=spec.get("発言"), day=spec.get("日付"),
+        answered=spec.get("答えた日"))
+
+
+def _add_records(target: Path, recipe: Dict) -> Dict:
+    """会社の記録に足す（記録の道具 lib/company_record.py で。同じ名前で値が違えば止める）。
+
+    戻し方の形：{"回答表": "<回答表.md>", "回答表から": ["E-03", …], "変わりうる": ["C-02", …], "名前": {"E-03": "強み"},
+               "事実": [{"名前", "値", "変わりうる", "出典"}], "決まり": [{"区分", "内容", "きっかけ", "出典", "案件"}]}
+    回答表の行は、出典を「質問」（「<項目>を教えてください。」と聞いて、今日答えてもらった形）にする。
+    """
+    from lib import company_record as cr
+
+    spec = recipe.get("会社の記録に足す")
+    if not spec:
+        return {}
+    rows = {r["ID"]: r for r in answer_rows(PLUGIN_ROOT / spec["回答表"])} if spec.get("回答表") else {}
+    changeable = set(spec.get("変わりうる", []))  # ここに挙げた行だけを、変わりうる情報にする（ほかは変わらない）
+    names = spec.get("名前", {})
+    facts = []
+    for rid in spec.get("回答表から", []):
+        if rid not in rows:
+            raise RestoreError(f"回答表に {rid} の行がありません")
+        r = rows[rid]
+        facts.append((names.get(rid, r["項目"]), r["答え"], rid in changeable,
+                      _source(target, {"種類": "質問"}, f"{r['項目']}を教えてください。")))
+    for f in spec.get("事実", []):
+        facts.append((f["名前"], f["値"], bool(f.get("変わりうる", True)), _source(target, f.get("出典", {}),
+                                                                             f"{f['名前']}を教えてください。")))
+    added = 0
+    for name, value, changeable, source in facts:
+        result, _item, conflicts = cr.add_fact(target, name, value, changeable, source)
+        if result == "conflict":
+            raise RestoreError(f"会社の記録の「{name}」が、戻し方の値と食い違います（{conflicts[0]['値']}）")
+        added += result == "added"
+    rules = 0
+    for r in spec.get("決まり", []):
+        result, _item = cr.add_rule(target, r["区分"], r["内容"], r["きっかけ"], _source(target, r["出典"]),
+                                    case=r.get("案件"))
+        rules += result == "added"
+    fixed = set(spec.get("変わらない事実にする", []))
+    if fixed:  # 1件目のことだけの事実や、会社の基本の事実を、変わらないものにする（2件目で確かめ直さない形）
+        data = cr.load(target)
+        hit = [it for it in data["項目"] if it["種類"] == cr.FACT and it["名前"] in fixed]
+        missing = fixed - {it["名前"] for it in hit}
+        if missing:
+            raise RestoreError("変わらない事実にする事実が、会社の記録にありません：" + "、".join(sorted(missing)))
+        for it in hit:
+            it["変わりうる"] = False
+        cr.save(target, data)
+    return {"足した事実": added, "足した決まり": rules}
+
+
+def _clear_records(target: Path, recipe: Dict) -> List[str]:
+    """記録を空にする・消す（記録なしで比べる形。T13-3）。"""
+    from lib import company_record as cr
+
+    done = []
+    for rel in recipe.get("記録を空にする", []):
+        if rel != cr.RECORD_FILE:
+            raise RestoreError(f"空にできるのは {cr.RECORD_FILE} だけです（{rel}）")
+        cr.save(target, cr.empty())
+        done.append(rel)
+    for rel in recipe.get("消す", []):
+        path = target / rel
+        if not rel.startswith("記録/") or ".." in Path(rel).parts:
+            raise RestoreError(f"消せるのは 記録/ の中だけです（{rel}）")
+        if path.is_file():
+            path.unlink()
+            done.append(rel)
+    return done
+
+
 def restore(stage: str, target: Path, downloads: Optional[Path] = None, plan: Optional[str] = None) -> Dict:
     """保存した状態 stage を target に戻す。戻した中身の要約を返す。
 
     戻し方に「もと」があれば、先にその段階を戻し、その上に、戻し方の「財務モデル」「計画書」「質問の記録」を
     製品の道具で作る（書いた後の状態。TASKS B18・B19）。plan は計画書の材料のフォルダの名前（変種に差し替える）。
+    続けて、2件目の案件の準備、計画書の書き換え、会社の記録に足す・空にする、最後に進める日付を当てる（TASKS B7・B4）。
     """
-    from lib import company, company_init, dates, history
+    from lib import company_init, dates, history
 
     recipe = load_recipe(stage)
     target = target.resolve()
@@ -326,11 +475,25 @@ def restore(stage: str, target: Path, downloads: Optional[Path] = None, plan: Op
     if recipe.get("もと"):
         summary = restore(recipe["もと"], target, downloads)
         if recipe.get("今日の日付"):  # 書いた後の材料（D9）の日付に合わせて、今日の日付を差し替え直す
-            settings = target / company.MARKER_DIR / company.SETTINGS_FILE
-            data = json.loads(settings.read_text(encoding="utf-8")) if settings.is_file() else {}
-            data[dates.TODAY_KEY] = recipe["今日の日付"]
-            settings.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+            _set_today(target, recipe["今日の日付"])
         made = _write_plan(target, recipe, plan)
+        rewritten = _rewrite_plan(target, recipe)  # 2件目の案件を置く前に（案件が1つなら --case が要らない）
+        if rewritten:
+            made["書き換えた項目"] = rewritten
+        official = _place_case_items(target, downloads, recipe)
+        if official:
+            made["公式資料"] = official
+        made.update(_add_records(target, recipe))
+        cleared = _clear_records(target, recipe)
+        if cleared:
+            made["空にした・消した"] = cleared
+        shutil.rmtree(str(target / "記録" / "一時"), ignore_errors=True)  # 道具に渡した一時のファイルは残さない
+        for item in recipe.get("提出版を残す", []):  # 担当者が「提出した」と伝えた形（kiroku の versions.py submit）
+            _tool("kiroku/scripts/versions.py", target, "submit", "--case", item["案件"], "--stage", item["段階"],
+                  "--reason", item["社長の発言"])
+            made["提出版"] = made.get("提出版", 0) + 1
+        if recipe.get("最後に進める日付"):
+            _set_today(target, recipe["最後に進める日付"])
         history.record(target, history.TOOL, REASON.format(stage=stage), when=dates.now(target))
         left = history.pending_changes(target)
         if left:
@@ -343,18 +506,12 @@ def restore(stage: str, target: Path, downloads: Optional[Path] = None, plan: Op
     settings = {}
     if recipe.get("今日の日付"):
         settings[dates.TODAY_KEY] = recipe["今日の日付"]
+    from lib import company
+
     (target / company.MARKER_DIR / company.SETTINGS_FILE).write_text(
         json.dumps(settings, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    for item in recipe.get("制度データ", []):
-        dest = target / item["先"]
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(str(PLUGIN_ROOT / item["元"]), str(dest))
     originals = _remember_originals(target)
-    official = sum(_place_official(target, downloads, item) for item in recipe.get("公式資料", []))
-    for item in recipe.get("段階のフォルダ", []):
-        _make_stages(target, item)
-    for item in recipe.get("概要と流れ", []):
-        _make_gaiyou(target, item)
+    official = _place_case_items(target, downloads, recipe)
 
     history.record(target, history.TOOL, REASON.format(stage=stage), when=dates.now(target))
     left = history.pending_changes(target)

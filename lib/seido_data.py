@@ -3,7 +3,7 @@
 流れ：
 1. まとめる（merge）
    - 読む：`記録/制度データ/読み取り/<案件>/` の章ごとの結果のうち、1回目のもの（lib/urakadori.py が置いたもの）。
-     2回目（重要な項目を別の呼び出しで読み直したもの）は、ここでは使わない。2回の読み取りを突き合わせるのは B25。
+     2回目（重要な項目を別の呼び出しで初めから読み直したもの）は、値には使わず、1回目との突き合わせだけに使う（TASKS B25。下の 1b）。
    - 章の順番は、読んだページのはじめ（資料の一覧の順と、ページ）で決める。
    - 項目ごとに合わせる。
      - 配列の項目（補助額・書類など）は、章の順につなぐ（まったく同じ件は1つにする）。
@@ -16,6 +16,16 @@
      「読み取れない」の値も、場所と理由を「読み取れなかった項目」に並べる（問い合わせ文の案は Claude が足す）。
    - まとめたものを lib/urakadori.run に渡す。全体の形を確かめ、どの値も裏取りし直して、
      `記録/制度データ/<制度の略称>_<公募回>.json` に置く（置き場所は lib/urakadori が決める。DESIGN 9章）。
+1b. 2回の読み取りの突き合わせ（SPEC F3「重要な項目は2回独立に読み取り、食い違えば要確認」・T3-8、DESIGN 9.2）
+   - 重要な項目の値を、名前で決まる場所（決まった期日「締切」の日時、補助額「区分」の上限・補助率・特例の値、
+     申請の段階の期限、数値の要件「名前」の基準、必須書類「名前」、補助の対象にならない経費「名前」の内容・上限）で並べ、
+     2回目の章と、同じ名前の1回目の章とで比べる（同じ章の1回目がなければ、まとめた全体と比べる）。
+   - 比べ方：値の中の数（万・億は円に直す。日付と時刻、割合も数として見る）が同じか。文の言い回しの違いは見ない
+     （2回の読み取りで言い方が変わるのはふつうなので）。必須書類は、件があるかだけを見る。一方だけが「読み取れない」も食い違い。
+   - 食い違った値は、まとめた制度データで「要確認」にし、「2回の読み取り：」の注記に両方の値を書く（状態は下げるだけ。
+     裏取りの道具の「裏取り：」の注記とは別なので、裏取りし直しても戻らない）。
+   - 1回目にあって、同じ章の2回目にない重要な項目の件も「要確認」にする（2回目が、その項目そのものを読んでいないときは比べない）。
+     2回目にだけある件は、まとめに入れず、結果に並べる（その章を読み直させる）。
 2. 確かめる（check）
    - 形（スキーマ）が合うか。
    - 重要な項目（SPEC F3・DESIGN 9.2 の、締切・補助上限・補助率・数値の要件・必須書類・補助の対象にならない経費）が、
@@ -51,6 +61,8 @@ from __future__ import annotations
 
 import copy
 import json
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -60,6 +72,8 @@ from lib.official_docs import LIST_FILE, RECORDS_DIR, TEXT_DIR, round_number
 
 SCHEMA_VERSION = 1
 FIRST_ROUND = 1
+SECOND_ROUND = 2
+DOUBLE_PREFIX = "2回の読み取り："
 # 「制度」「資料」と同じく、まとめる道具が入れる項目（章の読み取りからは取らない）
 OWN_KEYS = ("スキーマの版", "制度", "資料")
 # どの章も読んでいなくても「読み取れなかった項目」に書かない項目（空でよいもの）
@@ -92,6 +106,10 @@ class MergeResult:
     duplicates: List[str] = field(default_factory=list)                   # 同じ名前の件が2つ以上ある項目
     not_read: List[str] = field(default_factory=list)                     # どの章も読んでいない項目
     data_round: str = ""
+    second_chapters: List[str] = field(default_factory=list)              # 2回目の読み取りがあった章（B25）
+    double_compared: int = 0                                              # 2回の読み取りで比べた重要な値の数
+    double_diffs: List[Tuple[str, str]] = field(default_factory=list)     # 食い違って要確認にした値（場所、わけ）
+    second_only: List[str] = field(default_factory=list)                  # 2回目にだけある重要な項目の件
 
 
 @dataclass
@@ -231,14 +249,166 @@ def load_chapters(company: Path, case: str, order: Dict[str, int], result: Merge
         if not isinstance(info, dict) or not isinstance(data.get("制度データ"), dict):
             result.skipped.append(f"{path.name}（形が違う）")
             continue
+        if info.get("回目", FIRST_ROUND) == SECOND_ROUND:
+            continue  # 2回目は、突き合わせ（load_second_readings・compare_readings）だけに使う
         if info.get("回目", FIRST_ROUND) != FIRST_ROUND:
-            result.skipped.append(f"{path.name}（{info.get('回目')}回目。2回の読み取りの突き合わせは B25）")
+            result.skipped.append(f"{path.name}（{info.get('回目')}回目。使うのは1回目と2回目だけ）")
             continue
         chapters.append(data)
     if not chapters:
         raise MergeError(f"1回目の読み取りの結果が、{base.relative_to(company)}/ に1つもありません")
     chapters.sort(key=lambda c: (_first_page(c, order), str(c["読み取り"].get("章"))))
     return chapters
+
+
+def load_second_readings(company: Path, case: str) -> List[Dict]:
+    """2回目の読み取りの結果（lib/urakadori.py が置いたもの）。場所の確かめは load_chapters が先に済ませている。"""
+    base = reading_dir(company, case)
+    out = []
+    for path in sorted(base.glob("*.json")) if base.is_dir() else []:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        info = data.get("読み取り") if isinstance(data, dict) else None
+        if isinstance(info, dict) and info.get("回目") == SECOND_ROUND and isinstance(data.get("制度データ"), dict):
+            out.append(data)
+    return out
+
+
+# ---- 2回の読み取りの突き合わせ（B25） ----
+
+_SPACES = re.compile(r"\s+")
+_NUMBER = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*(億|万)?")
+
+
+def _name_key(text: Any) -> str:
+    return _SPACES.sub("", unicodedata.normalize("NFKC", str(text or "")))
+
+
+def important_keyed(part: Dict) -> Dict[Tuple[str, ...], Tuple[List[Any], Any, bool]]:
+    """重要な項目の値を、名前で決まる場所で並べる。（場所の鍵）→（データの中の道、出典つき値、件があるかだけを見るか）。"""
+    out: Dict[Tuple[str, ...], Tuple[List[Any], Any, bool]] = {}
+    for i, d in enumerate(part.get("決まった期日") or []):
+        if isinstance(d, dict) and DEADLINE_WORD in str(d.get("名前", "")):
+            out[("決まった期日", _name_key(d.get("名前")), "日時")] = (["決まった期日", i, "日時"], d.get("日時"), False)
+    for i, a in enumerate(part.get("補助額") or []):
+        if not isinstance(a, dict):
+            continue
+        k = _name_key(a.get("区分"))
+        for leaf in ("上限", "補助率"):
+            if leaf in a:
+                out[("補助額", k, leaf)] = (["補助額", i, leaf], a.get(leaf), False)
+        for j, s in enumerate(a.get("特例") or []):
+            if isinstance(s, dict) and "値" in s:
+                out[("補助額", k, "特例", _name_key(s.get("名前")))] = (["補助額", i, "特例", j, "値"], s.get("値"), False)
+    stages = [(i, s) for i, s in enumerate(part.get("手続きの段階") or []) if isinstance(s, dict)]
+    if stages:
+        i, first = min(stages, key=lambda x: x[1].get("順番") if isinstance(x[1].get("順番"), int) else 10 ** 6)
+        if "期限" in first:
+            out[("手続きの段階", _name_key(first.get("id") or first.get("名前")), "期限")] = (["手続きの段階", i, "期限"],
+                                                                                    first.get("期限"), False)
+    for i, r in enumerate(part.get("数値の要件") or []):
+        if isinstance(r, dict) and "基準" in r:
+            out[("数値の要件", _name_key(r.get("名前")), "基準")] = (["数値の要件", i, "基準"], r.get("基準"), False)
+    for i, d in enumerate(part.get("書類") or []):
+        if isinstance(d, dict) and d.get("区分") == "必須":
+            out[("書類", _name_key(d.get("名前")), "内容")] = (["書類", i, "内容"], d.get("内容"), True)
+    for i, c in enumerate(part.get("補助の対象にならない経費") or []):
+        if not isinstance(c, dict):
+            continue
+        k = _name_key(c.get("名前") or c.get("区分") or i)
+        out[("補助の対象にならない経費", k, "内容")] = (["補助の対象にならない経費", i, "内容"], c.get("内容"), False)
+        if "上限" in c:
+            out[("補助の対象にならない経費", k, "上限")] = (["補助の対象にならない経費", i, "上限"], c.get("上限"), False)
+    return out
+
+
+def numbers_in(value: Any) -> set:
+    """値の中の数（万・億は円に直す）。日付・時刻・割合の数字も、それぞれ数として拾う。"""
+    if value is None:
+        return set()
+    text = unicodedata.normalize("NFKC", json.dumps(value, ensure_ascii=False)).replace(",", "")
+    found = set()
+    for m in _NUMBER.finditer(text):
+        n = float(m.group(1))
+        if m.group(2) == "万":
+            n *= 10000
+        elif m.group(2) == "億":
+            n *= 100000000
+        found.add(int(n) if n == int(n) else n)
+    return found
+
+
+def _show(node: Any) -> str:
+    if not _is_sourced(node):
+        return "（なし）"
+    if node.get("状態") == UNREADABLE:
+        return "読み取れない"
+    text = json.dumps(node.get("値"), ensure_ascii=False)
+    return text if len(text) <= 60 else text[:57] + "…"
+
+
+def readings_differ(first: Any, second: Any, presence_only: bool) -> Optional[str]:
+    """2回の読み取りの値が食い違うか。食い違えば、わけの文。"""
+    if presence_only:
+        return None
+    a_unread = not _is_sourced(first) or first.get("状態") == UNREADABLE
+    b_unread = not _is_sourced(second) or second.get("状態") == UNREADABLE
+    if a_unread and b_unread:
+        return None
+    if a_unread != b_unread or numbers_in(first.get("値")) != numbers_in(second.get("値")):
+        return f"1回目は {_show(first)}、2回目は {_show(second)}"
+    return None
+
+
+def _downgrade(node: Any, why: str) -> bool:
+    if not _is_sourced(node):
+        return False
+    note = DOUBLE_PREFIX + why.replace(urakadori.NOTE_SEP, "/")
+    existing = node.get("注記")
+    if not existing:
+        node["注記"] = note
+    elif note not in existing:
+        node["注記"] = existing + urakadori.NOTE_SEP + note
+    if node.get("状態") in (CONFIRMED, CONFLICT):
+        node["状態"] = CHECK
+        return True
+    return node.get("状態") == CHECK
+
+
+def compare_readings(full: Dict, chapters: List[Dict], seconds: List[Dict], result: MergeResult) -> None:
+    """2回目の読み取りと1回目を、重要な項目で比べ、食い違った値をまとめた制度データで要確認にする（その場で直す）。"""
+    by_name = {str(c["読み取り"].get("章")): c for c in chapters}
+    full_keys = important_keyed(full)
+    for second in seconds:
+        name = str(second["読み取り"].get("章"))
+        result.second_chapters.append(name)
+        sec_part = second["制度データ"]
+        first = by_name.get(name)
+        ref_part = first["制度データ"] if first else full
+        sec_keys = important_keyed(sec_part)
+        ref_keys = important_keyed(ref_part)
+        for key, (path, node2, presence) in sec_keys.items():
+            if key not in ref_keys:
+                result.second_only.append(f"{name}：{urakadori.readable(path, sec_part)}")
+                continue
+            result.double_compared += 1
+            why = readings_differ(ref_keys[key][1], node2, presence)
+            if why and key in full_keys:
+                full_path, full_node, _ = full_keys[key]
+                _downgrade(full_node, why)
+                result.double_diffs.append((urakadori.readable(full_path, full), why))
+        if first is None:
+            continue
+        read_tops = {k for k in sec_part}
+        for key, (path, _node1, _presence) in ref_keys.items():
+            if key in sec_keys or key[0] not in read_tops or key not in full_keys:
+                continue
+            full_path, full_node, _ = full_keys[key]
+            why = "2回目の読み取りに、この件がありません"
+            _downgrade(full_node, why)
+            result.double_diffs.append((urakadori.readable(full_path, full), why))
 
 
 def _same(a: Any, b: Any) -> bool:
@@ -368,6 +538,9 @@ def merge(company: Path, case: str) -> Tuple[Dict, MergeResult]:
         dup = _duplicates("申請画面の画面", screens)
         if dup:
             result.duplicates.append(dup)
+
+    # 重要な項目の2回の読み取りの突き合わせ（B25）
+    compare_readings(full, chapters, load_second_readings(company, case), result)
 
     # 読み取れなかった項目：章が書いたもの、どの章も読んでいない項目、読み取れないの値
     unread = list(full.get("読み取れなかった項目") or [])
@@ -749,6 +922,19 @@ def merge_report(case: str, merged: MergeResult, verified: urakadori.Result, rel
         lines.append(f"- {c}")
     for d in merged.duplicates:
         lines.append(f"- 同じ名前の件が2つ以上あります（章をまたいで重ねて読んでいないか確かめる）：{d}")
+    if merged.second_chapters:
+        lines.append(f"- 重要な項目の2回目の読み取り：{'、'.join(merged.second_chapters)}（比べた値 {merged.double_compared}、"
+                     f"食い違って要確認にした値 {len(merged.double_diffs)}）")
+    else:
+        lines.append("- 重要な項目の2回目の読み取り：まだありません（締切・補助上限・補助率・数値の要件・必須書類・"
+                     "補助の対象にならない経費を含む章を、読み取り役にもう一度、初めから読ませてください）")
+    if merged.double_diffs:
+        lines += ["", "2回の読み取りで食い違った値（要確認にしました）：", "", "| 場所 | わけ |", "|---|---|"]
+        for where, why in merged.double_diffs:
+            lines.append(f"| {where} | {why} |")
+        lines.append("")
+    if merged.second_only:
+        lines.append(f"- 2回目の読み取りにだけある件（まとめには入れていません。その章を読み直させる）：{'、'.join(merged.second_only)}")
     lines.append(f"- 裏取りし直した値：{verified.checked}（出典つき値 {verified.values}：{_states_line(verified.states)}）")
     if verified.downgraded or verified.conflicts_flagged:
         lines += ["", "裏取りで外れた値（要確認にしました）：", "", "| 場所 | 理由 |", "|---|---|"]

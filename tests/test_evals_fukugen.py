@@ -74,7 +74,7 @@ def _restore(stage: str, folder: Path) -> subprocess.CompletedProcess:
 def _open(folder: Path) -> dict:
     """開いたときの hook を、Claude Code と同じく hooks/main.py で動かす。"""
     env = {"PATH": "/usr/bin:/bin", "HOME": str(folder.parent), "CLAUDE_PROJECT_DIR": str(folder),
-           "CLAUDE_PLUGIN_ROOT": str(REPO_ROOT)}
+           "CLAUDE_PLUGIN_ROOT": str(REPO_ROOT), "HOJOKIN_SITE_CHECK": "0"}  # 公式サイトの確かめ（B28）は止める
     payload = {"hook_event_name": "SessionStart", "source": "startup", "session_id": "m13-test", "cwd": str(folder)}
     done = subprocess.run([real_python(), "-B", str(REPO_ROOT / "hooks" / "main.py"), "SessionStart"],
                           input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8", env=env,
