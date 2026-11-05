@@ -13,8 +13,13 @@
   セルの中に直接書く（inlineStr。共有の文字の部品には触れない）。書いた後に直前の版と比べ、範囲の外が1か所でも
   変わっていれば保存しない（lib/yoshiki_word.OutsideChange）。
 
-ひな形の列（M6 の仮の形。T10-1・T10-4（支援者の欄の案内）は M8 などで足す）
-  画面の順番｜画面｜欄｜種類｜上限｜担当者が入れる｜値｜値の出どころ
+ひな形の列（M6 の仮の形。T10-1 は M8 などで足す）
+  画面の順番｜画面｜欄｜種類｜上限｜担当者が入れる｜値｜値の出どころ｜案内
+- 案内の列：支援者の欄（省力化の「事業計画書作成支援者情報」、持続化の「第三者からのアドバイスの有無」などの欄）に、
+  SPEC 2.3 の案内（SUPPORTER_NOTE）を入れる（SPEC F10「入力シートの支援者の欄には 2.3 の案内を添える」、T10-4。
+  TASKS B29）。支援者の欄は、欄の名前に SUPPORTER_WORDS のどれかを含む欄と、制度データの「支援者の欄」の
+  欄の名前と同じ欄。同じ画面の中で、その間にはさまる欄（契約期間など）も支援者の欄とする。案内の列は書いてよい
+  範囲の外（値の列だけを書き換える）。
 
 /usr/bin/python3（3.9）で動く。標準のライブラリだけを使う。
 """
@@ -44,9 +49,14 @@ PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 COLUMNS = (
     ("画面の順番", 10), ("画面", 24), ("欄", 36), ("種類", 8), ("上限", 18), ("担当者が入れる", 14), ("値", 50),
-    ("値の出どころ", 36),
+    ("値の出どころ", 36), ("案内", 44),
 )
-HEAD_FIELD, HEAD_VALUE, HEAD_STAFF, HEAD_SCREEN = "欄", "値", "担当者が入れる", "画面"
+HEAD_FIELD, HEAD_VALUE, HEAD_STAFF, HEAD_SCREEN, HEAD_NOTE = "欄", "値", "担当者が入れる", "画面", "案内"
+# 支援者の欄の案内（SPEC 2.3 の文。改訂は F7 で見張る。DESIGN 14章「支援者の欄の案内」）
+SUPPORTER_NOTE = "このツールは支援者には当たりません。人の支援者がいる場合は正直に書いてください。"
+# 支援者の欄と見なす欄の名前の語（「生産性向上支援センター」「両立支援のひろば」「事業支援計画書」と、
+# アンケートの「支援機関からの情報」は当たらない）
+SUPPORTER_WORDS = ("支援者", "支援機関名", "支援機関ID", "支援報酬", "支援担当", "アドバイス")
 YES, NO = "はい", "いいえ"
 HEADER_ROW = 2
 NO_FIELDS = "この画面の欄は、まだ制度データにありません"
@@ -135,6 +145,23 @@ def _title(seido: Dict) -> str:
             + "（申請画面と同じ順に並べています。黄色の「値」はツールが入れ、灰色の「値」は担当者が画面で入れます）")
 
 
+def _supporter_name(seido: Dict) -> str:
+    """制度データの「支援者の欄」の欄の名前（なければ空）。"""
+    node = (seido.get("支援者の欄") or {}).get("欄の名前") if isinstance(seido.get("支援者の欄"), dict) else None
+    value = node.get("値") if isinstance(node, dict) else node
+    return _norm(value) if isinstance(value, str) else ""
+
+
+def supporter_flags(seido: Dict, names: Sequence[str]) -> List[bool]:
+    """1つの画面の欄の名前の並びのうち、支援者の欄か（欄の名前の語か、制度データの支援者の欄の名前。間の欄も含む）。"""
+    exact = _supporter_name(seido)
+    hits = [i for i, n in enumerate(names)
+            if any(w in _norm(n) for w in SUPPORTER_WORDS) or (exact and _norm(n) == exact)]
+    if not hits:
+        return [False] * len(names)
+    return [hits[0] <= i <= hits[-1] for i in range(len(names))]
+
+
 def sheet_xml(seido: Dict) -> str:
     rows = [f'<row r="1">{_inline("A1", ST_TITLE, _title(seido))}</row>']
     head = "".join(_inline(f"{col_letter(i)}{HEADER_ROW}", ST_HEAD, name) for i, (name, _w) in enumerate(COLUMNS, 1))
@@ -150,9 +177,11 @@ def sheet_xml(seido: Dict) -> str:
                      _inline(f"B{r}", ST_TEXT, name)]
             cells += [_inline(f"{col_letter(i)}{r}", ST_TEXT, "") for i in range(3, 8)]
             cells.append(_inline(f"H{r}", ST_TEXT, NO_FIELDS))
+            cells.append(_inline(f"I{r}", ST_TEXT, ""))
             rows.append(f'<row r="{r}">{"".join(cells)}</row>')
             continue
-        for field in fields:
+        supporter = supporter_flags(seido, [str(f.get("名前") or "") for f in fields])
+        for field, is_supporter in zip(fields, supporter):
             r += 1
             staff = field.get("担当者が入れる") is True
             cells = [
@@ -164,6 +193,7 @@ def sheet_xml(seido: Dict) -> str:
                 _inline(f"F{r}", ST_TEXT, YES if staff else NO),
                 _inline(f"G{r}", ST_STAFF if staff else ST_TOOL, ""),
                 _inline(f"H{r}", ST_TEXT, str(field.get("値の出どころ") or "")),
+                _inline(f"I{r}", ST_TEXT, SUPPORTER_NOTE if is_supporter else ""),
             ]
             rows.append(f'<row r="{r}">{"".join(cells)}</row>')
     cols = "".join(f'<col min="{i}" max="{i}" width="{w}" customWidth="1"/>' for i, (_n, w) in enumerate(COLUMNS, 1))
@@ -400,6 +430,21 @@ def read_grid(blob: bytes) -> Tuple[Dict[str, bytes], str, Grid]:
     if name not in parts:
         raise FormError(f"入力シートのシートの部品（{name}）がありません")
     return parts, name, Grid(parts[name], _shared_strings(parts))
+
+
+def notes_of(blob: bytes) -> List[Tuple[str, str, str]]:
+    """入力シートの「案内」の列に文のある行（画面、欄、案内）。案内の列のない（前に作った）入力シートは空。"""
+    _parts, _name, grid = read_grid(blob)
+    _head, cols = grid.header()
+    col = cols.get(HEAD_NOTE)
+    if not col:
+        return []
+    out = []
+    for r, screen, field, _staff in grid.field_rows():
+        note = grid.texts.get(f"{col}{r}", "").strip()
+        if note:
+            out.append((screen, field, note))
+    return out
 
 
 def value_of(blob: bytes, field: str, screen: Optional[str] = None) -> str:

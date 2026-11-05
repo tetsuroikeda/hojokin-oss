@@ -622,6 +622,21 @@ def sheet_value(field, value):
     return str(value)
 
 
+def print_supporter_notes(blob: bytes) -> None:
+    """入力シートの支援者の欄に入れた案内（SPEC 2.3。「案内」の列）を出す。Claude はこれを社長に伝える（T10-4）。"""
+    from lib import input_sheet
+
+    try:
+        notes = input_sheet.notes_of(blob)
+    except ValueError:
+        return
+    if not notes:
+        return
+    screen, field, note = notes[0]
+    print(f"- 支援者の欄（{screen}の「{field}」など{len(notes)}欄）には、入力シートの「案内」の列に「{note}」と"
+          "入れてあります。社長に、この案内を伝えてください（SPEC 2.3）。")
+
+
 def do_sheet(folder: Path, args, yw) -> int:
     from lib import input_sheet
 
@@ -657,6 +672,7 @@ def do_sheet(folder: Path, args, yw) -> int:
     if summary.get("注意"):
         print(f"- 注意：{summary['注意']}。")
     print("- 直前の版と比べ、書いてよい範囲の外は変わっていません。")
+    print_supporter_notes(new_blob)
     return OK
 
 
@@ -731,6 +747,7 @@ def do_sheet_many(folder: Path, args, yw, case: str, stage: str, seido) -> int:
     for n in notes:
         print(f"- 注意：{n}。")
     print("- 直前の版と比べ、書いてよい範囲の外は変わっていません。")
+    print_supporter_notes(blob)
     return OK
 
 
