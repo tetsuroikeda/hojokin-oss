@@ -203,7 +203,7 @@ def test_switch_makes_next_stage_folder_document_list_and_deadline(shop) -> None
     # 今日は差し替えた日付。期限は採択発表日から2か月で、あと何日も差し替えた今日から数える
     assert "今日：2027年3月16日（火）（日付を差し替えています）" in out
     deadline = section(out, "交付申請の期限")
-    assert deadline[0] == "- 2027年5月10日（月）（あと55日）"
+    assert deadline[0] == "- 2027年5月10日（月）（確定）（あと55日）"
     assert "- もとにした日：採択発表日 2027年3月10日（水）（確定。出典：社長の答え）" in deadline
     assert "- 出典：要領3 p.26" in deadline
     assert "- 始まる条件：採択を受けた後（要領3 p.38）" in deadline
@@ -228,7 +228,7 @@ def test_switch_makes_next_stage_folder_document_list_and_deadline(shop) -> None
 
     # この後の段階の期限も、記録した採択発表日から出す（分からない出来事があるものは「遅くとも」）
     later = section(out, "この後の段階の期限（今の状態の組み立てから）")
-    assert later[0].startswith("- 補助事業の実施：遅くとも 2028年10月10日（火）（あと574日）")
+    assert later[0].startswith("- 補助事業の実施：遅くとも 2028年10月10日（火）（確定）（あと574日）")
     assert later[1].startswith("- 実績報告：遅くとも 2028年10月10日（火）")
     assert "効果報告：日付はまだ出せません" in later[2]
     # 前の段階の提出版がないこと、制度データの回が案件の回と違うことを知らせる
@@ -247,13 +247,13 @@ def test_dates_follow_the_substituted_today_and_the_status_assembly(shop) -> Non
     shop.set_today("2027-04-20")
     shown = shop.tool("--show")
     assert "交付申請の書類の一覧と期限です" in shown and "何も書いていません" in shown
-    assert section(shown, "交付申請の期限")[0] == "- 2027年5月10日（月）（あと20日）"
+    assert section(shown, "交付申請の期限")[0] == "- 2027年5月10日（月）（確定）（あと20日）"
     assert "今日：2027年4月20日（火）（日付を差し替えています）" in shown
 
     text = vt.start_context(shop.company.start_raw("startup"))
     near = text[text.index("### 近い締切（30日以内）"):text.index("### 遅れている作業")]
     line = next(x for x in near.splitlines() if f"｜{CASE}｜交付申請の期限" in x)
-    assert line.startswith("- 2027年5月10日（月）（あと20日）｜")
+    assert line.startswith("- 2027年5月10日（月）（確定）（あと20日）｜")
     assert "もとにした日：採択発表日 2027年3月10日（水）（確定。出典：社長の答え）" in line
     # 見当たらない書類の数に、様式で作る書類を入れていないことを書き添える（実験 E9 で、様式を「もうある」と読んだ応答があった）
     assert "見当たらないもの 2件（見積書、研修動画の修了証）" in line
@@ -275,7 +275,7 @@ def test_without_the_event_date_it_switches_and_asks_for_the_date(shop) -> None:
     again = shop.tool("--stage", "2_交付申請", "--event", "採択発表日=2027-03-10")
     assert "今の段階「交付申請」のままです" in again
     assert f"段階のフォルダは、もうあります：{CASE_DIR}/2_交付申請/" in again
-    assert section(again, "交付申請の期限")[0] == "- 2027年5月10日（月）（あと55日）"
+    assert section(again, "交付申請の期限")[0] == "- 2027年5月10日（月）（確定）（あと55日）"
 
 
 def test_rerun_without_stage_keeps_the_stage(shop) -> None:
@@ -284,7 +284,7 @@ def test_rerun_without_stage_keeps_the_stage(shop) -> None:
     again = shop.tool("--event", "採択発表日=2027-03-10")
     assert "今の段階「交付申請」のままです" in again
     assert "段階は進めていません" in again
-    assert section(again, "交付申請の期限")[0] == "- 2027年5月10日（月）（あと55日）"
+    assert section(again, "交付申請の期限")[0] == "- 2027年5月10日（月）（確定）（あと55日）"
     fixed = shop.tool("--event", "採択発表日=2027-03-12")
     assert "前に残っていた 2027年3月10日（水） から直しました" in fixed
     assert "今の段階「交付申請」のままです" in fixed
@@ -304,7 +304,7 @@ def test_schedule_gives_an_estimate_when_no_date_is_recorded(tmp_path) -> None:
     assert section(out, "交付申請の期限")[0] == "- 2027年5月1日（土）〜2027年5月10日（月）のどこか（見込み）（あと46日）"
     # 確かめた日付を渡すと、予定より先に使い、見込みでなくなる
     fixed = shop.tool("--stage", "2_交付申請", "--event", "採択発表日=2027-03-05")
-    assert section(fixed, "交付申請の期限")[0] == "- 2027年5月5日（水）（あと50日）"
+    assert section(fixed, "交付申請の期限")[0] == "- 2027年5月5日（水）（確定）（あと50日）"
 
 
 def test_correcting_the_date_keeps_one_event_and_other_entries(shop) -> None:
@@ -318,7 +318,7 @@ def test_correcting_the_date_keeps_one_event_and_other_entries(shop) -> None:
     assert ledger["作業"] == [{"名前": "K1 が足す欄"}]
     mine = [e for e in ledger["出来事"] if e["案件"] == CASE]
     assert [e["日付"] for e in mine] == ["2027-03-12"] and other in ledger["出来事"]
-    assert section(out, "交付申請の期限")[0] == "- 2027年5月12日（水）（あと57日）"
+    assert section(out, "交付申請の期限")[0] == "- 2027年5月12日（水）（確定）（あと57日）"
 
 
 def test_document_states_come_from_the_ledger_and_the_attach_folder(shop) -> None:
