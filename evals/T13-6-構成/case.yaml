@@ -1,0 +1,8 @@
+# T13-6 指摘から学ぶ：構成（TASKS B4、台本「4種類の指摘」の発言4）。保存した状態「1件目の途中」から、社長の構成の指摘を
+# 最初の発言にして、「強みは病院・介護施設向けとスーパー向けを分けて別々の段落にする」が構成の決まりとして残るかを見る。
+# 2件目への反映（強みの段落が分かれる）は、tests/multiturn/nikenme.py で見る。
+schema_version: "1.1"
+name: T13-6-構成
+tags: [F13]
+context:
+  scaffold_script: scaffold.sh
