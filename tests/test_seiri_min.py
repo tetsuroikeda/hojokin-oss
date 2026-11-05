@@ -90,6 +90,11 @@ def ok_json(r: subprocess.CompletedProcess):
     return json.loads(ct.ok(r))
 
 
+def without_since(items: list) -> list:
+    """見つけた書類から「前回から」（開いたときの変化。TASKS B9 で足した。tests/test_T5_7.py で見る）を除く。"""
+    return [{k: v for k, v in item.items() if k != "前回から"} for item in items]
+
+
 def refused(r: subprocess.CompletedProcess) -> str:
     out = r.stdout.decode("utf-8")
     assert r.returncode == 2, (r.returncode, out, r.stderr.decode("utf-8"))
@@ -149,7 +154,7 @@ def test_three_documents_are_organized(company) -> None:
 
     found = ok_json(run_tool(company, "scan"))
     assert sorted(d["場所"] for d in found["新しい書類"]) == sorted(THREE)
-    assert found["同じ中身"] == [{"場所": DUPLICATE, "同じ中身の書類": "入れ口/見積もり（つばさ台）.pdf",
+    assert without_since(found["同じ中身"]) == [{"場所": DUPLICATE, "同じ中身の書類": "入れ口/見積もり（つばさ台）.pdf",
                                 "同じ中身の書類は": "新しい書類"}]
     sizes = {d["場所"]: d["大きさ"] for d in found["新しい書類"]}
     assert sizes == {rel: len(data) for rel, data in sources.items()}
@@ -202,7 +207,7 @@ def test_three_documents_are_organized(company) -> None:
     # もう一度見つけると、新しい書類はない。同じ中身のものは、台帳の原本と同じ中身として出る
     again = ok_json(run_tool(company, "scan"))
     assert again["新しい書類"] == []
-    assert again["同じ中身"] == [{"場所": DUPLICATE, "同じ中身の書類": EXPECTED["入れ口/見積もり（つばさ台）.pdf"],
+    assert without_since(again["同じ中身"]) == [{"場所": DUPLICATE, "同じ中身の書類": EXPECTED["入れ口/見積もり（つばさ台）.pdf"],
                                 "同じ中身の書類は": "台帳の原本"}]
     # 同じ中身のものを整理しようとしても、移さない
     before = files_and_ledger(company)
@@ -445,7 +450,7 @@ def test_originals_missing_from_ledger_are_still_originals(company) -> None:
     put(company, "入れ口/決算書のコピー.pdf", "決算書_第18期.pdf")
     found = ok_json(run_tool(company, "scan"))
     assert found["新しい書類"] == []
-    assert found["同じ中身"] == [{"場所": "入れ口/決算書のコピー.pdf", "同じ中身の書類": kessan, "同じ中身の書類は": "台帳の原本"}]
+    assert without_since(found["同じ中身"]) == [{"場所": "入れ口/決算書のコピー.pdf", "同じ中身の書類": kessan, "同じ中身の書類は": "台帳の原本"}]
     before = files_and_ledger(company)
     for args, words in ((["--path", kessan, "--category", "決算・税", "--kind", "決算書", "--date", "2025-04-02"],
                          "もう整理した原本"),

@@ -9,6 +9,8 @@
   書類の台帳、補助金の候補.docx など。保存したときの会社のフォルダの中の場所のまま置く。
 - `evals/状態/<段階>.json`（戻し方）：作り直すものの材料。今日の日付、制度データの元（リポにある正解）、
   取る資料の一覧と downloads/ のファイルの対応、段階のフォルダ、概要と流れ.docx に渡す説明の文。
+  「保存した状態」があれば、その段階の保存したものを使い回し、「除くもの」で始まる場所は写さない
+  （例：「書類の前」は「書く前」から原本と書類の台帳を除いたもの。TASKS B9）。
 
 戻す順番（製品の道具をそのまま使う。社長が使うときと同じ形にするため）：
 1. 会社のフォルダを用意する（lib/company_init.py。目印・フォルダの形・設定・送り先のない版の履歴）。
@@ -73,12 +75,20 @@ def find_downloads(start: Path) -> Path:
     raise RestoreError(f"downloads/ が見つかりません（{start} から上へたどった）。先に公式資料を downloads/ に取ってください")
 
 
+def saved_dir(stage: str, recipe: Dict) -> Path:
+    """保存したものの置き場。戻し方に「保存した状態」があれば、その段階のもの（ほかの段階のものを使い回す。TASKS B9）。"""
+    return STATES_DIR / recipe.get("保存した状態", stage)
+
+
 def load_recipe(stage: str) -> Dict:
     path = STATES_DIR / f"{stage}.json"
-    saved = STATES_DIR / stage
-    if not path.is_file() or not saved.is_dir():
-        raise RestoreError(f"保存した状態「{stage}」がありません（{path} と {saved}/ が要る）")
-    return json.loads(path.read_text(encoding="utf-8"))
+    if not path.is_file():
+        raise RestoreError(f"保存した状態「{stage}」がありません（{path} が要る）")
+    recipe = json.loads(path.read_text(encoding="utf-8"))
+    saved = saved_dir(stage, recipe)
+    if not saved.is_dir():
+        raise RestoreError(f"保存した状態「{stage}」の保存したもの（{saved}/）がありません")
+    return recipe
 
 
 def local_downloader(downloads: Path, files: Dict[str, str]):
@@ -97,13 +107,15 @@ def local_downloader(downloads: Path, files: Dict[str, str]):
     return download
 
 
-def _copy_saved(saved: Path, target: Path) -> List[str]:
-    """保存したものを写す。写したファイルの場所（会社のフォルダから）を返す。"""
+def _copy_saved(saved: Path, target: Path, skip: tuple = ()) -> List[str]:
+    """保存したものを写す（skip で始まる場所は写さない）。写したファイルの場所（会社のフォルダから）を返す。"""
     copied = []
     for path in sorted(saved.rglob("*")):
         if path.is_dir() or path.name == ".DS_Store":
             continue
         rel = path.relative_to(saved)
+        if rel.as_posix().startswith(skip):
+            continue
         dest = target / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(str(path), str(dest))
@@ -177,7 +189,7 @@ def restore(stage: str, target: Path, downloads: Optional[Path] = None) -> Dict:
     downloads = downloads or find_downloads(LIB_DIR)
 
     company_init.init(target)
-    copied = _copy_saved(STATES_DIR / stage, target)
+    copied = _copy_saved(saved_dir(stage, recipe), target, tuple(recipe.get("除くもの", [])))
     settings = {}
     if recipe.get("今日の日付"):
         settings[dates.TODAY_KEY] = recipe["今日の日付"]
