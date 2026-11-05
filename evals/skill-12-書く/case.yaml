@@ -1,0 +1,7 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・13.2）。
+# 保存した状態「書く前」（準備と書類の整理まで済んだ形）で、申請書を書き始めてほしいとそのまま頼む。正しい skill：kaku。
+schema_version: "1.1"
+name: skill-12-書く
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh

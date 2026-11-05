@@ -1,0 +1,8 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・13.2）。
+# 保存した状態「書く前」で、銀行に書いてもらう書類（外への依頼）をいつ頼めばよいかを聞く（書類・依頼の言葉を使わない）。
+# 正しい skill：junbi（外部への依頼と待ち）。shorui（足りない書類）と取り違えないかを見る。
+schema_version: "1.1"
+name: skill-06-準備
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh

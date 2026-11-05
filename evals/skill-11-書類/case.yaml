@@ -1,0 +1,8 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・13.2）。
+# 保存した状態「書く前」（見積書の原本がある形）で、見積書の金額の計算が合っているかを確かめてほしいと頼む。
+# 正しい skill：shorui（金額の照合は shorui の道具。kaku の財務モデルと取り違えないかを見る）。
+schema_version: "1.1"
+name: skill-11-書類
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh

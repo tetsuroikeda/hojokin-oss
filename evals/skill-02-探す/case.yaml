@@ -1,0 +1,7 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・13.2）。
+# 保存した状態「探す前」で、人手不足の困りごとだけを話す（補助金・探すの言葉を使わない）。正しい skill：sagasu。
+schema_version: "1.1"
+name: skill-02-探す
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh

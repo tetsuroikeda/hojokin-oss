@@ -1,0 +1,8 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・13.2）。
+# 保存した状態「書いた後」（計画書を書き終えた形）で、電子申請で出し終わったと伝える（「提出」の言葉を使わない）。
+# 正しい skill：kiroku（「提出した」と言われたとき。提出版を残す）。
+schema_version: "1.1"
+name: skill-18-記録
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh

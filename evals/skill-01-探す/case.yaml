@@ -1,0 +1,8 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・13.2、TASKS B35）。
+# 保存した状態「探す前」（会社のフォルダを作っただけ）で、補助金という言葉を使わずに設備の入れ替えの相談をする。
+# 正しい skill：sagasu（探す・決める）。見るのは Skill の道具の呼び出しだけなので、max_turns を小さくして安く済ませる。
+schema_version: "1.1"
+name: skill-01-探す
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh
