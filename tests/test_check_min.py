@@ -324,9 +324,13 @@ def test_evidence_table_add_replace_and_unsupported_rows(env: kt.Env) -> None:
     assert rows[1]["出典"] == "社員名簿（架空）"
     code_, report = env.count()
     assert code_ == 3
-    assert [(f["場所"], f["文字"]) for f in report["根拠なし"]] == [("3行目", "2027年3月")]
+    unsupported = [(f["場所"], f["文字"]) for f in report["根拠なし"]]
+    assert ("3行目", "2027年3月") in unsupported  # 出典が空の行
+    # 本文の数字のうち、根拠対照表にないもの（B16。T9-1）と、表の記述が本文にない行（食い違い）
+    assert any(where == "1-2 経営課題" and "30件" in text for where, text in unsupported)
+    assert [f["文字"] for f in report["食い違い"]] == ["2027年3月"]
     env.evidence(kt.GOOD_EVIDENCE, replace=True)
-    assert len(konkyo.read((env.folder / kt.EVIDENCE).read_bytes())) == 3
+    assert len(konkyo.read((env.folder / kt.EVIDENCE).read_bytes())) == len(kt.GOOD_EVIDENCE)
     assert env.count()[0] == 0
     # 同じ中身からは同じバイト列（版の履歴で、変わっていない回を見分けやすい）
     assert konkyo.build(konkyo.read((env.folder / kt.EVIDENCE).read_bytes())) == (env.folder / kt.EVIDENCE).read_bytes()

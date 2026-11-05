@@ -86,7 +86,8 @@ def load_recipe(stage: str) -> Dict:
         raise RestoreError(f"保存した状態「{stage}」がありません（{path} が要る）")
     recipe = json.loads(path.read_text(encoding="utf-8"))
     saved = saved_dir(stage, recipe)
-    if not saved.is_dir():
+    # 作り直せないものがない段階（「もと」の段階の上に製品の道具で作るもの。書いた後）は、保存したものを持たない
+    if not saved.is_dir() and not recipe.get("もと"):
         raise RestoreError(f"保存した状態「{stage}」の保存したもの（{saved}/）がありません")
     return recipe
 
@@ -180,13 +181,162 @@ def _make_gaiyou(target: Path, item: Dict) -> None:
         raise RestoreError(f"概要と流れ.docx を作れませんでした（終了コード {done.returncode}）：{done.stdout}{done.stderr}")
 
 
-def restore(stage: str, target: Path, downloads: Optional[Path] = None) -> Dict:
-    """保存した状態 stage を target に戻す。戻した中身の要約を返す。"""
+def _tool(script: str, target: Path, *args: str) -> str:
+    """製品の道具を、社長の Mac と同じく引数で場所を渡して動かす。終了コードが0でなければ RestoreError。"""
+    path = PLUGIN_ROOT / "skills" / script
+    done = subprocess.run([sys.executable, "-B", str(path), args[0], "--folder", str(target), *args[1:]],
+                          capture_output=True, text=True, encoding="utf-8")
+    if done.returncode != 0:
+        raise RestoreError(f"{script} {args[0]} が終了コード {done.returncode} で止まりました：{done.stdout}{done.stderr}")
+    return done.stdout
+
+
+def _write_json(target: Path, rel: str, data) -> str:
+    path = target / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return rel
+
+
+def answer_rows(path: Path) -> List[Dict[str, str]]:
+    """回答表（testdata/デモの会社/回答表.md）の表の行（ID・項目・答え）。"""
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) == 3 and cells[0][:1].isalpha() and "-" in cells[0] and cells[0] != "ID":
+            rows.append({"ID": cells[0], "項目": cells[1], "答え": cells[2]})
+    return rows
+
+
+def _questions(target: Path, item: Dict, when: str) -> int:
+    """回答表から、聞き取りの記録（記録/質問の記録.json）を作る（社長に聞いて答えてもらった形。答えが空けの行は除く）。"""
+    rows = [r for r in answer_rows(PLUGIN_ROOT / item["回答表"]) if r["答え"] and r["答え"] != "（空け）"]
+    entries = []
+    for n, r in enumerate(rows, 1):
+        entries.append({"番号": f"質問-{n:04d}", "案件": item["案件"], "段階": item["段階"], "聞いた日時": when,
+                        "問い": f"{r['項目']}を教えてください。", "理由": item.get("理由", "計画書に書くため"),
+                        "答え": r["答え"], "答えた日時": when, "経路": "聞き取り（回答表から戻した）", "回答表の ID": r["ID"]})
+    _write_json(target, "記録/質問の記録.json", {"説明": item.get("説明", ""), "質問": entries})
+    return len(entries)
+
+
+def _round(value: float, digits: int):
+    from decimal import ROUND_HALF_UP, Decimal
+
+    q = Decimal(1).scaleb(-digits)
+    got = Decimal(repr(float(value))).quantize(q, rounding=ROUND_HALF_UP)
+    return int(got) if digits == 0 else float(got)
+
+
+def _from_numbers(target: Path, specs: List[Dict]) -> List[Dict]:
+    """数字の控え（財務モデルの道具が書いたもの）から、その3 のセルの値を取り出す（計算はしない。丸めるだけ）。"""
+    numbers = json.loads((target / "記録" / "財務モデルの数字.json").read_text(encoding="utf-8"))["中身"]
+
+    def pick(path: str):
+        node = numbers
+        for key in path.split("."):
+            node = node[key]
+        return node
+
+    out = []
+    for s in specs:
+        node = pick(s["控え"])
+        digits = int(s.get("桁", 0))
+        if "セル" in s:
+            value = node[s["年"]] if isinstance(node, list) else node
+            out.append({"シート": s["シート"], "セル": s["セル"], "値": _round(value, digits)})
+            continue
+        for k, col in enumerate(s["列"]):
+            year = int(s.get("最初の年", 0)) + k
+            out.append({"シート": s["シート"], "セル": f"{col}{s['行']}", "値": _round(node[year], digits)})
+    return out
+
+
+def _write_plan(target: Path, recipe: Dict, plan_name: Optional[str]) -> Dict:
+    """財務モデル・様式の対応・その1・2 の本文・根拠対照表を、製品の道具で書く（書いた後の状態）。"""
+    from lib import dates
+
+    out = {}
+    spec_item = recipe.get("財務モデル")
+    if spec_item:
+        spec = json.loads((PLUGIN_ROOT / spec_item["指定"]).read_text(encoding="utf-8"))
+        spec.pop("説明", None)
+        for a in spec.get("前提", []):
+            if a.get("名前") in spec_item.get("仮を外す", []):
+                a["仮"] = False
+        _write_json(target, "記録/財務モデルの指定.json", spec)
+        # 戻すときは LibreOffice の計算し直しをしない（時間がかかるため。計算はテスト tests/test_T8_10.py で確かめる）
+        _tool("kaku/scripts/zaimu_model.py", target, "build", "--spec", "記録/財務モデルの指定.json",
+              "--soffice", str(target / ".hojokin" / "LibreOffice を使わない"))
+        out["財務モデル"] = True
+    plan_item = recipe.get("計画書")
+    if plan_item:
+        base = PLUGIN_ROOT / plan_item["材料"]
+        if plan_name:
+            base = base.parent / plan_name
+        plan = json.loads((base / "本文.json").read_text(encoding="utf-8"))
+        pairs = [{"項目": it["名前"], "書き込む位置": it["書き込む位置"]} for it in plan["項目"]]
+        _tool("kaku/scripts/yoshiki.py", target, "map", "--input",
+              _write_json(target, "記録/一時/様式の対応.json", {"様式": plan["様式"], "対応": pairs}))
+        for it in plan["項目"]:
+            path = target / "記録" / "一時" / "書く文.txt"
+            path.write_text(it["本文"], encoding="utf-8")
+            _tool("kaku/scripts/yoshiki.py", target, "write", "--item", it["名前"], "--input", "記録/一時/書く文.txt")
+        rows = json.loads((base / "根拠対照表.json").read_text(encoding="utf-8"))["行"] + list(plan_item.get("足す根拠", []))
+        fields = recipe.get("表の欄")
+        if fields:  # 表の欄を持つ項目（（1）事業者情報など）を、欄ごとに対応づけて書く（B19 の直し）
+            pairs = [{"項目": f["項目"], "欄": f["欄"], "書き込む位置": f["書き込む位置"]} for f in fields["欄"]]
+            _tool("kaku/scripts/yoshiki.py", target, "map", "--input",
+                  _write_json(target, "記録/一時/様式の対応.json", {"様式": plan["様式"], "対応": pairs}))
+            for f in fields["欄"]:
+                (target / "記録" / "一時" / "書く文.txt").write_text(f["文"], encoding="utf-8")
+                _tool("kaku/scripts/yoshiki.py", target, "write", "--item", f["項目"], "--field", f["欄"],
+                      "--input", "記録/一時/書く文.txt")
+            rows += list(fields.get("足す根拠", []))
+            out["表の欄"] = len(fields["欄"])
+        _tool("kaku/scripts/kakunin.py", target, "konkyo", "--input",
+              _write_json(target, "記録/一時/根拠.json", {"行": rows}))
+        out["計画書"] = base.name
+        out["項目"] = len(plan["項目"])
+        out["根拠対照表の行"] = len(rows)
+    form3 = recipe.get("その3")
+    if form3:
+        values = list(form3.get("値", [])) + _from_numbers(target, form3.get("控えから", []))
+        _tool("kaku/scripts/yoshiki.py", target, "cells", "--input",
+              _write_json(target, "記録/一時/その3の値.json", {"値": values}))
+        out["その3のセル"] = len(values)
+    q = recipe.get("質問の記録")
+    if q:
+        out["聞き取り"] = _questions(target, q, dates.format_datetime(dates.now(target)))
+    shutil.rmtree(str(target / "記録" / "一時"), ignore_errors=True)  # 道具に渡した一時のファイルは残さない
+    return out
+
+
+def restore(stage: str, target: Path, downloads: Optional[Path] = None, plan: Optional[str] = None) -> Dict:
+    """保存した状態 stage を target に戻す。戻した中身の要約を返す。
+
+    戻し方に「もと」があれば、先にその段階を戻し、その上に、戻し方の「財務モデル」「計画書」「質問の記録」を
+    製品の道具で作る（書いた後の状態。TASKS B18・B19）。plan は計画書の材料のフォルダの名前（変種に差し替える）。
+    """
     from lib import company, company_init, dates, history
 
     recipe = load_recipe(stage)
     target = target.resolve()
     downloads = downloads or find_downloads(LIB_DIR)
+    if recipe.get("もと"):
+        summary = restore(recipe["もと"], target, downloads)
+        if recipe.get("今日の日付"):  # 書いた後の材料（D9）の日付に合わせて、今日の日付を差し替え直す
+            settings = target / company.MARKER_DIR / company.SETTINGS_FILE
+            data = json.loads(settings.read_text(encoding="utf-8")) if settings.is_file() else {}
+            data[dates.TODAY_KEY] = recipe["今日の日付"]
+            settings.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        made = _write_plan(target, recipe, plan)
+        history.record(target, history.TOOL, REASON.format(stage=stage), when=dates.now(target))
+        left = history.pending_changes(target)
+        if left:
+            raise RestoreError("版の履歴に残っていないファイルがあります：" + "、".join(c.path for c in left[:10]))
+        summary.update({"段階": stage, "作ったもの": made, "版": len(history.version_list(target))})
+        return summary
 
     company_init.init(target)
     copied = _copy_saved(saved_dir(stage, recipe), target, tuple(recipe.get("除くもの", [])))
@@ -216,12 +366,20 @@ def restore(stage: str, target: Path, downloads: Optional[Path] = None) -> Dict:
 
 def main(argv: List[str]) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
+    plan = None
+    if "--plan" in argv:
+        i = argv.index("--plan")
+        if i + 1 >= len(argv):
+            print("使い方：fukugen.py <段階> [<フォルダ>] [--plan <計画書の材料の名前>]", file=sys.stderr)
+            return 1
+        plan = argv[i + 1]
+        argv = argv[:i] + argv[i + 2:]
     if not argv or len(argv) > 2:
-        print("使い方：fukugen.py <段階> [<フォルダ>]", file=sys.stderr)
+        print("使い方：fukugen.py <段階> [<フォルダ>] [--plan <計画書の材料の名前>]", file=sys.stderr)
         return 1
     target = Path(argv[1]) if len(argv) > 1 else Path.cwd()
     try:
-        summary = restore(argv[0], target)
+        summary = restore(argv[0], target, plan=plan)
     except Exception as e:  # 戻せないときは、eval を始める前に止める
         print(f"fukugen: 戻せませんでした（{type(e).__name__}: {e}）", file=sys.stderr)
         return 1

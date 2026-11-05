@@ -18,7 +18,14 @@ LibreOffice で計算し直すのは lib/libreoffice.py。ここでは、どの�
       },
       "既存事業": {"給与支給総額": "基準_給与支給総額*(1+賃上げ率)^年"},   # 1年目から。書かない行は基準年度のまま
       "新事業": [{"名前": "冷凍惣菜", "始まる年": 1, "売上": "単価_冷凍惣菜*数量_冷凍惣菜"}],  # 書かない行は0
-      "人数": {"常勤従業員数": "基準_常勤従業員数+1"}                     # 1年目から。書かない人数は基準年度のまま
+      "人数": {"常勤従業員数": "基準_常勤従業員数+1"},                    # 1年目から。書かない人数は基準年度のまま
+      "月次の波": [1, 1, 1.2, ...],          # 任意。12個の重み。1年目の売上と原材料費を月に分ける（季節の波）
+      "省力化": {                            # 任意。様式その3 の別紙1・別紙3 と同じ計算をする（TASKS B13）
+        "導入前": [{"工程": "計量", "分": 480}],                         # 1日あたりの作業時間（分）。No は並びの順
+        "導入後": [{"工程": "計量と盛り付けの見守り", "分": 120, "種別": "新たに追加される作業"},
+                   {"工程": "検品", "分": 60, "種別": "内容は変化しない作業", "対応する導入前": 4}],
+        "投資総額": {"値": 22500000, "根拠": "見積書", "出典": "…"}, "年間稼働日数": …, "人件費単価": …
+      }
     }
 
 - 式に使えるもの：前提の名前、基準年度の名前（「基準_売上」など）、年（基準年度が0、1年目が1）、同じ事業の行の名前
@@ -33,12 +40,21 @@ LibreOffice で計算し直すのは lib/libreoffice.py。ここでは、どの�
 - 前提：前提の表と、基準年度の実績の表。値のセルに名前を付け、色を付ける（社長が書き換えてよいのはここだけ）。
   決まっていない前提は「状態」の欄に「仮」と書き、その欄に色を付ける（DESIGN 6章）。
 - 計画（N年）：上に「まとめ」。その下に、既存事業・新事業・合算・人数・補助金の指標・数値の要件の判定。
-- 月次（1年目）：1年目の合算を12か月に分けたもの（季節の波は B13 で足す）。合計は計画の1年目とつながる。
+- 月次（1年目）：1年目の合算を12か月に分けたもの。「月次の波」があれば、売上と原材料費をその重みで分ける。
+  合計は計画の1年目とつながる。
+
+数量が2割少ない場合（DESIGN 8.3「簡単にしすぎないための工夫」）：名前が「数量_」で始まる前提を0.8倍にした指定で
+同じ計算をし直し、数値の要件（特例を除く）をすべて満たすかを「まとめ」に1行で示す（式ではなく、道具が計算した値）。
+
+省力化の指標（様式その3。応募手引8 p.30・p.59）：別紙1 の数式と同じ形で、削減される業務に要していた時間・導入後に
+発生する時間・省力化指数を、別紙3 の数式と同じ形で投資回収期間を計算する。増加した付加価値額は、応募手引8 p.59 の
+例の形（（最後の年の付加価値額−基準年度の付加価値額）÷計画の年数）で、計画の合算から出す。
 """
 
 from __future__ import annotations
 
 import ast
+import dataclasses
 import keyword
 import math
 import re
@@ -76,6 +92,26 @@ BASE_INFO = {
     "給与を受けた従業員数": ("人", "基準年度に全月分の給与を受けた従業員の数"),
 }
 FUNCS = ("ROUND", "ROUNDDOWN", "ROUNDUP", "MIN", "MAX")
+
+# 数量が2割少ない場合（DESIGN 8.3）。名前がこの頭で始まる前提を数量とみなす
+QUANTITY_PREFIX = "数量_"
+LOW_FACTOR = 0.8
+LOW_LABEL = "数量が計画より2割少ない場合に、数値の要件（特例を除く）をすべて満たすか"
+NO_QUANTITY = "数量の前提（名前が「数量_」で始まるもの）がないので、判定していません"
+
+MONTHS = 12
+
+# 省力化の指標（様式その3 の別紙1・別紙3）
+SHORYOKU_KEY = "省力化"
+MAX_STEPS = 30  # 別紙1 の行の数
+KIND_NEW = "新たに追加される作業"
+KIND_SAME = "内容は変化しない作業"
+STEP_KINDS = (KIND_NEW, KIND_SAME)
+SHORYOKU_ITEMS = {
+    "投資総額": ("円", "補助の対象でない分も含めた投資の総額（別紙3）"),
+    "年間稼働日数": ("日", "この事業が1年に動く日数（別紙3）"),
+    "人件費単価": ("円/時", "この事業で働く人の時給の平均（別紙3）"),
+}
 
 FILL_INPUT = "FFF2CC"  # 社長が書き換えてよい値
 FILL_PROVISIONAL = "FCE4D6"  # 仮の印
@@ -137,17 +173,48 @@ class Business:
 
 
 @dataclass
+class Step:
+    """別紙1 の1行（1日あたりの作業）。"""
+
+    no: int
+    name: str
+    minutes: float
+    kind: str = ""  # 導入後だけ
+    before_no: Optional[int] = None  # 導入後の「内容は変化しない作業」が対応する導入前の No
+
+
+@dataclass
+class Shoryoku:
+    before: List[Step]
+    after: List[Step]
+    items: Dict[str, Item]  # 投資総額・年間稼働日数・人件費単価
+
+
+@dataclass
 class Spec:
     years: int
     assumptions: List[Item]
     base: Dict[str, Item]
     businesses: List[Business]
     people: Dict[str, "Expr"]
+    waves: Optional[List[float]] = None
+    shoryoku: Optional[Shoryoku] = None
 
     def values(self) -> Dict[str, float]:
         out = {a.name: a.value for a in self.assumptions}
         out.update({BASE_PREFIX + k: item.value for k, item in self.base.items()})
+        if self.shoryoku is not None:
+            out.update({k: item.value for k, item in self.shoryoku.items.items()})
         return out
+
+    def quantity_names(self) -> List[str]:
+        return [a.name for a in self.assumptions if a.name.startswith(QUANTITY_PREFIX)]
+
+    def scaled_quantities(self, factor: float) -> "Spec":
+        """数量の前提を factor 倍にした指定（数量が少ない場合の判定に使う）。"""
+        names = set(self.quantity_names())
+        assumptions = [dataclasses.replace(a, value=a.value * factor) if a.name in names else a for a in self.assumptions]
+        return dataclasses.replace(self, assumptions=assumptions)
 
 
 def _number(value: Any, where: str) -> float:
@@ -193,7 +260,7 @@ def parse_spec(data: Any) -> Spec:
     """指定の JSON を確かめて読む。正しくなければ SpecError。"""
     if not isinstance(data, dict):
         raise SpecError("指定の形が違います（JSON の { } ではありません）")
-    known = {"計画の年数", "前提", "基準年度", "既存事業", "新事業", "人数"}
+    known = {"計画の年数", "前提", "基準年度", "既存事業", "新事業", "人数", "月次の波", SHORYOKU_KEY}
     extra = sorted(set(data) - known)
     if extra:
         raise SpecError("指定に、知らない項目があります：" + "、".join(extra))
@@ -254,7 +321,80 @@ def parse_spec(data: Any) -> Spec:
         body = {k: v for k, v in raw.items() if k not in ("名前", "始まる年")}
         businesses.append(Business(label, start, _exprs(body, f"新事業「{label}」", ROW_KEYS, names)))
     people = _exprs(data.get("人数", {}), "人数", PEOPLE_KEYS, names)
-    return Spec(years, assumptions, base, businesses, people)
+    waves = _waves(data.get("月次の波"))
+    shoryoku = _shoryoku(data.get(SHORYOKU_KEY), {n.casefold() for n in seen.values()})
+    return Spec(years, assumptions, base, businesses, people, waves, shoryoku)
+
+
+def _waves(raw: Any) -> Optional[List[float]]:
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or len(raw) != MONTHS:
+        raise SpecError(f"月次の波は、{MONTHS}か月分の重みの並び（[ ] に{MONTHS}個の数）にしてください")
+    out = [_number(v, f"月次の波の{i}か月目") for i, v in enumerate(raw, start=1)]
+    if any(v < 0 for v in out) or sum(out) <= 0:
+        raise SpecError("月次の波の重みは0以上にし、少なくとも1つは0より大きくしてください")
+    return out
+
+
+def _shoryoku(raw: Any, taken: set) -> Optional[Shoryoku]:
+    if raw is None:
+        return None
+    where = "省力化"
+    if not isinstance(raw, dict):
+        raise SpecError(f"{where}は {{ }} の形にしてください")
+    known = {"導入前", "導入後"} | set(SHORYOKU_ITEMS)
+    extra = sorted(set(raw) - known)
+    if extra:
+        raise SpecError(f"{where}に、知らない項目があります：" + "、".join(extra))
+    items = {}
+    for key, (unit, desc) in SHORYOKU_ITEMS.items():
+        if key not in raw:
+            raise SpecError(f"{where}の「{key}」がありません（様式その3 の別紙3 に入れる数）")
+        if key.casefold() in taken:
+            raise SpecError(f"前提の名前「{key}」は、省力化の数の名前と重なるので使えません")
+        items[key] = _item(key, raw[key], f"{where}の{key}", unit, desc)
+    for key in ("年間稼働日数", "人件費単価"):
+        if items[key].value <= 0:
+            raise SpecError(f"{where}の{key}は0より大きくしてください")
+    before = _steps(raw.get("導入前"), f"{where}の導入前", False, 0)
+    after = _steps(raw.get("導入後"), f"{where}の導入後", True, len(before))
+    return Shoryoku(before, after, items)
+
+
+def _steps(raw: Any, where: str, is_after: bool, n_before: int) -> List[Step]:
+    if not isinstance(raw, list) or not raw:
+        raise SpecError(f"{where}の作業が1つもありません（[ ] に、工程と1日あたりの分を並べる）")
+    if len(raw) > MAX_STEPS:
+        raise SpecError(f"{where}の作業が {len(raw)} 個あります。様式（別紙1）の行は {MAX_STEPS} までです")
+    steps = []
+    for no, row in enumerate(raw, start=1):
+        at = f"{where}の{no}つ目"
+        if not isinstance(row, dict):
+            raise SpecError(f"{at}の形が違います")
+        allowed = {"工程", "分"} | ({"種別", "対応する導入前"} if is_after else set())
+        extra = sorted(set(row) - allowed)
+        if extra:
+            raise SpecError(f"{at}に、知らない項目があります：" + "、".join(extra))
+        name = _text(row.get("工程"))
+        if not name:
+            raise SpecError(f"{at}に工程の名前がありません")
+        minutes = _number(row.get("分"), f"{at}の分")
+        if minutes < 0:
+            raise SpecError(f"{at}の分が負の数です")
+        kind, before_no = "", None
+        if is_after:
+            kind = _text(row.get("種別"))
+            if kind not in STEP_KINDS:
+                raise SpecError(f"{at}の種別は「{KIND_NEW}」か「{KIND_SAME}」にしてください（{kind!r}）")
+            if kind == KIND_SAME:
+                before_no = row.get("対応する導入前")
+                if isinstance(before_no, bool) or not isinstance(before_no, int) or not 1 <= before_no <= n_before:
+                    raise SpecError(f"{at}は「{KIND_SAME}」なので、対応する導入前の作業の番号（1〜{n_before}）を書いてください")
+            elif row.get("対応する導入前") is not None:
+                raise SpecError(f"{at}は「{KIND_NEW}」なので、対応する導入前の作業は書かないでください")
+        steps.append(Step(no, name, minutes, kind, before_no))
+    return steps
 
 
 def _exprs(raw: Any, where: str, keys: Sequence[str], names: set) -> Dict[str, "Expr"]:
@@ -289,6 +429,58 @@ def _check_cycles(exprs: Dict[str, "Expr"], where: str) -> None:
 
     for key in exprs:
         visit(key, [])
+
+
+def shoryoku_pairs(sh: Shoryoku) -> List[Tuple[Step, Step]]:
+    """別紙1 で「内容は変化しない作業」として対応づく（導入前, 導入後）の組。
+
+    別紙1 は、導入前の行ごとに、導入後の行のうち「対応する導入前の No」が同じ最初の行を MATCH で探し、
+    それが「内容は変化しない作業」のときだけ組にする（E 列。N 列も同じ組になる）。
+    """
+    first: Dict[int, Step] = {}
+    for a in sh.after:
+        if a.before_no is not None and a.before_no not in first:
+            first[a.before_no] = a
+    pairs = []
+    for b in sh.before:
+        a = first.get(b.no)
+        if a is not None and a.kind == KIND_SAME:
+            pairs.append((b, a))
+    return pairs
+
+
+def shoryoku_hours(sh: Shoryoku) -> Tuple[float, float]:
+    """別紙1 の D3（削減される業務に要していた時間）と J3（導入後に発生する業務に要する時間）。1日あたりの時間。
+
+    D3 =（導入前の合計 −組になった導入前の分 −組の差のうち負のもの）÷60
+    J3 =（導入後の合計 −組になった導入後の分 ＋組の差のうち正のもの）÷60
+    差は（導入後の分 −導入前の分）。別紙1 の F 列・N 列は、分が0の行では差を出さないが、その行の分は0なので同じになる。
+    """
+    pairs = shoryoku_pairs(sh)
+    before_total = sum(s.minutes for s in sh.before)
+    after_total = sum(s.minutes for s in sh.after)
+    paired_before = sum(b.minutes for b, _a in pairs)
+    paired_after = sum(a.minutes for _b, a in pairs)
+    negative = sum(min(0.0, a.minutes - b.minutes) for b, a in pairs)
+    positive = sum(max(0.0, a.minutes - b.minutes) for b, a in pairs)
+    return (before_total - paired_before - negative) / 60, (after_total - paired_after + positive) / 60
+
+
+def shoryoku_index(cut: float, after: float) -> float:
+    """別紙1 の M3：IF(D3=0,0,IF((D3-J3)/D3<0,0,(D3-J3)/D3))。"""
+    if cut == 0:
+        return 0.0
+    ratio = (cut - after) / cut
+    return 0.0 if ratio < 0 else ratio
+
+
+def payback_years(total: float, saved_hours: float, days: float, wage: float, added_value: float) -> Optional[float]:
+    """別紙3 の C3：投資総額 ÷（削減工数 × 年間稼働日数 × 人件費単価 ＋ 増加した付加価値額）。0以下と0割りは None（空）。"""
+    denom = saved_hours * days * wage + added_value
+    if denom == 0:
+        return None
+    years = total / denom
+    return None if years <= 0 else years
 
 
 # ---------------------------------------------------------------- 式
@@ -482,9 +674,10 @@ def _fmt_for(item: Item) -> str:
     return FMT_NUMBER
 
 
-def _assumption_sheet(spec: Spec) -> Tuple[Sheet, Dict[str, Tuple[str, str]]]:
+def _assumption_sheet(spec: Spec) -> Tuple[Sheet, Dict[str, Tuple[str, str]], Dict[Tuple[str, int], str]]:
     sh = Sheet(SHEET_ASSUMPTIONS)
     names: Dict[str, Tuple[str, str]] = {}
+    steps_at: Dict[Tuple[str, int], str] = {}
     sh.put("A1", "前提（数字の元になるもの）", bold=True)
     sh.put("A2", "色を付けた「値」のセルだけを書き換えてください。決まっていない前提は「状態」の欄に「仮」と書いてあります。"
                  "率は小数で書いてあり、% で表示しています。")
@@ -510,8 +703,46 @@ def _assumption_sheet(spec: Spec) -> Tuple[Sheet, Dict[str, Tuple[str, str]]]:
             names[item.name] = (SHEET_ASSUMPTIONS, f"$C${row}")
             row += 1
         row += 1
+    if spec.shoryoku is not None:
+        sh.put(f"A{row}", "省力化の元（様式その3 の別紙1・別紙3 に入れる数）", bold=True)
+        row += 1
+        for i, h in enumerate(headers, start=1):
+            sh.put(f"{col_name(i)}{row}", h, bold=True)
+        row += 1
+        for n, item in enumerate(spec.shoryoku.items.values(), start=1):
+            sh.put(f"A{row}", f"S-{n:02d}")
+            sh.put(f"B{row}", item.name)
+            sh.put(f"C{row}", item.value, fmt=FMT_YEN if item.unit.startswith("円") else FMT_NUMBER, fill=FILL_INPUT)
+            sh.put(f"D{row}", item.unit)
+            sh.put(f"E{row}", item.desc)
+            sh.put(f"F{row}", item.basis)
+            sh.put(f"G{row}", item.source)
+            if item.provisional:
+                sh.put(f"H{row}", "仮", fill=FILL_PROVISIONAL)
+            names[item.name] = (SHEET_ASSUMPTIONS, f"$C${row}")
+            row += 1
+        row += 1
+        for title, side, steps in (("設備導入前の作業（1日あたり。別紙1 の左）", "前", spec.shoryoku.before),
+                                   ("設備導入後の作業（1日あたり。別紙1 の右）", "後", spec.shoryoku.after)):
+            sh.put(f"A{row}", title, bold=True)
+            row += 1
+            heads = ["No.", "工程名・作業名", "作業時間（分）"] + (["作業種別", "対応する導入前の No."] if side == "後" else [])
+            for i, h in enumerate(heads, start=1):
+                sh.put(f"{col_name(i)}{row}", h, bold=True)
+            row += 1
+            for step in steps:
+                sh.put(f"A{row}", step.no)
+                sh.put(f"B{row}", step.name)
+                sh.put(f"C{row}", step.minutes, fmt=FMT_NUMBER, fill=FILL_INPUT)
+                if side == "後":
+                    sh.put(f"D{row}", step.kind)
+                    if step.before_no is not None:
+                        sh.put(f"E{row}", step.before_no)
+                steps_at[(side, step.no)] = f"{_quoted(SHEET_ASSUMPTIONS)}!$C${row}"
+                row += 1
+            row += 1
     sh.widths.update({"A": 8, "B": 26, "C": 16, "D": 10, "E": 44, "F": 14, "G": 30, "H": 8})
-    return sh, names
+    return sh, names, steps_at
 
 
 def _lookup_values(values: Dict[str, float], extra: Dict[str, float]) -> Callable[[str], float]:
@@ -523,8 +754,11 @@ def _lookup_values(values: Dict[str, float], extra: Dict[str, float]) -> Callabl
     return lookup
 
 
-def build(spec: Spec, requirements: Sequence[youken.Requirement]) -> Book:
-    """指定と、制度データから読んだ要件から、ブックの中身（数式と Python の値）を作る。"""
+def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool = True) -> Book:
+    """指定と、制度データから読んだ要件から、ブックの中身（数式と Python の値）を作る。
+
+    scenario が真なら、数量の前提を2割減らした指定でも計算し直し、要件の判定を「まとめ」に置く。
+    """
     n = spec.years
     values = spec.values()
     year_cols = [col_name(2 + y) for y in range(n + 1)]  # 基準年度=B、1年目=C …
@@ -533,7 +767,7 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement]) -> Book:
     note_col = col_name(5 + n)
     first, last = year_cols[1], year_cols[-1]
     title = plan_sheet_title(n)
-    pa, names = _assumption_sheet(spec)
+    pa, names, steps_at = _assumption_sheet(spec)
     pl = Sheet(title)
 
     # ---- 見出しと年
@@ -789,6 +1023,14 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement]) -> Book:
         })
     skipped = [{"名前": r.name, "理由": r.skip_reason} for r in requirements if not r.judged]
 
+    # ---- 省力化の指標（様式その3 の別紙1・別紙3 と同じ計算）
+    shoryoku_summary = None
+    if spec.shoryoku is not None:
+        row += 1
+        shoryoku_summary = _shoryoku_rows(pl, spec.shoryoku, steps_at, row, n, ind["付加価値額"], va_r, first, last,
+                                          ycell(last), note_col)
+        row = shoryoku_summary.pop("_次の行")
+
     # ---- まとめ（上）
     pl.put("A2", "まとめ", bold=True)
     summary_rows = [
@@ -821,6 +1063,16 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement]) -> Book:
     else:
         overall = None
         pl.put("B7", "判定できる要件がありません（制度データを確かめてください）")
+
+    # 数量が2割少ない場合（式ではなく、道具が数量の前提を0.8倍にして計算し直した値）
+    low = _low_case(spec, requirements, scenario)
+    pl.put("A8", LOW_LABEL)
+    if low is None:
+        pl.put("B8", NO_QUANTITY)
+    else:
+        shown = low["判定"] if low["判定"] is not None else "判定できる要件がありません"
+        pl.put("B8", shown, bold=True)
+        pl.put("C8", "数量の前提（" + "・".join(low["数量の前提"]) + "）を0.8倍にして、道具が計算し直した結果（式ではありません）")
     pl.widths.update({"A": 48})
     for col in year_cols:
         pl.widths[col] = 15
@@ -829,25 +1081,48 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement]) -> Book:
     # ---- 月次（1年目）
     mo = Sheet(SHEET_MONTHLY)
     mo.put("A1", "月次（1年目）：1年目の合算を12か月に分けたもの", bold=True)
-    mo.put("A2", "季節の波は、まだ入れていません（12か月で同じにしています）。合計は計画の1年目と同じになります。")
-    month_cols = [col_name(2 + m) for m in range(12)]
+    month_cols = [col_name(2 + m) for m in range(MONTHS)]
     total_col, plan_col = col_name(14), col_name(15)
+    wave_row = 11
+    if spec.waves is None:
+        mo.put("A2", "季節の波は入れていません（12か月で同じにしています）。合計は計画の1年目と同じになります。")
+    else:
+        mo.put("A2", f"売上と原材料費は、{wave_row}行目の重み（季節の波）で月に分けています。ほかの経費は12か月で同じです。"
+                     "営業利益は月ごとの売上から経費を引いたもので、合計は計画の1年目と同じになります。")
+        mo.put(f"A{wave_row}", "売上と原材料費の月ごとの重み（季節の波）", bold=True)
+        for col, w in zip(month_cols, spec.waves):
+            mo.put(f"{col}{wave_row}", w, fmt=FMT_NUMBER, fill=FILL_INPUT)
+        mo.formula(f"{total_col}{wave_row}", f"=SUM({month_cols[0]}{wave_row}:{month_cols[-1]}{wave_row})",
+                   sum(spec.waves), FMT_NUMBER)
+    wave_total = sum(spec.waves) if spec.waves is not None else None
     mo.put("A3", "項目", bold=True)
     for m, col in enumerate(month_cols, start=1):
         mo.put(f"{col}3", f"{m}か月目", bold=True)
     mo.put(f"{total_col}3", "合計", bold=True)
     mo.put(f"{plan_col}3", "1年目（計画）", bold=True)
     monthly = {}
+    monthly_values: Dict[str, List[float]] = {}
     q_title = _quoted(title)
-    for i, key in enumerate(("売上", "原材料費", "人件費", "減価償却費", "その他の経費", "営業利益"), start=4):
+    month_keys = ("売上", "原材料費", "人件費", "減価償却費", "その他の経費", "営業利益")
+    for i, key in enumerate(month_keys, start=4):
         mo.put(f"A{i}", key)
         year1 = py[("合算", key)][1]
         src = f"{q_title}!{first}{at[('合算', key)]}"
         parts = []
-        for col in month_cols:
-            v = year1 / 12
+        for m, col in enumerate(month_cols):
+            if spec.waves is not None and key in ("売上", "原材料費"):
+                v = year1 * spec.waves[m] / wave_total
+                formula = f"={src}*{col}${wave_row}/${total_col}${wave_row}"
+            elif spec.waves is not None and key == "営業利益":
+                vals = [monthly_values[k][m] for k in month_keys[:5]]
+                v = vals[0] - vals[1] - vals[2] - vals[3] - vals[4]
+                formula = f"={col}4-{col}5-{col}6-{col}7-{col}8"
+            else:
+                v = year1 / 12
+                formula = f"={src}/12"
             parts.append(v)
-            mo.formula(f"{col}{i}", f"={src}/12", v, FMT_YEN)
+            mo.formula(f"{col}{i}", formula, v, FMT_YEN)
+        monthly_values[key] = parts
         total = 0.0
         for v in parts:
             total += v
@@ -863,11 +1138,17 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement]) -> Book:
         "シート": [SHEET_ASSUMPTIONS, title, SHEET_MONTHLY],
         "前提の数": len(spec.assumptions),
         "根拠か出典のない前提": [a.name for a in spec.assumptions if a.unsupported],
+        "根拠か出典のない基準年度の値": [k for k, item in spec.base.items() if item.unsupported],
         "仮の前提": [a.name for a in spec.assumptions if a.provisional],
+        "仮の基準年度の値": [k for k, item in spec.base.items() if item.provisional],
         "まとめ": {label: value for label, _f, value, _u, _fmt in summary_rows},
         "数値の要件（特例を除く）をすべて満たすか": overall,
         "判定した要件": results,
         "判定しなかった要件": skipped,
+        "数量が2割少ない場合": low,
+        "省力化": shoryoku_summary,
+        "月次の波": spec.waves,
+        "月次": monthly_values,
         "月次の合計と1年目": monthly,
         "合算": {key: py[("合算", key)] for key in ROW_KEYS + ("人件費", "営業利益")},
         "事業ごと": {b.name: {key: py[(b.name, key)] for key in ROW_KEYS + ("人件費", "営業利益")}
@@ -876,6 +1157,102 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement]) -> Book:
         "指標": ind,
     }
     return Book([pa, pl, mo], names, summary)
+
+
+def _low_case(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool) -> Optional[Dict[str, Any]]:
+    """数量の前提を0.8倍にして計算し直した、数値の要件（特例を除く）の判定。数量の前提がなければ None。"""
+    names = spec.quantity_names()
+    if not scenario or not names:
+        return None
+    out: Dict[str, Any] = {"数量の前提": names, "割合": LOW_FACTOR}
+    try:
+        low = build(spec.scaled_quantities(LOW_FACTOR), requirements, scenario=False).summary
+    except SpecError as e:
+        out.update({"判定": youken.UNJUDGEABLE, "理由": str(e), "要件ごと": []})
+        return out
+    out["判定"] = low["数値の要件（特例を除く）をすべて満たすか"]
+    out["要件ごと"] = [{"名前": r["名前"], "特例": r["特例"], "判定": r["判定"],
+                     "年ごと": [{"年": p["年"], "伸び": p["伸び"], "判定": p["判定"]} for p in r["年ごと"]]}
+                    for r in low["判定した要件"]]
+    out["まとめ"] = low["まとめ"]
+    return out
+
+
+def _shoryoku_rows(pl: Sheet, sh: Shoryoku, steps_at: Dict[Tuple[str, int], str], row: int, years: int,
+                   va: List[Any], va_r: int, first: str, last: str, year_ref: str, note_col: str) -> Dict[str, Any]:
+    """計画のシートに、省力化の指標（別紙1・別紙3 と同じ計算）を数式で書く。Python の値も返す。"""
+    pairs = shoryoku_pairs(sh)
+    cut, after = shoryoku_hours(sh)
+    index = shoryoku_index(cut, after)
+    saved = cut - after
+    added = (va[years] - va[0]) / years
+    items = {k: v.value for k, v in sh.items.items()}
+    payback = payback_years(items["投資総額"], saved, items["年間稼働日数"], items["人件費単価"], added)
+
+    def ref(side: str, no: int) -> str:
+        return steps_at[(side, no)]
+
+    before_sum = "+".join(ref("前", s.no) for s in sh.before)
+    after_sum = "+".join(ref("後", s.no) for s in sh.after)
+    paired_b = "+".join(ref("前", b.no) for b, _a in pairs) or "0"
+    paired_a = "+".join(ref("後", a.no) for _b, a in pairs) or "0"
+    neg = "+".join(f"MIN(0,{ref('後', a.no)}-{ref('前', b.no)})" for b, a in pairs) or "0"
+    pos = "+".join(f"MAX(0,{ref('後', a.no)}-{ref('前', b.no)})" for b, a in pairs) or "0"
+
+    col = "B"
+    pl.put(f"A{row}", "【省力化の指標（様式その3 の別紙1・別紙3 と同じ計算）】", bold=True)
+    row += 1
+    at = {}
+    lines = (
+        ("削減", "設備導入により削減される業務に要していた時間（時間/日）",
+         f"=(({before_sum})-({paired_b})-({neg}))/60", cut, FMT_PER, "別紙1 の D3。内容が変わらない作業は、減った分だけを数える"),
+        ("導入後", "設備導入後に発生する業務に要する時間（時間/日）",
+         f"=(({after_sum})-({paired_a})+({pos}))/60", after, FMT_PER, "別紙1 の J3。内容が変わらない作業は、増えた分だけを数える"),
+        ("省力化指数", "省力化指数", None, index, FMT_PER, "別紙1 の M3。（削減される時間−導入後に発生する時間）÷削減される時間"),
+        ("削減工数", "削減工数（時間/日）", None, saved, FMT_PER, "別紙3 の削減工数。削減される時間−導入後に発生する時間"),
+        ("増加した付加価値額", "増加した付加価値額（円/年）", None, added, FMT_YEN,
+         f"応募手引8 p.59 の例の形：（{years}年目の付加価値額−基準年度の付加価値額）÷{years}"),
+        ("投資回収期間", "投資回収期間（年）", None, payback, FMT_PER,
+         "別紙3 の C3。投資総額÷（削減工数×年間稼働日数×人件費単価＋増加した付加価値額）"),
+    )
+    for key, _label, _f, _v, _fmt, _note in lines:
+        at[key] = row
+        row += 1
+    for key, label, formula, value, fmt, note in lines:
+        r = at[key]
+        pl.put(f"A{r}", label)
+        pl.put(f"{note_col}{r}", note)
+        if key == "省力化指数":
+            d, j = f"{col}{at['削減']}", f"{col}{at['導入後']}"
+            formula = f"=IF({d}=0,0,IF(({d}-{j})/{d}<0,0,({d}-{j})/{d}))"
+        elif key == "削減工数":
+            formula = f"={col}{at['削減']}-{col}{at['導入後']}"
+        elif key == "増加した付加価値額":
+            formula = f"=({last}{va_r}-$B${va_r})/{year_ref}"
+        elif key == "投資回収期間":
+            denom = f"({col}{at['削減工数']}*年間稼働日数*人件費単価+{col}{at['増加した付加価値額']})"
+            formula = f'=IFERROR(IF(投資総額/{denom}<=0,"",投資総額/{denom}),"")'
+        pl.formula(f"{col}{r}", formula, "" if value is None else value, fmt)
+    return {
+        "削減される業務に要していた時間": cut,
+        "導入後に発生する業務に要する時間": after,
+        "省力化指数": index,
+        "削減工数": saved,
+        "年間稼働日数": items["年間稼働日数"],
+        "人件費単価": items["人件費単価"],
+        "投資総額": items["投資総額"],
+        "増加した付加価値額": added,
+        "投資回収期間": payback,
+        "表示": {
+            "省力化指数": youken.round_half_up(index, 2),
+            "削減工数": youken.round_half_up(saved, 2),
+            "投資回収期間": None if payback is None else youken.round_half_up(payback, 2),
+        },
+        "組になった作業": [{"導入前": b.no, "導入後": a.no} for b, a in pairs],
+        "根拠か出典のない数": [k for k, v in sh.items.items() if v.unsupported],
+        "仮の数": [k for k, v in sh.items.items() if v.provisional],
+        "_次の行": row + 1,
+    }
 
 
 def _derived_rows(pl: Sheet, py: Dict[Tuple[str, str], List[float]], at: Dict[Tuple[str, str], int], group: str,
@@ -892,6 +1269,31 @@ def _derived_rows(pl: Sheet, py: Dict[Tuple[str, str], List[float]], at: Dict[Tu
           - py[(group, "その他の経費")][y])
     py.setdefault((group, "営業利益"), [0.0] * n1)[y] = op
     pl.formula(r["営業利益"], f"={r['売上']}-{r['原材料費']}-{r['人件費']}-{r['減価償却費']}-{r['その他の経費']}", op, FMT_YEN)
+
+
+# ---------------------------------------------------------------- 数字の控え（計画書との照合に使う。TASKS B13・B16）
+
+NUMBERS_FILE = "記録/財務モデルの数字.json"
+
+
+def numbers_record(spec: Spec, book: Book, seido_rel: Optional[str], when: str) -> Dict[str, Any]:
+    """計画書・様式・入力シートと照らすための、財務モデルの数字の控え（前提の番号・値と、計画の数字）。"""
+    assumptions = []
+    groups = [("P", spec.assumptions), ("J", list(spec.base.values()))]
+    if spec.shoryoku is not None:
+        groups.append(("S", list(spec.shoryoku.items.values())))
+    for prefix, items in groups:
+        for n, item in enumerate(items, start=1):
+            assumptions.append({"番号": f"{prefix}-{n:02d}", "名前": item.name, "値": item.value, "単位": item.unit,
+                                "根拠": item.basis, "出典": item.source, "仮": item.provisional})
+    steps = []
+    if spec.shoryoku is not None:
+        for side, items in (("導入前", spec.shoryoku.before), ("導入後", spec.shoryoku.after)):
+            steps += [{"側": side, "No": s.no, "工程": s.name, "分": s.minutes, "種別": s.kind,
+                       "対応する導入前": s.before_no} for s in items]
+    return {"説明": "財務モデル.xlsx を作ったときの数字の控え（zaimu_model.py が書く。書き換えない）",
+            "作った日時": when, "制度データ": seido_rel, "前提": assumptions, "中身": book.summary,
+            "省力化の作業": steps}
 
 
 # ---------------------------------------------------------------- 計算し直した値と比べる

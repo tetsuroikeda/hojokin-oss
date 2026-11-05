@@ -225,6 +225,100 @@ def write_json(folder: Path, rel: str, data: dict) -> Path:
     return target
 
 
+PACKAGE_SEIDO = "制度データの抜き出し.json"
+PACKAGE_STYLE = "文体の基準C.md"
+PACKAGE_PLAN = "計画書の本文.md"
+STAGES = ("現状と目標", "課題", "解決策", "効果")
+LENGTH_VERDICTS = ("足りる", "足りない", "長すぎる")
+
+
+def _nfkc(text) -> str:
+    import unicodedata
+
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(text or "")))
+
+
+def _filled(entry, *keys) -> bool:
+    return isinstance(entry, dict) and all(str(entry.get(k) if entry.get(k) is not None else "").strip() for k in keys)
+
+
+def completeness(folder: Path, parsed: Optional[dict]) -> dict:
+    """審査役の結果がそろっているか（DESIGN 8章「審査役が返すもの」。TASKS B18）。審査に渡したものと照らして数える。
+
+    - 文体の基準 C：渡した文体の基準C.md の番号の観点ごとに、判定と理由があるか（T9-3b）。
+    - 審査項目と加点項目：渡した制度データの抜き出しの審査項目と加点の項目ごとに、点数と理由があるか（T9-5）。
+    - 筋立て：4つの段がそろっているかと、切れ目の数（T8-8）。分量：目安のない項目ごとの判定（T8-9）。
+    """
+    parsed = parsed if isinstance(parsed, dict) else {}
+    pkg = places.actual(folder, PACKAGE_DIR)
+    out: dict = {}
+    style_text, seido, plan_text = "", {}, ""
+    if pkg is not None and pkg.is_dir():
+        try:
+            style_text = (pkg / PACKAGE_STYLE).read_text(encoding="utf-8")
+        except OSError:
+            pass
+        try:
+            seido = json.loads((pkg / PACKAGE_SEIDO).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            seido = {}
+        try:
+            plan_text = (pkg / PACKAGE_PLAN).read_text(encoding="utf-8")
+        except OSError:
+            pass
+    c_expected = sorted({int(n) for n in re.findall(r"^([0-9]+)\.\s", style_text, flags=re.M)})
+    c_got = {e.get("番号") for e in parsed.get("文体C") or [] if _filled(e, "判定", "理由")}
+    c_missing = [n for n in c_expected if n not in c_got and str(n) not in {str(x) for x in c_got}]
+    out["文体の基準C"] = f"{len(c_expected) - len(c_missing)}/{len(c_expected)}"
+    out["判定と理由のない観点"] = c_missing
+
+    names = [x.get("名前") for x in (seido.get("審査項目") or []) if isinstance(x, dict) and x.get("名前")]
+    bonus = seido.get("加点")
+    bonus_items = bonus.get("項目") if isinstance(bonus, dict) else bonus
+    names += [x.get("名前") for x in (bonus_items or []) if isinstance(x, dict) and x.get("名前")]
+    scored = {_nfkc(e.get("名前")) for e in (parsed.get("審査項目") or []) + (parsed.get("加点項目") or [])
+              if _filled(e, "名前", "理由") and isinstance(e.get("点数"), (int, float)) and not isinstance(e.get("点数"), bool)}
+    missing = [n for n in names if _nfkc(n) not in scored]
+    out["審査項目と加点項目"] = f"{len(names) - len(missing)}/{len(names)}"
+    out["点数と理由のない項目"] = missing
+
+    flow = parsed.get("筋立て") if isinstance(parsed.get("筋立て"), dict) else {}
+    stages = flow.get("段") if isinstance(flow.get("段"), dict) else {}
+    present = [s for s in STAGES if stages.get(s)]
+    out["4つの段"] = f"{len(present)}/{len(STAGES)}"
+    out["切れ目"] = len(flow.get("切れ目") or [])
+
+    written = set(re.findall(r"^### (.+)$", plan_text, flags=re.M))
+    no_target = []
+    for form in seido.get("様式") or []:
+        for item in (form.get("項目") or []) if isinstance(form, dict) else []:
+            limit = ((item.get("分量の上限") or {}).get("値") or {}) if isinstance(item, dict) else {}
+            if item.get("名前") in written and not (isinstance(limit, dict) and limit.get("種類") == "目安"):
+                no_target.append(item["名前"])
+    judged = {_nfkc(e.get("項目")): e.get("判定") for e in parsed.get("分量") or [] if isinstance(e, dict)}
+    length_missing = [n for n in no_target if judged.get(_nfkc(n)) not in LENGTH_VERDICTS]
+    out["分量"] = f"{len(no_target) - len(length_missing)}/{len(no_target)}"
+    out["分量の判定のない項目"] = length_missing
+    # 「足りない」「長すぎる」は、分母と同じ項目（計画書の本文で渡した、目安のない項目）の中だけで数える（B19 の直し）。
+    # 渡していない項目（まだ書いていない様式の項目など）への判定は、完成を止めない
+    short_or_long = [n for n in no_target if judged.get(_nfkc(n)) in ("足りない", "長すぎる")]
+    out["足りない・長すぎる"] = len(short_or_long)
+    out["足りない・長すぎる項目"] = short_or_long
+    out["渡していない項目への分量の判定"] = sorted(
+        e.get("項目") for e in parsed.get("分量") or []
+        if isinstance(e, dict) and _nfkc(e.get("項目")) not in {_nfkc(n) for n in no_target})
+    out["そろった"] = not c_missing and not missing and len(present) == len(STAGES) and not length_missing \
+        and bool(c_expected) and bool(names)
+    return out
+
+
+def _safe_completeness(folder: Path, parsed) -> Optional[dict]:
+    try:
+        return completeness(folder, parsed)
+    except Exception as e:  # 数えられなくても、報告は保存する（hook を落とさない）
+        return {"数えられなかった理由": f"{type(e).__name__}: {e}"}
+
+
 def save_report(folder: Path, report, where: str, payload: dict, trusted: bool) -> Optional[str]:
     """審査役の報告を、控えと結び付けて保存する。保存したら、その場所（会社のフォルダから）を返す。
 
@@ -278,6 +372,7 @@ def save_report(folder: Path, report, where: str, payload: dict, trusted: bool) 
         "session_id": payload.get("session_id"),
         "保存した時刻": _now_text(folder),
         "結果": parsed,
+        "そろい具合": _safe_completeness(folder, parsed) if same_number else None,
         "読めなかった理由": reason or None,
         "ハッシュの注意": hash_problem or None,
         "報告のハッシュ": text_hash(report),

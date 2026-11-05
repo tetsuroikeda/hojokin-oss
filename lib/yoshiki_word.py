@@ -69,6 +69,34 @@ MAX_SHOWN = 80
 MAX_DIFFS = 20
 
 
+# 表の欄を持つ項目（「（1）事業者情報」の商号又は名称など）の欄の名前の区切り（TASKS B14a）
+FIELD_SEP = "：欄："
+
+
+def field_label(item: str, field: str) -> str:
+    return f"{item}{FIELD_SEP}{field}"
+
+
+def item_positions(form: Dict) -> List[Tuple[str, Dict]]:
+    """様式の項目と、項目の「欄」の、対応づけた書き込む位置（名前, 位置）。欄の名前は「項目：欄：欄の名前」。
+
+    表の欄を持つ項目は、制度データの項目に `"欄": [{"名前": "商号又は名称", "書き込む位置": {…}}]` を持つ。
+    """
+    out = []
+    for entry in form.get("項目") or [] if isinstance(form, dict) else []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("名前"))
+        pos = entry.get("書き込む位置")
+        if isinstance(pos, dict) and pos.get("範囲"):
+            out.append((name, pos))
+        for sub in entry.get("欄") or []:
+            spos = sub.get("書き込む位置") if isinstance(sub, dict) else None
+            if isinstance(spos, dict) and spos.get("範囲"):
+                out.append((field_label(name, str(sub.get("名前"))), spos))
+    return out
+
+
 class FormError(ValueError):
     """様式を読めない、書き込む位置が見つからない・正しくない。"""
 

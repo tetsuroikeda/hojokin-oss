@@ -23,5 +23,12 @@ def handle(data: dict, folder: Path) -> Optional[dict]:
         torikomi.remember(data, folder)
     except Exception:
         pass
+    # 【質問】の答え（B15）。社長の手直しの版を残した後に書く（質問の記録の変化は、次の応答の終わりに「ツール」で残る）
+    try:
+        import shitsumon_hooks
+
+        shitsumon_hooks.user_prompt_submit(data, folder)
+    except Exception:
+        pass
     # 社長が申請書を手で直していれば、前の版との差分を渡す（B5。版の記録が「社長」で残した後に）
     return hand_edit_hooks.add(None, folder, "UserPromptSubmit")
