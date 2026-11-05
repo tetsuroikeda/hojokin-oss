@@ -492,6 +492,54 @@ def write_value(blob: bytes, field: str, value: Any, screen: Optional[str] = Non
     return new_blob, summary
 
 
+def write_values(blob: bytes, entries: Sequence[Tuple[str, Any, Optional[str], Optional[Tuple[str, int]]]]
+                 ) -> Tuple[bytes, List[Dict]]:
+    """入力シートに、まとめて値を書く（entries は（欄, 値, 画面, 上限）の並び）。書いたことの要約の並びも返す。
+
+    1件ずつの write_value と同じ決まりで書く（担当者が入れる欄と、上限〈目安でないもの〉を超える文字は FormError）。
+    ただし、比べるのは全部を書いた後に1回だけにする（200欄ほどを1件ずつ書いて比べると、30秒ほどかかるため。B29）。
+    値の欄のセルがない行（社長が Excel で消した など）は、1件ずつの write_value で書く。範囲の外が変われば OutsideChange。
+    """
+    parts, name, grid = read_grid(blob)
+    _head, cols = grid.header()
+    rows = grid.field_rows()
+    staff_of = {r: s for r, _sc, _f, s in rows}
+    pending: Dict[str, Tuple[Node, Any]] = {}
+    later: List[Tuple[str, Any, Optional[str], Optional[Tuple[str, int]]]] = []
+    summaries: List[Dict] = []
+    for field, value, screen, limit in entries:
+        r = _find_row(grid, field, screen)
+        if staff_of[r]:
+            raise FormError(f"欄「{field}」は、担当者が画面で入れる欄です。ツールは入れません")
+        note = ""
+        if isinstance(value, str):
+            chars = len(clean_text(value))
+            if limit is not None and chars > limit[1]:
+                if limit[0] in HARD_LIMITS:
+                    raise FormError(f"欄「{field}」の{limit[0]}は{limit[1]}字で、書こうとした値は{chars}字です。短くしてください")
+                note = f"{limit[0]}の{limit[1]}字を超えています（{chars}字）"
+        ref = f"{cols[HEAD_VALUE]}{r}"
+        summary = {"欄": field, "セル": ref, "値": value}
+        if note:
+            summary["注意"] = note
+        summaries.append(summary)
+        cell = grid.cells.get(ref)
+        if cell is None:
+            later.append((field, value, screen, limit))
+        else:
+            pending[ref] = (cell, value)
+    data = grid.data
+    for ref, (cell, value) in sorted(pending.items(), key=lambda kv: kv[1][0].start, reverse=True):
+        data = xml_spans.splice(data, cell.start, cell.end, _cell_bytes(cell.prefix, ref, cell.attrs, value))
+    new_blob = yoshiki_word.rebuild_zip(blob, {name: data}) if pending else blob
+    for field, value, screen, limit in later:
+        new_blob, _summary = write_value(new_blob, field, value, screen, limit)
+    differences = compare_xlsx(blob, new_blob)
+    if differences:
+        raise OutsideChange(differences)
+    return new_blob, summaries
+
+
 # ---------------------------------------------------------------- 比べる
 
 
