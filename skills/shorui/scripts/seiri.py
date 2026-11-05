@@ -100,8 +100,20 @@ def main(argv) -> int:
                 print(f"補助プログラムを読み込めませんでした（{type(e).__name__}: {e}）。何もしていません。")
                 return 1
             entry = seiri.organize(folder, args.path, args.category, args.kind, args.date, args.partner, args.note)
-            _print_json({"結果": "原本の置き場へ移しました", "元の場所": entry["元の場所"], "新しい場所": entry["場所"],
-                         "台帳": entry})
+            out = {"結果": "原本の置き場へ移しました", "元の場所": entry["元の場所"], "新しい場所": entry["場所"],
+                   "台帳": entry}
+            # 原本が新しくなったとき：古い原本から作った写しがある案件を知らせる（SPEC F5。TASKS B10）
+            try:
+                from lib import utsushi
+                stale = [s for s in utsushi.stale(folder) if s["新しい原本"] == entry["場所"]]
+            except Exception:
+                stale = []
+            if stale:
+                out["新しくなった原本"] = {
+                    "説明": "同じ種類の古い原本から作った写しがあります。社長に影響する案件を知らせ、utsushi.py の remake で"
+                            "写しを作り直してください。古い原本は消しません",
+                    "作り直す写し": stale}
+            _print_json(out)
         elif args.command == "keep":
             entry = seiri.keep(folder, args.path, args.reason)
             _print_json({"結果": "動かさずに、確かめ済みとして台帳に残しました", "台帳": entry})

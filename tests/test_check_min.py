@@ -324,9 +324,13 @@ def test_evidence_table_add_replace_and_unsupported_rows(env: kt.Env) -> None:
     assert rows[1]["出典"] == "社員名簿（架空）"
     code_, report = env.count()
     assert code_ == 3
-    assert [(f["場所"], f["文字"]) for f in report["根拠なし"]] == [("3行目", "2027年3月")]
+    unsupported = [(f["場所"], f["文字"]) for f in report["根拠なし"]]
+    assert ("3行目", "2027年3月") in unsupported  # 出典が空の行
+    # 本文の数字のうち、根拠対照表にないもの（B16。T9-1）と、表の記述が本文にない行（食い違い）
+    assert any(where == "1-2 経営課題" and "30件" in text for where, text in unsupported)
+    assert [f["文字"] for f in report["食い違い"]] == ["2027年3月"]
     env.evidence(kt.GOOD_EVIDENCE, replace=True)
-    assert len(konkyo.read((env.folder / kt.EVIDENCE).read_bytes())) == 3
+    assert len(konkyo.read((env.folder / kt.EVIDENCE).read_bytes())) == len(kt.GOOD_EVIDENCE)
     assert env.count()[0] == 0
     # 同じ中身からは同じバイト列（版の履歴で、変わっていない回を見分けやすい）
     assert konkyo.build(konkyo.read((env.folder / kt.EVIDENCE).read_bytes())) == (env.folder / kt.EVIDENCE).read_bytes()
@@ -349,6 +353,21 @@ def test_count_requires_an_evidence_table(env: kt.Env) -> None:
     env.trial_application(kt.GOOD_BODIES, sheet_values=kt.GOOD_SHEET)
     code_, report = env.count()
     assert code_ == 3 and any("根拠対照表.xlsx がありません" in p for p in report["問題"])
+
+
+def test_screen_forms_are_not_listed_as_unmapped() -> None:
+    """入力先が画面の様式（入力シートで書く）は、「書き込む位置をまだ対応づけていない」に挙げない（B1b の前の直し）。"""
+    from lib import kakunin
+
+    def value(v):
+        return {"値": v, "出典": [{"資料": "要領", "ページ": 1}], "根拠の文": "様式", "状態": "確認済み"}
+
+    seido = {"様式": [
+        {"名前": "画面の様式", "入力先": value({"種類": "画面"}), "項目": [{"名前": "経営計画"}]},
+        {"名前": "ファイルの様式", "入力先": value({"種類": "ファイル", "提出の形式": "PDF"}),
+         "項目": [{"名前": "事業計画"}, {"名前": "書いた項目", "書き込む位置": {"範囲": "word/document.xml#1"}}]},
+    ]}
+    assert kakunin._unmapped_items(seido) == ["事業計画"]
 
 
 # ---------------------------------------------------------------- 外と別名、会社のフォルダでないとき

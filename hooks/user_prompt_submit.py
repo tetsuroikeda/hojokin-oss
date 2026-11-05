@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import hand_edit_hooks
 import version_hooks
 from lib import browser_guard
 
@@ -17,4 +18,17 @@ from lib import browser_guard
 def handle(data: dict, folder: Path) -> Optional[dict]:
     browser_guard.user_prompt_submit(data, folder)
     version_hooks.user_prompt_submit(data, folder)
-    return None
+    try:  # 発言にある外の場所を、取り込みのために控える（B10。lib/torikomi.py）。落ちても、ほかの処理は止めない
+        from lib import torikomi
+        torikomi.remember(data, folder)
+    except Exception:
+        pass
+    # 【質問】の答え（B15）。社長の手直しの版を残した後に書く（質問の記録の変化は、次の応答の終わりに「ツール」で残る）
+    try:
+        import shitsumon_hooks
+
+        shitsumon_hooks.user_prompt_submit(data, folder)
+    except Exception:
+        pass
+    # 社長が申請書を手で直していれば、前の版との差分を渡す（B5。版の記録が「社長」で残した後に）
+    return hand_edit_hooks.add(None, folder, "UserPromptSubmit")

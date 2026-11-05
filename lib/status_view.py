@@ -1,9 +1,11 @@
 """開いたときに渡す情報（期限と作業、どの段階にも共通の決まり）と、今の状態の画面（SPEC F6・T6-1・共通の要件
-「開いたときの情報量」、DESIGN 4.2・4.6・4.7 の3と5・5章。TASKS M3）。
+「開いたときの情報量」、DESIGN 4.2・4.6・4.7 の3と5・5章。TASKS M3・K1・K2）。
 
 開いたとき（SessionStart）に、hooks/status_hooks.py から session_start() を呼ぶ。
 - 期限と作業（lib/deadlines.py）を、期限切れ・今日やること・近い締切・遅れている作業の順に、それぞれ締切順で書き、
   どの段階にも共通の決まりの短い文（lib/common_rules.py。1,200字まで）を添えて、Claude に渡す。
+  続けて、外部への依頼と待ちの一覧（状態・だれがするか・目安の日数・始める日。済んだものも）を書く（K2）。
+  期限ごとに、見込みか確定か（「確定」は社長に確かめた出来事の日付から出したもの）を示す（K1）。
   この2つは、ほかの処理が渡す情報の後ろに、見出し BRIEF_HEAD から始まる1つのまとまりとして置く（テストでも見分けるため）。
 - 渡す情報の全体を10,000字以内にする（超えると先頭の2,000字しか渡らないため。SPEC 共通の要件）。期限の部分は
   DEADLINE_MAX 字まで、決まりの文は削らず、超える分はほかの処理の情報の後ろを切る（仮。B27 で T0-5 とともに見直す）。
@@ -33,8 +35,10 @@ PAGE_NAME = "今の状態.html"
 TRIM_NOTE = "\n…（開いたときの情報が10,000字を超えるため、ここで切りました）"
 CUT_NOTE = "\n…（長いため、ここで切りました。続きは 今の状態.html にあります）"
 NONE_TEXT = "- ありません"
-LATE_EMPTY = "- ありません（始める日〈依頼する日など〉は、まだ計算していません）"
+LATE_EMPTY = NONE_TEXT
 STRONG_MARK = "【7日以内】"
+REQUESTS_HEAD = "### 外部への依頼と待ち"
+REQUEST_LIST_MAX = 12  # 依頼の一覧に並べる数
 
 
 # ---- 開いたときに渡す文 ----
@@ -42,6 +46,40 @@ STRONG_MARK = "【7日以内】"
 
 def _group_title(group: str, near_days: int) -> str:
     return f"{group}（{near_days}日以内）" if group == deadlines.NEAR else group
+
+
+def task_facts(task: deadlines.Task) -> List[str]:
+    """取り直しと依頼の作業に添える、始める日・目安の日数・だれがするか・状態の文。提出の作業は空。"""
+    out = []
+    if task.kind == deadlines.REQUEST:
+        if task.start is not None:
+            out.append(f"始める日（頼む日）：{task.start_label()}")
+        if task.lead:
+            out.append(f"目安：{task.lead}")
+        out.append(f"だれ：{task.who}")
+        out.append(f"状態：{task.state}")
+    elif task.kind == deadlines.REACQUIRE:
+        out.append(f"だれ：{task.who}" if task.who else "")
+        if task.state:
+            out.append(f"状態：{task.state}")
+    return [x for x in out if x]
+
+
+def request_line(task: deadlines.Task, today) -> str:
+    """外部への依頼の一覧の1行（済んだものを含む）。"""
+    d = task.due
+    parts = [f"{task.doc}（{task.case}）", f"状態：{task.state}", task.who]
+    if task.lead:
+        parts.append(f"目安：{task.lead}")
+    if task.start is not None:
+        parts.append(f"始める日：{task.start_label()}")
+    days = d.days_text(today) if not task.done else ""
+    parts.append(f"締切：{d.label()}" + (f"（{days}）" if days else ""))
+    line = "- " + "｜".join(parts)
+    memo = [n for n in task.notes if not n.startswith("締切は")]
+    if memo:
+        line += "。" + "。".join(memo)
+    return line
 
 
 def task_line(task: deadlines.Task, today) -> str:
@@ -52,7 +90,7 @@ def task_line(task: deadlines.Task, today) -> str:
         head += STRONG_MARK
     parts = [head, task.case, task.what]
     line = "- " + "｜".join(parts)
-    extra = list(task.notes)
+    extra = task_facts(task) + list(task.notes)
     if d.dated and d.last < today:
         if task.remedies:
             extra.append("過ぎたときの手：" + "／".join(task.remedies))
@@ -77,7 +115,8 @@ def deadline_text(ov: deadlines.Overview) -> str:
         f"今日：{when}。日時は日本時間。近い締切は{ov.near_days}日以内で、{deadlines.STRONG_DAYS}日以内には{STRONG_MARK}を付けています。",
         "最初の返事で、下の「期限切れ」「今日やること」「近い締切」「遅れている作業」を、この順に、締切順のまま社長に示してください。"
         "期限切れには、添えた「過ぎたときの手」を出典つきで示し、資料に手が見当たらなければ、事務局への問い合わせ文の案を作ってください。"
-        "日付と日数は、この一覧の値を使ってください（頭で計算し直さない）。「見込み」は予定の日付から出したもので、まだ決まっていません。",
+        "日付と日数は、この一覧の値を使ってください（頭で計算し直さない）。「見込み」は予定の日付から出したもので、まだ決まっていません。"
+        "「確定」は、社長に確かめた出来事の日付から出したものです。",
     ]
     if not ov.cases and not ov.problems:
         lines += ["", "案件はまだありません（期限はありません）。"]
@@ -90,6 +129,15 @@ def deadline_text(ov: deadlines.Overview) -> str:
         lines += [task_line(t, today) for t in items[:GROUP_LIST_MAX]]
         if len(items) > GROUP_LIST_MAX:
             lines.append(f"- ほか {len(items) - GROUP_LIST_MAX}件（今の状態.html にあります）")
+    requests = ov.requests()
+    if requests:
+        lines += ["", REQUESTS_HEAD]
+        lines += [request_line(t, today) for t in requests[:REQUEST_LIST_MAX]]
+        if len(requests) > REQUEST_LIST_MAX:
+            lines.append(f"- ほか {len(requests) - REQUEST_LIST_MAX}件（今の状態.html にあります）")
+        asking = [t.doc for t in requests if not t.lead and not t.done]
+        if asking:
+            lines.append(f"目安の日数をまだ聞いていない依頼：{'、'.join(asking)}（社長に聞いて、junbi の期限の道具で残します）。")
     broken = [c for c in ov.cases if c.problem]
     if broken or ov.problems:
         lines += ["", "### 組み立てられなかったもの"]
@@ -101,6 +149,8 @@ def deadline_text(ov: deadlines.Overview) -> str:
     if ov.later or ov.undated:
         lines += ["", f"そのほかに、{ov.near_days}日より先の期限が{len(ov.later)}件、日付がまだ出せない期限が"
                       f"{len(ov.undated)}件あります（一覧は 今の状態.html）。"]
+    if ov.done:
+        lines.append(f"済んだもの（届いた依頼、取る期間の内の原本がある書類）が{len(ov.done)}件あります（今の状態.html）。")
     if ov.cases:
         lines.append(f"今の状態の画面：会社のフォルダの直下の {PAGE_NAME}（見るだけ。開くたびに作り直します）。")
     text = "\n".join(lines)
@@ -172,20 +222,27 @@ def _task_rows(tasks: List[deadlines.Task], today, overdue: bool = False) -> Lis
         d = t.due
         cls = "overdue" if overdue else ("strong" if d.strong(today) else "")
         mark = f' <span class="mark">{_e(STRONG_MARK)}</span>' if d.strong(today) and not overdue else ""
-        memo = list(t.notes)
+        memo = []
+        if t.start is not None:
+            memo.append(f"始める日（頼む日）：{t.start_label()}")
+        if t.lead:
+            memo.append(f"目安：{t.lead}")
+        memo += list(t.notes)
         if d.basis:
             memo.append("もとにした日：" + "、".join(d.basis))
         if overdue:
             memo.append("過ぎたときの手：" + "／".join(t.remedies) if t.remedies else "過ぎたときの手が資料に見当たりません")
+        state = t.state if t.state else "—"
         rows.append(
             f'<tr class="{cls}"><td>{_e(d.label())}{mark}</td><td>{_e(d.days_text(today))}</td>'
-            f"<td>{_e(t.case)}</td><td>{_e(t.what)}</td><td>{'見込み' if d.estimate else '—'}</td>"
+            f"<td>{_e(t.case)}</td><td>{_e(t.what)}</td><td>{_e(d.state_word)}</td>"
+            f"<td>{_e(t.who or '—')}</td><td>{_e(state)}</td>"
             f"<td>{_e('、'.join(d.sources))}</td><td>{_e('。'.join(memo))}</td></tr>")
     return rows
 
 
-TASK_HEAD = ("<tr><th>締切</th><th>あと何日</th><th>案件</th><th>期限の名前</th><th>見込み</th>"
-             "<th>出典</th><th>メモ</th></tr>")
+TASK_HEAD = ("<tr><th>締切</th><th>あと何日</th><th>案件</th><th>期限の名前</th><th>見込みか確定か</th>"
+             "<th>だれがするか</th><th>依頼の状態</th><th>出典</th><th>メモ</th></tr>")
 
 
 def _task_table(tasks: List[deadlines.Task], today, empty: str, overdue: bool = False) -> List[str]:
@@ -194,7 +251,38 @@ def _task_table(tasks: List[deadlines.Task], today, empty: str, overdue: bool = 
     return ["<table>", TASK_HEAD] + _task_rows(tasks, today, overdue) + ["</table>"]
 
 
-def render_page(ov: deadlines.Overview, company_name: str) -> str:
+DEFECTS_FILE = "記録/不備の一覧.json"  # 書類の不備チェック（skills/shorui/scripts/fubi.py が書く。TASKS B12）
+WEIGHTS = ("重大", "要確認", "助言")
+
+
+def defect_section(folder: Path) -> List[str]:
+    """不備の節（重さごとの件数と一覧。直し方、直したか）。不備の一覧がなければ空（B12 の最小限。B27 で仕上げる）。"""
+    import json
+
+    path = Path(folder) / DEFECTS_FILE
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        items = [i for i in data.get("不備") or [] if isinstance(i, dict)]
+    except (OSError, ValueError, AttributeError):
+        return ["<h2>不備</h2>", f'<p class="note">{_e(DEFECTS_FILE)} が読めません</p>']
+    left = [i for i in items if not i.get("直した")]
+    counts = "、".join(f"{w} {sum(1 for i in left if i.get('重さ') == w)}件" for w in WEIGHTS)
+    out = ["<h2>不備</h2>",
+           f"<p>直していない不備：{_e(counts)}（{_e(data.get('案件', ''))}。確かめた日時 {_e(data.get('確かめた日時', ''))}）</p>"]
+    if items:
+        out += ["<table>", "<tr><th>重さ</th><th>種類</th><th>書類</th><th>直し方</th><th>直したか</th></tr>"]
+        order = {w: n for n, w in enumerate(WEIGHTS)}
+        for i in sorted(items, key=lambda i: (bool(i.get("直した")), order.get(i.get("重さ"), 9))):
+            cls = ' class="overdue"' if i.get("重さ") == "重大" and not i.get("直した") else ""
+            out.append(f"<tr{cls}><td>{_e(i.get('重さ', ''))}</td><td>{_e(i.get('種類', ''))}</td><td>{_e(i.get('書類', ''))}</td>"
+                       f"<td>{_e(i.get('直し方', ''))}</td><td>{'直した' if i.get('直した') else 'まだ'}</td></tr>")
+        out.append("</table>")
+    return out
+
+
+def render_page(ov: deadlines.Overview, company_name: str, folder: Optional[Path] = None) -> str:
     """今の状態.html の中身（最小限。B27 で、工程表・書類ごとの状態・不備・申請書の進み具合などを足す）。"""
     today = ov.today
     when = dates.format_date(today) + ("（日付を差し替えています）" if ov.substituted else "")
@@ -214,8 +302,7 @@ def render_page(ov: deadlines.Overview, company_name: str) -> str:
     for group in deadlines.GROUPS:
         items = ov.groups.get(group) or []
         out.append(f"<h3>{_e(_group_title(group, ov.near_days))}</h3>")
-        empty = "ありません（始める日〈依頼する日など〉は、まだ計算していません）" if group == deadlines.LATE else "ありません"
-        out += _task_table(items, today, empty, overdue=group == deadlines.OVERDUE)
+        out += _task_table(items, today, "ありません", overdue=group == deadlines.OVERDUE)
     out.append(f"<h3>{_e(f'{ov.near_days}日より先の期限')}</h3>")
     out += _task_table(ov.later, today, "ありません")
     out.append("<h3>日付がまだ出せない期限</h3>")
@@ -226,6 +313,22 @@ def render_page(ov: deadlines.Overview, company_name: str) -> str:
         out.append("</table>")
     else:
         out.append('<p class="note">ありません</p>')
+    out.append("<h3>済んだもの</h3>")
+    out += _task_table(ov.done, today, "ありません")
+
+    out.append("<h2>外部への依頼と待ち</h2>")
+    requests = ov.requests()
+    if requests:
+        out += ["<table>", "<tr><th>書類</th><th>案件</th><th>依頼の状態</th><th>だれがするか</th><th>目安の日数</th>"
+                "<th>始める日</th><th>締切</th><th>見込みか確定か</th><th>メモ</th></tr>"]
+        for t in requests:
+            memo = [n for n in t.notes if not n.startswith("締切は")]
+            out.append(f"<tr><td>{_e(t.doc)}</td><td>{_e(t.case)}</td><td>{_e(t.state)}</td><td>{_e(t.who)}</td>"
+                       f"<td>{_e(t.lead or 'まだ聞いていません')}</td><td>{_e(t.start_label() or '—')}</td>"
+                       f"<td>{_e(t.due.label())}</td><td>{_e(t.due.state_word)}</td><td>{_e('。'.join(memo))}</td></tr>")
+        out.append("</table>")
+    else:
+        out.append('<p class="note">ありません。人に頼む書類（見積書、金融機関の確認書など）は、頼んだときに Claude に伝えてください。</p>')
 
     out.append("<h2>案件</h2>")
     if not ov.cases:
@@ -261,6 +364,7 @@ def render_page(ov: deadlines.Overview, company_name: str) -> str:
                        "期数・有効期限・中身は、書類の確かめ（shorui）で見ます。</p>")
         for note in case.notes:
             out.append(f'<p class="note">{_e(note)}</p>')
+    out += defect_section(folder) if folder is not None else []
     if ov.problems:
         out.append("<h2>組み立てられなかったもの</h2><ul>")
         out += [f"<li>{_e(p)}</li>" for p in ov.problems]
@@ -305,6 +409,15 @@ def page_wanted(folder: Path, ov: deadlines.Overview) -> bool:
     return bool(ov.cases) or os.path.lexists(str(Path(folder) / PAGE_NAME))
 
 
+def refresh_page(folder: Path) -> Optional[str]:
+    """今の状態の画面だけを作り直す（書類の不備を残した後など。TASKS B12）。作れなかったときは、そのわけ。"""
+    folder = Path(folder)
+    ov = deadlines.build(folder)
+    if not page_wanted(folder, ov):
+        return None
+    return write_page(folder, render_page(ov, deadlines.nfc(folder.name), folder))
+
+
 # ---- 開いたとき ----
 
 
@@ -319,7 +432,7 @@ def session_start(folder: Path, output: Optional[dict]) -> dict:
         text = deadline_text(ov)
         if page_wanted(folder, ov):
             try:
-                problem = write_page(folder, render_page(ov, deadlines.nfc(folder.name)))
+                problem = write_page(folder, render_page(ov, deadlines.nfc(folder.name), folder))
             except Exception as error:
                 problem = f"{PAGE_NAME} を作れませんでした（{type(error).__name__}: {error}）"
             if problem:

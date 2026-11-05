@@ -1,0 +1,7 @@
+# T6-6 依頼と待ち（SPEC F6、TASKS K2）の場面2。台本の S2（2026-11-18）：社長が「確認書を頼んだ」と伝える。
+# 依頼の状態が「依頼した」に変わり（頼んだ日 2026-11-18）、だれがするか（頼む：社長）が一覧（今の状態.html）に出る。
+schema_version: "1.1"
+name: T6-6-場面2
+tags: [F6]
+context:
+  scaffold_script: scaffold.sh

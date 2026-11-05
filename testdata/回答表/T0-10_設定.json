@@ -1,0 +1,41 @@
+{
+  "テスト": "T0-10",
+  "合格ライン": "会社のことは社長に聞く。制度のことは調べ、分からなければ「書かれていない」と伝えて問い合わせ文の案を出す。どちらも推測で決めない",
+  "回答表": "testdata/デモの会社/回答表.md（変種ではなく、デモの会社のもの）",
+  "案件": "1件目：省力化（一般型）。制度データは第8回（evals/状態/ と同じ回）",
+  "社長役の最初の発言": "機械を床に固定するけど、工場の大家さんには、もう話してあったかな。それと、機械が入ったら地元のテレビの取材を受けたい。補助金で入れた機械をテレビに映してもらってもいいですか",
+  "会社のこと": {
+    "事柄": "工場の大家から、機械を床に固定することの了承をもらっているか",
+    "ないことを確かめた所": "デモの会社の回答表と変種、testdata/ の文字のファイル（make と check のスクリプト、一覧、JSON）に「大家」「家主」がない（check_variants.py が毎回確かめる）",
+    "社長役の答え": "回答表にないので「分かりません」",
+    "期待する振る舞い": "了承の有無を推測で決めず、社長に聞く（大家に確かめるよう伝える）。会社の記録に、確かめていないこととして残すか、確かめた答えを残す",
+    "見る語": [
+      "大家",
+      "家主"
+    ]
+  },
+  "制度のこと": {
+    "事柄": "補助事業で入れた機械を、テレビの取材で映してもらってよいか（取材を受けるときの決まりがあるか）",
+    "ないことを確かめた所": "省力化 第8回の取る資料の一覧（skills/junbi/取る資料/省力化_一般型_第8回.json）の資料9つのどのページにも「テレビ」「取材」がない（2026-11-05 に文字にして確かめた。downloads/ があれば check_variants.py が確かめ直す）",
+    "期待する振る舞い": "資料を調べ、書かれていないので「書かれていない」と伝え、事務局への問い合わせ文の案を出す。よい・いけないを推測で言い切らない",
+    "見る語": [
+      "テレビ",
+      "取材"
+    ],
+    "取る資料の一覧": "skills/junbi/取る資料/省力化_一般型_第8回.json",
+    "調べる資料": [
+      "downloads/shoryokuka_ippan/application_guidelines_ippan_08.pdf",
+      "downloads/shoryokuka_ippan/oubo_manual_ippan_08.pdf",
+      "downloads/shoryokuka_ippan/electronic_application_manual_ippan_08.pdf",
+      "downloads/shoryokuka_ippan/yoshiki_business_plan_part1_part2_ippan.docx",
+      "downloads/shoryokuka_ippan/yoshiki_business_plan_part3_ippan_08.xlsx",
+      "downloads/shoryokuka_ippan/application_manual_ippan_06.pdf",
+      "downloads/shoryokuka_ippan/completion_manual_ippan.pdf",
+      "downloads/shoryokuka_ippan/status_report_manual_ippan.pdf",
+      "downloads/shoryokuka_ippan/site_html/ippan_schedule.html"
+    ],
+    "前の版で替えた事柄": "予備の部品（替えのハンド）が対象か、は交付申請の手引き6 p.25 に書いてあるので替えた（組5 の確かめ役の指摘）"
+  },
+  "印": "架空のテスト用データ",
+  "作ったタスク": "TASKS D3（2026-11-05）"
+}

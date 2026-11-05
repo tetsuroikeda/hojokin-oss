@@ -8,9 +8,14 @@
       {"様式": "<制度データの様式の名前>", "対応": [{"項目": "<項目の名前>", "書き込む位置": {"見出し": "…", "場所": "…", "範囲": "見出しの後"}}]}
       EOF
       読み取り役の対応づけを、様式の一覧と照らして確かめ、制度データの 様式[].項目[].書き込む位置 に書く。
-  python3 -B <この場所>/yoshiki.py write --item "<項目の名前>" [--form "<様式の名前>"] [--case] [--stage] [--seido]
-                                       [--source] [--text "<書く文>"]   （--text がなければ標準入力から読む）
-      `案件/<案件>/<段階>/申請書/その1・2.docx` の、その項目の書いてよい範囲に書く（なければ公式資料の様式から写して作る）。
+      表の欄を持つ項目（「（1）事業者情報」の商号又は名称など）は、対応に "欄": "<欄の名前>" を付けると、項目の
+      「欄」の並びに書き込む位置を書く（TASKS B14a）。
+  python3 -B <この場所>/yoshiki.py write --item "<項目の名前>" [--field "<欄の名前>"] [--form "<様式の名前>"] [--case]
+                                       [--stage] [--seido] [--source] [--input <書く文のファイル> | --text "<書く文>"]
+      `案件/<案件>/<段階>/申請書/その1・2.docx` の、その項目（--field があればその欄）の書いてよい範囲に書く
+      （なければ公式資料の様式から写して作る）。
+  python3 -B <この場所>/yoshiki.py pdf [--case] [--stage] [--soffice <LibreOffice の場所>]
+      申請書の その1・2.docx を LibreOffice で PDF にした写しを、段階の `添付する書類/その1・2.pdf` に作る（元は変えない）。
   python3 -B <この場所>/yoshiki.py sheet --field "<欄の名前>" [--screen "<画面の名前>"] [--case] [--stage] [--seido]
                                        [--value "<値>"]   （--value がなければ標準入力から読む）
       `案件/<案件>/<段階>/申請書/入力シート.xlsx` の、その欄の「値」に書く（なければ制度データの申請画面から作る）。
@@ -82,16 +87,25 @@ def parse(argv):
 
     p = sub.add_parser("outline", help="様式の見出し・表・セルの一覧")
     common(p, seido=False)
+    p.add_argument("--excel", action="store_true", help="Excel の様式（その3 など）の、シートごとの書いてよいセルの一覧")
     p.add_argument("--json", action="store_true", help="JSON で出す")
+    p = sub.add_parser("cells", help="Excel の様式（その3 など）の書いてよいセルに書く")
+    common(p, stage=True)
+    p.add_argument("--input", required=True, help="書く値の JSON（会社のフォルダの中。記録/一時/その3の値.json など）。"
+                                                  "{\"値\": [{\"シート\": \"…\", \"セル\": \"C6\", \"値\": …}]} の形")
     p = sub.add_parser("map", help="読み取り役の対応づけを確かめて、制度データに書く")
     common(p)
     p.add_argument("--input", help="対応づけの JSON（会社のフォルダの中のファイル）。省くか - なら標準入力")
     p = sub.add_parser("write", help="様式の項目に書く")
     common(p, stage=True)
     p.add_argument("--item", required=True, help="制度データの様式の項目の名前")
+    p.add_argument("--field", help="項目の中の表の欄の名前（「（1）事業者情報」の「商号又は名称」など）")
     p.add_argument("--form", help="制度データの様式の名前（項目の名前が2つの様式にあるとき）")
     p.add_argument("--text", help="書く文（省くか - なら標準入力）。改行で段落を分ける")
     p.add_argument("--input", help="書く文のファイル（会社のフォルダの中の .txt。記録/一時/書く文.txt など）")
+    p = sub.add_parser("pdf", help="その1・2.docx を PDF にした写しを、添付する書類に作る（元は変えない）")
+    common(p, stage=True, seido=False, source=False)
+    p.add_argument("--soffice", help="LibreOffice（soffice）の場所。省くと決まった場所と Spotlight で探す")
     p = sub.add_parser("sheet", help="入力シートの欄に書く")
     common(p, stage=True, source=False)
     p.add_argument("--field", help="入力シートの欄の名前（制度データの申請画面の欄の名前）")
@@ -101,7 +115,7 @@ def parse(argv):
                                     "{\"値\": [{\"画面\": \"…\", \"欄\": \"…\", \"値\": …}]} の形")
     args = parser.parse_args(argv)
     if args.command is None:
-        raise Refused("outline・map・write・sheet のどれかを付けてください")
+        raise Refused("outline・map・write・sheet・cells・pdf のどれかを付けてください")
     if args.command == "sheet":
         if args.values is not None and (args.field or args.value is not None or args.screen):
             raise Refused("--values と、--field・--value・--screen は一緒に使えません")
@@ -267,19 +281,70 @@ def forms_with_item(seido, item: str, form_name=None):
 
 
 def mapped_positions(form):
-    out = []
-    for entry in form.get("項目") or []:
-        pos = entry.get("書き込む位置") if isinstance(entry, dict) else None
-        if isinstance(pos, dict) and pos.get("範囲"):
-            out.append((str(entry.get("名前")), pos))
-    return out
+    """様式の項目と欄の、対応づけた書き込む位置（lib/yoshiki_word.py の item_positions）。"""
+    from lib import yoshiki_word
+
+    return yoshiki_word.item_positions(form)
+
+
+def field_entry(entry, field: str, create: bool = False):
+    """項目の「欄」の1つ。create なら、なければ足す。なければ None。"""
+    subs = entry.get("欄")
+    if not isinstance(subs, list):
+        if not create:
+            return None
+        subs = entry["欄"] = []
+    for sub in subs:
+        if isinstance(sub, dict) and sub.get("名前") == field:
+            return sub
+    if not create:
+        return None
+    sub = {"名前": field}
+    subs.append(sub)
+    return sub
 
 
 # ---------------------------------------------------------------- 各コマンド
 
 
+def find_excel_source(folder: Path, case: str, given) -> Path:
+    """公式資料の Excel の様式（その3 など）。--source か、案件の資料の一覧の .xlsx の様式。"""
+    if given:
+        real = inside(folder, given, "公式資料の様式")
+    else:
+        listed_rel = f"{TEXT_DIR}/{case}/{LIST_FILE}"
+        if not places.is_inside(folder, f"{TEXT_DIR}/{case}"):
+            raise Refused(f"{TEXT_DIR}/{case}/ が会社のフォルダの外を指しています（別名）。中を見ません。別名を外してください")
+        listed_path = places.actual(folder, listed_rel)
+        placed = {}
+        if listed_path is not None and listed_path.is_file():
+            listed, _ = read_json(folder, str(listed_path), "案件の資料の一覧")
+            placed = listed.get("置き場所") or {} if isinstance(listed, dict) else {}
+        books = sorted({v.get("ファイル") for v in placed.values()
+                        if isinstance(v, dict) and str(v.get("ファイル", "")).lower().endswith((".xlsx", ".xlsm"))})
+        if len(books) != 1:
+            raise Refused(f"公式資料の Excel の様式を決められません（資料の一覧の .xlsx が{len(books)}つ）。"
+                          "--source で、公式資料/ の様式を渡してください")
+        real = inside(folder, books[0], "公式資料の様式")
+    if real.suffix.lower() not in (".xlsx", ".xlsm") or not real.is_file():
+        raise Refused(f"{places.relative_inside(folder, real)} は Excel の様式ではありません")
+    return real
+
+
 def do_outline(folder: Path, args, yw) -> int:
     case = find_case(folder, args.case)
+    if args.excel:
+        from lib import yoshiki_excel
+
+        source = find_excel_source(folder, case, args.source)
+        entries = yoshiki_excel.outline(source.read_bytes())
+        rel = places.relative_inside(folder, source)
+        if args.json:
+            print(json.dumps({"様式": rel, "シート": entries}, ensure_ascii=False, indent=1))
+        else:
+            print(f"様式：{rel}（書いてよいセルは、様式が入力の欄として開けているセル。数式のセルには書かない）")
+            print(yoshiki_excel.outline_text(entries), end="")
+        return OK
     source = find_source(folder, case, args.source)
     _infos, parts = yw.read_parts(source.read_bytes())
     if yw.DOC not in parts:
@@ -324,15 +389,20 @@ def do_map(folder: Path, args, yw) -> int:
         except Refused as e:
             problems.append(f"{k}件目：{e}")
             continue
+        field = pair.get("欄")
+        if field is not None and (not isinstance(field, str) or not field.strip()):
+            problems.append(f"{k}件目（{pair['項目']}）：「欄」は、表の欄の名前の文字にしてください")
+            continue
+        label = yw.field_label(pair["項目"], field) if field else pair["項目"]
         if root is None:
             source = find_source(folder, case, args.source, form)
             root = xml_spans.parse(yw.read_parts(source.read_bytes())[1][yw.DOC])
         try:
-            fixed = yw.check_position(root, pair.get("書き込む位置"), pair["項目"])
+            fixed = yw.check_position(root, pair.get("書き込む位置"), label)
         except yw.FormError as e:
-            problems.append(f"{k}件目（{pair['項目']}）：{e}")
+            problems.append(f"{k}件目（{label}）：{e}")
             continue
-        checked.append((entry, fixed))
+        checked.append((entry, field, fixed))
     if problems:
         print("しませんでした（制度データは変えていません）。直す所：")
         for p in problems:
@@ -343,14 +413,18 @@ def do_map(folder: Path, args, yw) -> int:
         places.no_link_on_the_way(folder, seido_rel)
     except places.PlaceError as e:
         raise Refused(f"{e.link} が別名（シンボリックリンク）になっているので、制度データに書きません")
-    for entry, fixed in checked:
-        entry["書き込む位置"] = fixed
+    for entry, field, fixed in checked:
+        if field:
+            field_entry(entry, field, create=True)["書き込む位置"] = fixed
+        else:
+            entry["書き込む位置"] = fixed
     from lib.docx_min import write_replacing
 
     write_replacing(seido_path, (json.dumps(seido, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     print(f"制度データ（{seido_rel}）に、書き込む位置を{len(checked)}件書きました（様式：{places.relative_inside(folder, source)}）。")
-    for entry, fixed in checked:
-        print(f"- {entry['名前']}：{fixed['範囲']}（見出し「{fixed['見出し']}」、場所 {fixed['場所']}）")
+    for entry, field, fixed in checked:
+        name = yw.field_label(entry["名前"], field) if field else entry["名前"]
+        print(f"- {name}：{fixed['範囲']}（見出し「{fixed['見出し']}」、場所 {fixed['場所']}）")
     return OK
 
 
@@ -359,9 +433,21 @@ def do_write(folder: Path, args, yw) -> int:
     stage = find_stage(folder, case, args.stage)
     seido, _seido_path = find_seido(folder, args.seido)
     form, entry = forms_with_item(seido, args.item, args.form)
-    position = entry.get("書き込む位置")
+    label = args.item
+    if args.field:
+        sub = field_entry(entry, args.field)
+        if sub is None:
+            names = "、".join(str(s.get("名前")) for s in entry.get("欄") or [] if isinstance(s, dict)) or "なし"
+            raise Refused(f"項目「{args.item}」に、欄「{args.field}」がありません（対応づけた欄：{names}）。"
+                          "outline の一覧を読み取り役に渡して、欄ごとに対応づけてください")
+        position = sub.get("書き込む位置")
+        label = yw.field_label(args.item, args.field)
+    else:
+        position = entry.get("書き込む位置")
     if not isinstance(position, dict) or not position.get("範囲"):
-        raise Refused(f"項目「{args.item}」の書き込む位置が、まだ様式と対応づけられていません。outline の一覧を読み取り役に"
+        if not args.field and entry.get("欄"):
+            raise Refused(f"項目「{args.item}」は表の欄ごとに書きます。--field で欄の名前を渡してください")
+        raise Refused(f"「{label}」の書き込む位置が、まだ様式と対応づけられていません。outline の一覧を読み取り役に"
                       "渡して対応づけ、map で制度データに書いてから、もう一度試してください")
     if args.input and args.text is not None:
         raise Refused("--input と --text は一緒に使えません")
@@ -380,7 +466,7 @@ def do_write(folder: Path, args, yw) -> int:
     else:
         before = target.read_bytes()
     try:
-        new_blob, summary = yw.write_item(before, position, text, args.item, mapped_positions(form))
+        new_blob, summary = yw.write_item(before, position, text, label, mapped_positions(form))
     except yw.OutsideChange as e:
         print(f"保存しませんでした：{WORD_FILE} に書くと、書いてよい範囲の外が変わります（{len(e.differences)}か所）。"
               "前のファイルのままです。道具か様式の想定が違うので、作者に知らせてください。")
@@ -398,6 +484,110 @@ def do_write(folder: Path, args, yw) -> int:
     if summary["消した説明の青字の段落"]:
         print(f"- 様式の説明の青字（{summary['消した説明の青字の段落']}段落）は、様式の求めに合わせて消しました。")
     print("- 直前の版と比べ、書いてよい範囲の外は変わっていません。")
+    return OK
+
+
+EXCEL_FILE = "その3.xlsx"
+
+
+def do_cells(folder: Path, args, yw) -> int:
+    """Excel の様式の書いてよいセルに、まとめて書く。1件でも書けなければ何も書かない。"""
+    from lib import yoshiki_excel
+    from lib.docx_min import write_replacing
+
+    case = find_case(folder, args.case)
+    stage = find_stage(folder, case, args.stage)
+    data, _ = read_json(folder, args.input, "書く値の JSON")
+    items = data.get("値") if isinstance(data, dict) else None
+    if not isinstance(items, list) or not items:
+        raise Refused("書く値は {\"値\": [{\"シート\": \"…\", \"セル\": \"C6\", \"値\": …}]} の形で渡してください")
+    target = application_file(folder, case, stage, EXCEL_FILE)
+    first = not os.path.lexists(str(target))
+    if first:
+        before = yoshiki_excel.first_copy(find_excel_source(folder, case, args.source).read_bytes())
+    else:
+        before = target.read_bytes()
+    try:
+        new_blob, summary = yoshiki_excel.write_cells(before, items)
+    except yw.OutsideChange as e:
+        print(f"保存しませんでした：{EXCEL_FILE} に書くと、書いてよい範囲の外が変わります（{len(e.differences)}か所）。"
+              "前のファイルのままです。道具か様式の想定が違うので、作者に知らせてください。")
+        for d in e.differences:
+            print(f"- {d}")
+        return OUTSIDE
+    except yw.FormError as e:
+        print(f"しませんでした（{EXCEL_FILE} は前のままです）。{e}")
+        print("書いてよいセルは outline --excel で確かめてください。")
+        return REFUSED
+    target = application_file(folder, case, stage, EXCEL_FILE)
+    write_replacing(target, new_blob)
+    rel = places.relative_inside(folder, target)
+    made = "公式資料の様式から写して作り（開いたときに計算し直す設定を付けた）、" if first else ""
+    print(f"{rel} に、{made}{summary['書いたセル']}個のセルを書きました（シート：{'・'.join(summary['シート'])}）。")
+    print("- 直前の版と比べ、書いてよい範囲（様式の入力の欄）の外は変わっていません。")
+    print("- 数式のセル（省力化指数・投資回収期間・別紙4 の伸び率など）は、Excel で開いたときに計算されます。"
+          "計画書に書く数字は、財務モデルの道具の出力から取ってください。")
+    return OK
+
+
+ATTACH_DIR = "添付する書類"
+PDF_WORK_DIR = f"{company.MARKER_DIR}/{company.TEMP_DIR}/PDF"
+
+
+def do_pdf(folder: Path, args, yw) -> int:
+    """申請書の その1・2.docx を PDF にした写しを、段階の「添付する書類」に作る。元の Word は変えない。"""
+    import shutil
+    import uuid
+
+    from lib import libreoffice
+    from lib.docx_min import write_replacing
+
+    case = find_case(folder, args.case)
+    stage = find_stage(folder, case, args.stage)
+    src = application_file(folder, case, stage, WORD_FILE)
+    if not src.is_file():
+        raise Refused(f"{places.relative_inside(folder, src)} がまだありません。先に write で様式に書いてください")
+    rel = f"{CASES_DIR}/{case}/{stage}/{ATTACH_DIR}/{Path(WORD_FILE).stem}.pdf"
+    try:
+        places.no_link_on_the_way(folder, rel)
+        places.no_link_on_the_way(folder, PDF_WORK_DIR)
+    except places.PlaceError as e:
+        raise Refused(f"{e.link} が別名（シンボリックリンク）になっているので、書きません。別名を外してください")
+    target = places.actual(folder, rel, partial=True)
+    if not target.parent.is_dir():
+        raise Refused(f"{CASES_DIR}/{case}/{stage}/{ATTACH_DIR}/ がありません。先に junbi で段階のフォルダを作ってください")
+    soffice = args.soffice if args.soffice else libreoffice.find_soffice()
+    if not soffice or not (os.path.isfile(soffice) and os.access(soffice, os.X_OK)):
+        print("しませんでした：LibreOffice が見つからないので、PDF にできません。LibreOffice を入れるか、"
+              f"社長に Word で {WORD_FILE} を開いて「PDF として保存」し、{ATTACH_DIR}/ に置いてもらってください。")
+        return REFUSED
+    before = src.read_bytes()
+    work = places.actual(folder, PDF_WORK_DIR, partial=True) / uuid.uuid4().hex
+    try:
+        work.mkdir(parents=True)
+        try:
+            made = libreoffice.convert_to_pdf(src, work, soffice)
+        except libreoffice.LibreOfficeError as e:
+            print(f"しませんでした：{e}。{WORD_FILE} は前のままです。")
+            return REFUSED
+        data = made.read_bytes()
+        if not data.startswith(b"%PDF"):
+            print("しませんでした：できたファイルが PDF ではありませんでした。作者に知らせてください。")
+            return REFUSED
+        write_replacing(target, data)
+    finally:
+        shutil.rmtree(str(work), ignore_errors=True)
+        try:
+            work.parent.rmdir()
+        except OSError:
+            pass
+    if src.read_bytes() != before:  # 元の Word は変えない（DESIGN 5章）
+        print(f"注意：{WORD_FILE} が変わりました。作者に知らせてください。")
+        return OUTSIDE
+    pages = data.count(b"/Type /Page") - data.count(b"/Type /Pages")
+    shown = f"（{pages}ページ）" if pages > 0 else ""
+    print(f"{rel} に、{WORD_FILE} を PDF にした写しを作りました{shown}。{WORD_FILE} は変えていません。")
+    print("- 書体がない Mac では、別の書体に置き換わります。ページの区切りを、PDF を開いて確かめてください。")
     return OK
 
 
@@ -563,7 +753,8 @@ def main(argv) -> int:
         print(f"補助プログラムを読み込めませんでした（{type(e).__name__}: {e}）。"
               "プラグインを入れ直してから、もう一度試してください。")
         return BROKEN
-    handlers = {"outline": do_outline, "map": do_map, "write": do_write, "sheet": do_sheet}
+    handlers = {"outline": do_outline, "map": do_map, "write": do_write, "sheet": do_sheet, "pdf": do_pdf,
+                "cells": do_cells}
     try:
         return handlers[args.command](folder, args, yw)
     except Refused as e:

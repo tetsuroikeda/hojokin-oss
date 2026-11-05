@@ -203,6 +203,9 @@ def report_json(number: str, findings: Sequence[dict] = (), fence: bool = True, 
     """審査役が返す形の報告（json の囲み付き）。"""
     data = {"確かめの番号": number, "指摘": list(findings),
             "審査項目": [{"名前": "事業の実現可能性（試し）", "点数": 4, "理由": "工程と体制が具体的", "弱い所": "なし"}],
+            # 4つの段と切れ目（B19。完成の記録は、4つの段がそろい切れ目がないときだけ残る）
+            "筋立て": {"段": {"現状と目標": ["1-1 現状分析"], "課題": ["1-2 経営課題"], "解決策": ["1-2 経営課題"],
+                           "効果": ["6. 補足事項"]}, "切れ目": []},
             "まとめ": "試しの報告"}
     data.update(extra)
     text = json.dumps(data, ensure_ascii=False, indent=1)
@@ -239,7 +242,7 @@ class Env:
         self.root = tmp_path
         self.plugin = tmp_path / "plugin"
         ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
-        for sub in ("lib", "skills", "hooks"):
+        for sub in ("lib", "skills", "hooks", "schema"):  # schema：会社の記録を読むとき（文体の避けたい言い方。B17）
             shutil.copytree(REPO_ROOT / sub, self.plugin / sub, ignore=ignore)
         (self.plugin / "docs").mkdir()
         shutil.copy2(REPO_ROOT / "docs" / "style-criteria.md", self.plugin / "docs" / "style-criteria.md")
@@ -397,4 +400,6 @@ GOOD_EVIDENCE = [
     {"記述": "月400件から月650件", "種類": "数字", "書いた場所": "1-1 現状分析", "出典": "受注の台帳（架空） p.1"},
     {"記述": "4人", "種類": "数字", "書いた場所": "1-2 経営課題", "出典": "社長の答え（2026-11-04）"},
     {"記述": "月30件", "種類": "数字", "書いた場所": "1-2 経営課題", "出典": "社長の答え（2026-11-04）"},
+    # B16：本文の数字（単位つき）・日付・固有名詞は、すべて根拠対照表にたどれること（T9-1）
+    {"記述": "2年", "種類": "数字", "書いた場所": "1-1 現状分析", "出典": "受注の台帳（架空） p.1"},
 ]

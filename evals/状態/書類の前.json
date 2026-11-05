@@ -1,0 +1,51 @@
+{
+  "説明": "保存した状態「書類の前」の戻し方（evals/_lib/fukugen.py が読む。TASKS B9）。「書く前」と同じデモの会社（架空）のフォルダから、原本と書類の台帳を除いたもの（書類をまだ入れていない形）。書類の整理と不備のケース（T5-1〜T5-4・T5-8・T8-13）で、ケースの材料の書類が、保存した原本と「同じ中身」にならないようにするため。保存したものは evals/状態/書く前/ を使い回す",
+  "保存した状態": "書く前",
+  "除くもの": ["原本/", "記録/書類の台帳.json"],
+  "今日の日付": "2026-11-05",
+  "制度データ": [
+    {
+      "元": "testdata/正解/省力化_第8回.json",
+      "先": "記録/制度データ/省力化_第8回.json",
+      "注記": "「書く前」と同じ。資料の文を写さない形の正解を置く（根拠の文は入っていない）"
+    }
+  ],
+  "公式資料": [
+    {
+      "取る資料": "skills/junbi/取る資料/省力化_一般型_第8回.json",
+      "案件": "2026_省力化（一般型）第9回",
+      "案件の回": "第9回",
+      "注記": "「書く前」と同じ（第9回の案件を、直近回の第8回の資料で進める形）",
+      "ファイル": {
+        "https://shoryokuka.smrj.go.jp/assets/pdf/application_guidelines_ippan_08.pdf": "shoryokuka_ippan/application_guidelines_ippan_08.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/oubo_manual_ippan_08.pdf": "shoryokuka_ippan/oubo_manual_ippan_08.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/electronic_application_manual_ippan_08.pdf": "shoryokuka_ippan/electronic_application_manual_ippan_08.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/doc/yoshiki_business_plan_part1_part2_ippan.docx": "shoryokuka_ippan/yoshiki_business_plan_part1_part2_ippan.docx",
+        "https://shoryokuka.smrj.go.jp/assets/xls/yoshiki_business_plan_part3_ippan_08.xlsx": "shoryokuka_ippan/yoshiki_business_plan_part3_ippan_08.xlsx",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/application_manual_ippan_06.pdf": "shoryokuka_ippan/application_manual_ippan_06.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/completion_manual_ippan.pdf": "shoryokuka_ippan/completion_manual_ippan.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/status_report_manual_ippan.pdf": "shoryokuka_ippan/status_report_manual_ippan.pdf",
+        "https://shoryokuka.smrj.go.jp/ippan/schedule/": "shoryokuka_ippan/site_html/ippan_schedule.html"
+      }
+    }
+  ],
+  "段階のフォルダ": [
+    {
+      "案件": "2026_省力化（一般型）第9回",
+      "制度データ": "記録/制度データ/省力化_第8回.json",
+      "フォルダ": ["1_申請"]
+    }
+  ],
+  "概要と流れ": [
+    {
+      "案件": "2026_省力化（一般型）第9回",
+      "注記": "「書く前」と同じ説明の文（この戻し方のために短く書いたもの。資料の文は写さない）",
+      "入力": {
+        "制度の概要": [
+          "人手が足りない中小企業が、作業を機械やシステムに置き換えて省力化するための設備投資を支える国の補助金です。",
+          "やまぶき惣菜では、盛り付け・計量・包装・検査をつなぐラインの導入に使う予定です。"
+        ]
+      }
+    }
+  ]
+}

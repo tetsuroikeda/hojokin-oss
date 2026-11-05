@@ -412,12 +412,36 @@ def rule_line(rule: dict) -> str:
             f"覚えた日 {rule['覚えた日']}）")
 
 
-def listing(folder: Path) -> str:
-    """覚えていることの一覧（何を、いつ、どこから）。変更の履歴は版の履歴から見る（B3 で足す）。"""
+def listing(folder: Path, changes: Optional[Dict[str, List[dict]]] = None) -> str:
+    """覚えていることの一覧（何を、いつ、どこから）。
+
+    changes（lib/record_changes.py の changes()）を渡すと、変わった項目の下に変更の履歴（いつ、何から何に、だれが）を添え、
+    消えた項目も挙げる。履歴は版の履歴から作る（ここでは Git を読み込まない。開いたときの hook を軽く保つため）。
+    """
     data = load(folder)
-    if not data["項目"]:
+    if not data["項目"] and not changes:
         return "会社の記録には、まだ何も覚えていません。"
     lines = [f"会社の記録（{RECORD_FILE}）に覚えていること（{len(data['項目'])}件）："]
+    lines += _listing_body(data)
+    if changes:
+        from lib import record_changes
+
+        with_history = []
+        for line in lines:
+            with_history.append(line)
+            m = re.match(r"^- \[([^\]]+)\]", line)
+            if m:
+                with_history += record_changes.change_lines(changes, m.group(1))
+        lines = with_history
+        gone = record_changes.removed_lines(changes, [it["id"] for it in data["項目"]])
+        if gone:
+            lines.append(f"## 消えた項目（{len(gone)}件。前の版から戻せます）")
+            lines += gone
+    return "\n".join(lines)
+
+
+def _listing_body(data: dict) -> List[str]:
+    lines: List[str] = []
     for kind in KINDS:
         items = _items(data, kind)
         if not items:
@@ -435,7 +459,56 @@ def listing(folder: Path) -> str:
                 pointed = "、".join(item["指摘された審査項目"]) or "なし"
                 lines.append(f"- [{item['id']}] {item['案件']}：{item['結果']}（指摘された審査項目：{pointed}。"
                              f"出典：{source_text(item['出典'])}。覚えた日 {item['覚えた日']}）")
-    return "\n".join(lines)
+    return lines
+
+
+# ---- 根拠対照表の出典（記録から書いた箇所。SPEC F13「記録から書いた箇所は根拠対照表で分かるようにする」、T13-4） ----
+
+_EVIDENCE_REF = re.compile(r"会社の記録\s*[:：]?\s*((?:事実|決まり|不備|採否)-[0-9]{4})(?:（([^）]*)）)?")
+
+
+def evidence_rows(folder: Path, rows: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]], int]:
+    """根拠対照表の行の出典のうち、会社の記録の項目を指すもの（「会社の記録 事実-0005」）を確かめてそろえる。
+
+    - 項目の id が記録になければ RecordError（記録にない項目を出典にしない）。
+    - 「会社の記録」とだけ書いて id がなければ RecordError（どの項目から書いたか分かるようにする）。
+    - あれば、出典の文の中の「会社の記録 <id>（…）」を、記録の項目の見せ方（evidence_label。名前や区分つき）にそろえる。
+      ほかの出典（書類とページなど）と並べて書いてあれば、そちらはそのまま残す。
+    (そろえた行, 記録から書いた行の数) を返す。記録がまだなく、記録を指す行もなければ、そのまま返す。
+    """
+    if not any("会社の記録" in (r.get("出典") or "") for r in rows):
+        return rows, 0
+    data = load(folder)
+    out = []
+    problems = []
+    used = 0
+    for n, row in enumerate(rows, 1):
+        source = row.get("出典") or ""
+        if "会社の記録" not in source:
+            out.append(row)
+            continue
+        refs = [ref for ref, _note in _EVIDENCE_REF.findall(source)]
+        if not refs:
+            problems.append(f"{n}行目の出典「{short(source, 40)}」に、会社の記録の項目の id（事実-0001 など）がありません")
+            continue
+        missing = [r for r in refs if not any(it["id"] == r for it in data["項目"])]
+        if missing:
+            problems.append(f"{n}行目の出典の {'・'.join(missing)} は、会社の記録にありません（record.py list で id を確かめる）")
+            continue
+
+        def label(m):
+            canonical = evidence_label(find(data, m.group(1)))
+            note = (m.group(2) or "").strip()
+            # 書いた人が添えた補足（「履歴事項全部証明書 1ページ」など）は残す。名前や区分と同じなら重ねない
+            if note and f"（{note}）" not in canonical:
+                canonical += f"（{note}）"
+            return canonical
+
+        out.append(dict(row, 出典=_EVIDENCE_REF.sub(label, source)))
+        used += 1
+    if problems:
+        raise RecordError("。".join(problems))
+    return out, used
 
 
 # ---- 開いたときの要約（SessionStart） ----

@@ -1,0 +1,7 @@
+# T6-6 依頼と待ち（SPEC F6、TASKS K2）の場面3。台本の S3（2026-11-30）：信用金庫からの確認書（材料）が入れ口に入り、
+# 社長が「届いた」と伝える。書類を整理し、依頼の状態が「届いた」に変わる。
+schema_version: "1.1"
+name: T6-6-場面3
+tags: [F6]
+context:
+  scaffold_script: scaffold.sh

@@ -49,6 +49,9 @@ INIT_FILES_CODE = (
 class Company:
     """道具で用意した会社のフォルダと、そこで hook を動かす道具。form は版の持ち方（"git"・"files"）。"""
 
+    # 開いたときの「前回から増えた・変わった書類」（B9）も、start で除くか。版の履歴のテストだけが True にする
+    drop_shorui = False
+
     def __init__(self, tmp_path: Path, name: str = "山田 製作所", before_init=None, form: str = GIT) -> None:
         assert form in FORMS, form
         self.form = form
@@ -100,7 +103,7 @@ class Company:
         """開いたとき。M3 が毎回添える「期限と作業・共通の決まり」（lib/status_view.py）は除いて返す
         （版や原本の照らしのテストが見るのは、ほかの処理が渡す情報のため）。除いて何も残らなければ None。
         そのままの出力は start_raw。"""
-        return without_brief(self.start_raw(source, session=session, env=env))
+        return without_brief(self.start_raw(source, session=session, env=env), drop_shorui=self.drop_shorui)
 
     def start_raw(self, source: str = "startup", session: str = SESSION, env: Optional[dict] = None):
         return self.hook("SessionStart", {"source": source}, session=session, env=env)
@@ -198,9 +201,22 @@ def denied_reason(output) -> str:
     return hso["permissionDecisionReason"]
 
 
-def without_brief(output):
+SHORUI_HEAD = "## hojokin：前回から増えた・変わった書類"  # hooks/shorui_hooks.py の HEAD（B9）
+
+
+def _without_shorui(text: str) -> str:
+    """開いたときの、前回から増えた・変わった書類のまとまり（B9）を除く。版の履歴のテストが見るのは、ほかの処理の情報のため。"""
+    start = text.find(SHORUI_HEAD)
+    if start < 0:
+        return text
+    end = text.find("\n## ", start + len(SHORUI_HEAD))
+    rest = text[:start] + (text[end + 1:] if end >= 0 else "")
+    return rest.strip("\n")
+
+
+def without_brief(output, drop_shorui: bool = False):
     """開いたときの出力から、期限と作業・共通の決まりのまとまり（lib/status_view.py の BRIEF_HEAD から後ろ）を除く。
-    除いて何も残らなければ None。"""
+    drop_shorui なら、前回から増えた・変わった書類のまとまり（B9）も除く。除いて何も残らなければ None。"""
     if output is None:
         return None
     hso = output.get("hookSpecificOutput") or {}
@@ -208,6 +224,8 @@ def without_brief(output):
     if not isinstance(text, str) or status_view.BRIEF_HEAD not in text:
         return output
     rest = status_view.without_brief(text)
+    if drop_shorui:
+        rest = _without_shorui(rest)
     if not rest and set(output) == {"hookSpecificOutput"} and set(hso) <= {"hookEventName", "additionalContext"}:
         return None
     result = dict(output)

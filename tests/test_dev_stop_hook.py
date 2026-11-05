@@ -67,3 +67,71 @@ def test_stop_blocking_after_max() -> None:
     assert state["blocks"] == 0
     # 通ったことにはしない
     assert state["passed"] == "old"
+
+
+# ---- 重ねて流さない（11/5。同じ Mac で並べて動くセッションの負荷を減らす） ----
+
+
+def _transcript(tmp_path: Path, entries: list) -> Path:
+    import json
+    path = tmp_path / "会話.jsonl"
+    path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n", encoding="utf-8")
+    return path
+
+
+def _prompt(text: str) -> dict:
+    return {"type": "user", "message": {"role": "user", "content": text}}
+
+
+def _tool(name: str) -> dict:
+    return {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": name, "input": {}}]}}
+
+
+def _result() -> dict:
+    return {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "content": "ok"}]}}
+
+
+def test_edited_this_turn_looks_after_the_last_prompt(tmp_path: Path) -> None:
+    # 前のターンに Edit があっても、最後の発言の後に編集の道具がなければ流さない
+    path = _transcript(tmp_path, [_prompt("直して"), _tool("Edit"), _result(), _prompt("状態は？"), _tool("Bash"), _result()])
+    assert hook.edited_this_turn(path) is False
+    path = _transcript(tmp_path, [_prompt("直して"), _tool("Read"), _result(), _tool("Write"), _result()])
+    assert hook.edited_this_turn(path) is True
+    # 読めない会話の記録は、いつもどおり流す（None）
+    assert hook.edited_this_turn(tmp_path / "ない.jsonl") is None
+
+
+def test_lock_is_taken_once_and_stale_lock_is_retaken(tmp_path: Path) -> None:
+    import json
+    lock = tmp_path / hook.LOCK_FILE
+    assert hook.take_lock(lock, "fp")
+    # 自分が持っている間、ほかの持ち主（生きている pid）とみなして取れない
+    lock.write_text(json.dumps({"pid": os.getppid(), "fingerprint": "fp"}), encoding="utf-8")
+    assert not hook.take_lock(lock, "fp2")
+    # 持ち主の pid が生きていなければ、取り直す
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    lock.write_text(json.dumps({"pid": dead.pid, "fingerprint": "fp"}), encoding="utf-8")
+    assert hook.take_lock(lock, "fp3")
+    hook.release_lock(lock)
+    assert not lock.exists()
+
+
+def test_wait_for_lock_skips_when_the_same_fingerprint_passed(tmp_path: Path) -> None:
+    import json
+    lock = tmp_path / hook.LOCK_FILE
+    passed = tmp_path / hook.PASSED_FILE
+    lock.write_text(json.dumps({"pid": os.getppid(), "fingerprint": "fp"}), encoding="utf-8")
+    # ほかのセッションが流している間：待っても終わらなければ busy（差し戻さない）
+    assert hook.wait_for_lock(lock, "fp", passed, wait=0.2, poll=0.05) == "busy"
+    # ほかのセッションで同じ指紋が通っていれば、流さない
+    hook.add_passed(passed, "fp")
+    assert hook.wait_for_lock(lock, "fp", passed, wait=0.2, poll=0.05) == "passed"
+    # 錠が空けば、自分が流す
+    lock.unlink()
+    assert hook.wait_for_lock(lock, "fp-new", passed, wait=0.2, poll=0.05) == "run"
+
+
+def test_fast_tests_use_at_most_six_workers() -> None:
+    label, cmd = hook.CHECKS[1]
+    assert cmd[cmd.index("-n") + 1] == "6"

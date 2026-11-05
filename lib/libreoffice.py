@@ -88,11 +88,26 @@ def recalc_xlsx(src: Path, work: Path, soffice: str, timeout: int = TIMEOUT) -> 
     work は、呼ぶ側が用意した空の一時の場所（会社のフォルダの .hojokin/一時/ の下など）。
     中に、ファイルの写し（in/）、保存し直したもの（out/）、プロフィール（profile/）を作る。片付けは呼ぶ側が行う。
     """
+    return _convert(src, work, soffice, "model.xlsx", "xlsx:Calc Office Open XML", "model.xlsx", timeout,
+                    "計算し直したファイル")
+
+
+def convert_to_pdf(src: Path, work: Path, soffice: str, timeout: int = TIMEOUT) -> Path:
+    """src（Word・Excel）の写しを PDF にし、その場所を返す（DESIGN 5章「PDF にするときは写しを作り、元は変えない」）。
+
+    work の使い方は recalc_xlsx と同じ。Excel は、計算し直しを「常に」にしてから PDF にする。
+    """
+    suffix = src.suffix.lower() or ".docx"
+    return _convert(src, work, soffice, "doc" + suffix, "pdf", "doc.pdf", timeout, "PDF")
+
+
+def _convert(src: Path, work: Path, soffice: str, copy_name: str, target: str, out_name: str, timeout: int,
+             what: str) -> Path:
     inbox, outbox, profile = work / "in", work / "out", work / "profile"
     for d in (inbox, outbox):
         d.mkdir(parents=True, exist_ok=True)
     write_profile(profile)
-    copy = inbox / "model.xlsx"
+    copy = inbox / copy_name
     shutil.copyfile(str(src), str(copy))
     cmd = [
         soffice,
@@ -103,7 +118,7 @@ def recalc_xlsx(src: Path, work: Path, soffice: str, timeout: int = TIMEOUT) -> 
         "--nodefault",
         "--nolockcheck",
         "--convert-to",
-        "xlsx:Calc Office Open XML",
+        target,
         "--outdir",
         str(outbox),
         str(copy),
@@ -117,8 +132,8 @@ def recalc_xlsx(src: Path, work: Path, soffice: str, timeout: int = TIMEOUT) -> 
         raise LibreOfficeError(f"LibreOffice が {timeout} 秒たっても終わりませんでした")
     except OSError as e:
         raise LibreOfficeError(f"LibreOffice を動かせませんでした（{e}）")
-    out = outbox / "model.xlsx"
+    out = outbox / out_name
     if r.returncode != 0 or not out.is_file():
         detail = (r.stdout + r.stderr).decode("utf-8", "replace").strip()[-500:]
-        raise LibreOfficeError(f"LibreOffice で計算し直したファイルができませんでした（終了コード {r.returncode}）{detail}")
+        raise LibreOfficeError(f"LibreOffice で{what}ができませんでした（終了コード {r.returncode}）{detail}")
     return out

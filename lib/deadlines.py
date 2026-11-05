@@ -1,10 +1,32 @@
-"""開いたときに示す期限と作業の組み立て（SPEC F6・T6-1、DESIGN 4.6・4.7 の3・6章。TASKS M3）。
+"""開いたときに示す期限と作業の組み立て（SPEC F6・T6-1・T6-4・T6-5・T6-6、DESIGN 4.5・4.6・4.7 の3・6章。TASKS M3・K1・K2）。
 
-期限の台帳（`記録/期限の台帳.json`）は K1 で足す。それまでは、案件ごとに次のものから組み立てる（仮。TASKS M3）。
+案件ごとに次のものから組み立てる。締切と始める日は、読むたびに計算し直す（台帳には書き戻さない。lib/task_ledger.py）。
 - 制度データ（`記録/制度データ/<略称>_<公募回>.json`。lib/seido_data.load_data）の「手続きの段階」の期限の決め方と、
-  「決まった期日」
+  「決まった期日」、「書類」の取得の決まり・期数・依頼の締切・依頼の目安の日数
+- 期限の台帳（`記録/期限の台帳.json`）：出来事の日付と見込みか確定か（lib/event_ledger.py）、作業の状態
+  （外部への依頼の状態・頼む人・目安の日数。lib/task_ledger.py）
 - 会社のフォルダの書類：案件の段階のフォルダ（どこまで進んだか）、提出版の一覧（`記録/提出版.json`。済んだ段階）、
-  書類の台帳（`記録/書類の台帳.json`。集まった原本の種類）と、段階のフォルダの「添付する書類」
+  書類の台帳（`記録/書類の台帳.json`。集まった原本の種類と日付）と、段階のフォルダの「添付する書類」
+- 会社の記録（`記録/会社の記録.json`）の事実：決算の月（期の入れ替わり）、前に社長に聞いた依頼の目安の日数
+- 近い締切の日数：`.hojokin/設定.json` の「近い締切の日数」（はじめは30日。lib/task_ledger.near_days）
+
+作業の種類（DESIGN 4.5）
+- 提出：手続きの段階の期限（下の「作業」）。
+- 取り直し：今の段階とこれからの段階で使う必須の書類のうち、取得の決まり（「発行から3か月以内」）があるもの。
+  締切に間に合う取得の期間を、いちばん早い日（締切から期間を戻した日）といちばん遅い日（締切）で示す（SPEC F6・T6-5）。
+  書類の台帳に、その期間の内の日付の原本があれば済んだものとする。制度データに取得の決まりがなく、有効期限の値が
+  「発行から◯か月以内」の形の文なら、そこから期間を読む（仮）。
+  締切は提出の締切の日なので、早く出すときは、いちばん早い日も早まる（作業に一言添える）。段階の締切を過ぎたものは
+  作らない（段階の期限切れが知らせる）。
+- 依頼：外部への依頼（期限の台帳の作業。K2）。締切は、制度データの書類の「依頼の締切」、なければその書類を使う
+  手続きの段階の期限。始める日（依頼する日）は、締切から目安の日数を戻した日。目安の日数は、台帳の値、制度データの
+  「依頼の目安の日数」、会社の記録の「依頼の目安の日数：<書類>」（前の案件で社長に聞いたもの）の順に取る。
+  どこにもなければ、始める日を出さずに「目安の日数をまだ聞いていません」と添える（Claude が社長に聞く）。
+  「依頼した」のまま目安の日数を過ぎたものは「待っている」と示す。「届いた」「済み」は分け方に入れず、済んだものに並べる。
+- 期の入れ替わり（決算日をまたぐとき）：期数のある必須の書類（納税証明書など）について、会社の記録の決算の月から、
+  締切までに決算日を迎えるとき（前に取ったものが使えなくなる）と、決算日を過ぎたとき（決算日から DAYS_AFTER_CLOSING 日の間か、
+  決算日より前の日付の原本があるとき）に、案件の「書類について」に知らせる（SPEC F6・T6-5）。申告の期限は会社によって
+  違う（延長の特例など）ので、日付を計算しない。決算の月が会社の記録になければ、確かめていないことを知らせる。
 
 作業（Task）
 - 期限の決め方を持つ手続きの段階を、1つの作業（「<段階>の期限」）にする。期限の決め方のない段階（採択発表など）は
@@ -19,9 +41,9 @@
 - 決まった日付：その日（と時刻）。
 - 出来事からの期間：出来事の日付を、期限の台帳の「出来事」（`記録/期限の台帳.json`。lib/event_ledger.py。社長の答えか
   通知の原本で確かめて、採択後の切り替えの道具が残したもの。M10）から先に取り、なければ制度データの「決まった期日」から取る
-  （名前に出来事の名前を含むもの）。予定の日付から出した期限は「見込み」、台帳の「確定」の日付から出した期限は見込みとしない。
-  台帳の日付を使った期限には、もとにした日（basis）を添える。出来事の日付が分からなければ、日付を出さずに決め方を示す
-  （見込みと確定の計算し直しの全体は、K1 の期限の台帳で作る）。
+  （名前に出来事の名前を含むもの）。予定の日付から出した期限は「見込み」、台帳の「確定」の日付から出した期限は「確定」と示す
+  （SPEC F6「見込みと確定」・T6-4）。台帳の日付を使った期限には、もとにした日（basis）を添える。出来事の日付が分からなければ、
+  日付を出さずに決め方を示す。決まった日付（公募要領の日付）は、見込みでないものとして扱い、「確定」の印は付けない。
   か月・年は、同じ日の数字の日（応当日）。その日がない月は、その月の終わりの日にする（仮）。
 - 早いほう：日付の分かるもののうち早いほう。分からないものがあれば「遅くとも」その日（上限）とする。
 - 繰り返し（効果報告など）：事業の完了と決算の月が要るので、M3 では日付を出さない（K1）。
@@ -35,11 +57,11 @@
 分け方（classify）。示す順は、期限切れ・今日やること・近い締切・遅れている作業（DESIGN 4.6）
 - 期限切れ：期限の日（旬なら終わりの日）が今日より前。いちばん上に分けて示す。
 - 今日やること：期限が今日か、始める日が今日。
-- 遅れている作業：始める日（逆算した、依頼する日など）が今日より前で、期限はまだ。始める日は K1・K2 の期限の台帳が
-  持つ（M3 の作業には始める日がないので、M3 ではいつも空）。
-- 近い締切：期限が今日から N 日以内（はじめは30日。7日以内は強めて示す）。日数を変える設定は K1。
+- 遅れている作業：始める日（逆算した、依頼する日）が今日より前で、まだ始めていない（依頼の状態が「まだ」）もの。
+  期限はまだ。
+- 近い締切：期限が今日から N 日以内（はじめは30日。設定で変えられる。7日以内は強めて示す）。
 - それぞれの中は締切順（同じ日なら、案件の名前、段階の順）。どれにも入らないものは、N 日より先（later）と、
-  日付がまだ出せないもの（undated）に分ける。
+  日付がまだ出せないもの（undated）に分ける。済んだもの（届いた依頼、期間の内の原本がある取り直し）は done に並べる。
 
 hook（SessionStart）から呼ぶので、標準のライブラリだけを使う。/usr/bin/python3（3.9）で動く。
 会社のフォルダの中を読むときは、場所の確かめを lib/places.py（と、その文の lib/place_text.py）で行う。
@@ -56,10 +78,17 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from lib import dates, event_ledger, place_text, places
+from lib import dates, event_ledger, place_text, places, task_ledger
 
-NEAR_DAYS = 30  # 近い締切の日数のはじめの値（SPEC F6。経営者・担当者が変える設定は K1）
+NEAR_DAYS = task_ledger.NEAR_DEFAULT  # 近い締切の日数のはじめの値（SPEC F6。変えた値は `.hojokin/設定.json`）
 STRONG_DAYS = 7  # この日数の内の期限は強めて示す（SPEC F6）
+DAYS_AFTER_CLOSING = 92  # 決算日を過ぎたことを知らせる日数（申告をするまでの間。会社によって違うので、広めにとる。仮）
+SUBMIT = "提出"
+REACQUIRE = "取り直し"
+REQUEST = task_ledger.REQUEST
+RECORD_FILE = "記録/会社の記録.json"  # lib/company_record.py の RECORD_FILE と同じ
+LEAD_FACT = "依頼の目安の日数"  # 会社の記録の事実の名前の頭（「依頼の目安の日数：見積書」）
+CLOSING_WORDS = ("決算月", "決算の月")  # 会社の記録の事実の名前（決算の月）
 
 OVERDUE = "期限切れ"
 TODAY = "今日やること"
@@ -120,17 +149,28 @@ class Due:
     check: bool = False  # 制度データで「要確認」か「資料で食い違い」
     sources: List[str] = field(default_factory=list)  # 出典（「要領8 p.26」）
     basis: List[str] = field(default_factory=list)  # もとにした出来事の日付（期限の台帳のもの。「採択発表日 2027年3月10日（水）（確定。…）」）
+    confirmed: bool = False  # 社長に確かめた出来事の日付（期限の台帳の「確定」）から出した（SPEC F6「見込みと確定」）
+    window: bool = False  # 取る期間（取り直し）。first がいちばん早い日、last がいちばん遅い日
 
     @property
     def dated(self) -> bool:
         return self.first is not None and self.last is not None
+
+    @property
+    def state_word(self) -> str:
+        """見込みか確定か（画面と期限の一覧の欄。DESIGN 4.6）。予定の日付から出したものは見込み、ほかは確定。"""
+        if not self.dated:
+            return "—"
+        return "見込み" if self.estimate else "確定"
 
     def label(self) -> str:
         """社長に見せる日付の文。例：2026年10月16日（金）17:00、遅くとも 2028年11月16日（木）（見込み）"""
         if not self.dated:
             head = "日付はまだ出せません"
             return f"{head}（{self.how}）" if self.how else head
-        if self.span:
+        if self.window:
+            text = f"取る期間 {dates.format_date(self.first)}〜{dates.format_date(self.last)}"
+        elif self.span:
             text = f"{self.span}（日はまだ決まっていません）"
         elif self.first != self.last:
             text = f"{dates.format_date(self.first)}〜{dates.format_date(self.last)}のどこか"
@@ -140,6 +180,8 @@ class Due:
             text = f"遅くとも {text}"
         if self.estimate:
             text += "（見込み）"
+        elif self.confirmed:
+            text += "（確定）"
         if self.check:
             text = "【要確認】" + text
         return text
@@ -150,14 +192,23 @@ class Due:
             return ""
         if self.last < today:
             return f"{(today - self.last).days}日過ぎています"
+        if self.window:
+            if self.first > today:
+                return f"取る期間まであと{(self.first - today).days}日"
+            left = (self.last - today).days
+            return "今が取る期間です（今日まで）" if left == 0 else f"今が取る期間です（あと{left}日）"
         if self.first <= today < self.last:
             return "今がその時期です"
         days = (self.first - today).days
         return "今日まで" if days == 0 else f"あと{days}日"
 
     def strong(self, today: date) -> bool:
-        """強めて示すか（今日から7日以内）。"""
-        return self.dated and self.last >= today and (self.first - today).days <= STRONG_DAYS
+        """強めて示すか（今日から7日以内。取る期間は、いちばん遅い日まで7日以内）。"""
+        if not self.dated or self.last < today:
+            return False
+        if self.window:
+            return (self.last - today).days <= STRONG_DAYS
+        return (self.first - today).days <= STRONG_DAYS
 
 
 def parse_point(text: Any) -> Tuple[Optional[date], str]:
@@ -209,6 +260,47 @@ def add_period(day: date, period: Any) -> Optional[date]:
     return None
 
 
+def sub_period(day: date, period: Any) -> Optional[date]:
+    """day から期間だけ前の日（add_period の逆。か月・年は応当日、その日がない月は月の終わりの日。仮）。"""
+    if not isinstance(period, dict):
+        return None
+    n, unit = period.get("数"), period.get("単位")
+    if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+        return None
+    if unit == "日":
+        return day - timedelta(days=n)
+    if unit in ("か月", "年"):
+        months = n if unit == "か月" else n * 12
+        year, index = divmod(day.month - 1 - months, 12)
+        year += day.year
+        month = index + 1
+        return date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
+    return None
+
+
+_LEAD = re.compile(r"([0-9]+)\s*(日|週間|週|か月|ヶ月|カ月|ケ月|箇月|年)")
+_UNITS = {"日": "日", "週間": "週", "週": "週", "か月": "か月", "ヶ月": "か月", "カ月": "か月", "ケ月": "か月",
+          "箇月": "か月", "年": "年"}
+
+
+def parse_period(value: Any) -> Optional[Dict[str, Any]]:
+    """期間の形（{"数": 3, "単位": "か月"}）か、「3か月」「2週間」「14日」の文から期間。数だけなら日数。読めなければ None。"""
+    if isinstance(value, dict):
+        n, unit = value.get("数"), value.get("単位")
+        if isinstance(n, int) and not isinstance(n, bool) and n >= 0 and unit in ("日", "か月", "年"):
+            return {"数": n, "単位": unit}
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return {"数": value, "単位": "日"} if value >= 0 else None
+    if not isinstance(value, str):
+        return None
+    m = _LEAD.search(unicodedata.normalize("NFKC", value))
+    if not m:
+        return None
+    n, unit = int(m.group(1)), _UNITS[m.group(2)]
+    return {"数": n * 7, "単位": "日"} if unit == "週" else {"数": n, "単位": unit}
+
+
 def period_text(period: Any) -> str:
     if isinstance(period, dict):
         return f"{period.get('数')}{period.get('単位')}"
@@ -256,7 +348,8 @@ class Plan:
             return None
         source = f"。出典：{found.source}" if found.source else ""
         basis = f"{found.name} {dates.format_date(found.day)}（{found.state}{source}）"
-        return Due(first=found.day, last=found.day, estimate=found.state != event_ledger.CONFIRMED, basis=[basis])
+        confirmed = found.state == event_ledger.CONFIRMED
+        return Due(first=found.day, last=found.day, estimate=not confirmed, basis=[basis], confirmed=confirmed)
 
     # ---- 決まった期日 ----
 
@@ -352,8 +445,10 @@ class Plan:
             last = add_period(base.last, rule.get("期間"))
             if first is None or last is None:
                 return Due(how=f"{text}（期間が読めません）")
-            return Due(first=first, last=last, estimate=base.estimate or base.first != base.last,
-                       check=base.check, sources=list(base.sources), basis=list(base.basis))
+            estimate = base.estimate or base.first != base.last
+            return Due(first=first, last=last, estimate=estimate,
+                       check=base.check, sources=list(base.sources), basis=list(base.basis),
+                       confirmed=base.confirmed and not estimate)
         if kind == "早いほう":
             parts = [self.compute(r) for r in rule.get("期限") or []] if isinstance(rule.get("期限"), list) else []
             known = [p for p in parts if p.dated]
@@ -369,9 +464,11 @@ class Plan:
             for p in known:
                 sources += [s for s in p.sources if s not in sources]
                 basis += [b for b in p.basis if b not in basis]
+            estimate = any(p.estimate for p in known)
             return Due(first=first, last=last, time=times.pop() if len(times) == 1 else "",
-                       estimate=any(p.estimate for p in known), bound=bool(unknown) or any(p.bound for p in known),
-                       check=any(p.check for p in known), sources=sources, basis=basis)
+                       estimate=estimate, bound=bool(unknown) or any(p.bound for p in known),
+                       check=any(p.check for p in known), sources=sources, basis=basis,
+                       confirmed=not estimate and any(p.confirmed for p in known))
         if kind == "繰り返し":
             window = rule.get("提出期間") if isinstance(rule.get("提出期間"), dict) else {}
             return Due(how=(f"{period_text(rule.get('間隔'))}ごとに{rule.get('回数')}回。"
@@ -416,9 +513,23 @@ class Task:
     stage: str  # 段階の名前
     what: str  # すること（期限の名前）
     due: Due
-    start: Optional[date] = None  # 始める日（K1・K2 の期限の台帳で足す）
+    start: Optional[date] = None  # 始める日（依頼する日。締切から目安の日数を戻した日）
     notes: List[str] = field(default_factory=list)
     remedies: List[str] = field(default_factory=list)  # 期限を過ぎたときの手（制度データの注意。出典つき）
+    kind: str = SUBMIT  # 提出・取り直し・依頼（DESIGN 4.5）
+    state: str = ""  # 依頼の状態（まだ・依頼した・待っている・届いた）。取り直しは、期間の内の原本があれば「済み」
+    who: str = ""  # だれがするか（社長・担当者・外部。依頼は「社長が頼む／外部（信用金庫）が書く」の形）
+    doc: str = ""  # 取り直し・依頼の書類の名前
+    lead: str = ""  # 依頼の目安の日数の文（「14日（社長の答え）」）。分からなければ空
+
+    @property
+    def done(self) -> bool:
+        return self.state in task_ledger.FINISHED
+
+    def start_label(self) -> str:
+        if self.start is None:
+            return ""
+        return dates.format_date(self.start) + ("（見込み）" if self.due.estimate else "")
 
     def sort_key(self) -> Tuple:
         d = self.due
@@ -471,6 +582,12 @@ class Overview:
     later: List[Task]
     undated: List[Task]
     problems: List[str] = field(default_factory=list)
+    done: List[Task] = field(default_factory=list)  # 済んだもの（届いた依頼、期間の内の原本がある取り直し）
+
+    def requests(self) -> List[Task]:
+        """外部への依頼（済んだものを含む）。案件・締切の順。"""
+        found = [t for c in self.cases for t in c.tasks if t.kind == REQUEST]
+        return sorted(found, key=lambda t: (t.case, t.due.first or date.max, t.doc))
 
 
 def _int(value: Any, default: int = 0) -> int:
@@ -545,18 +662,84 @@ def list_cases(folder: Path) -> Tuple[List[str], Optional[str]]:
     return names, None
 
 
-def _ledger_kinds(folder: Path) -> Tuple[Optional[List[str]], str]:
-    """書類の台帳にある原本の種類。読めなければ (None, わけ)。"""
+@dataclass
+class Original:
+    """書類の台帳の原本の1件（種類・日付・場所）。日付は、書類の日付（証明書なら発行日）。"""
+
+    kind: str
+    day: Optional[date]
+    place: str
+
+
+def _ledger_originals(folder: Path) -> Tuple[Optional[List[Original]], str]:
+    """書類の台帳にある原本。読めなければ (None, わけ)。"""
     try:
         from lib import seiri
         ledger = seiri.load_ledger(folder)
     except Exception as error:  # 台帳の問題は、開いたときの照らし（M4）が伝える。ここでは揃い具合を出さないだけ
         return None, f"書類の台帳を読めないため、書類の揃い具合は分かりません（{error}）"
-    kinds = []
+    found = []
     for entry in ledger.get("原本") or []:
         if isinstance(entry, dict) and isinstance(entry.get("種類"), str):
-            kinds.append(entry["種類"])
-    return kinds, ""
+            day, _time = parse_point(entry.get("日付"))
+            found.append(Original(kind=entry["種類"], day=day, place=str(entry.get("場所") or "")))
+    return found, ""
+
+
+def _ledger_kinds(folder: Path) -> Tuple[Optional[List[str]], str]:
+    """書類の台帳にある原本の種類。読めなければ (None, わけ)。"""
+    originals, problem = _ledger_originals(folder)
+    return (None if originals is None else [o.kind for o in originals]), problem
+
+
+def _company_facts(folder: Path) -> List[Dict]:
+    """会社の記録の事実（読めなければ空。読めないことは、開いたときの会社の記録の要約が伝える）。
+
+    lib/company_record.py はスキーマの検査を読み込むので、ここでは同じファイルを標準のライブラリだけで読む。
+    途中のフォルダかそのものが別名なら、読まない（lib/places.py）。
+    """
+    if places.first_link(folder, RECORD_FILE) is not None:
+        return []
+    path = places.actual(folder, RECORD_FILE)
+    if path is None:
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return []
+    items = data.get("項目") if isinstance(data, dict) else None
+    return [it for it in items if isinstance(it, dict) and it.get("種類") == "事実"
+            and isinstance(it.get("名前"), str)] if isinstance(items, list) else []
+
+
+def closing_month(facts: List[Dict]) -> Optional[int]:
+    """会社の記録の「決算の月」（「3月」「3」）。なければ None。"""
+    for fact in facts:
+        name = unicodedata.normalize("NFKC", fact["名前"])
+        if not any(w in name for w in CLOSING_WORDS):
+            continue
+        value = fact.get("値")
+        if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 12:
+            return value
+        m = re.search(r"([0-9]{1,2})\s*月", unicodedata.normalize("NFKC", str(value)))
+        if m and 1 <= int(m.group(1)) <= 12:
+            return int(m.group(1))
+    return None
+
+
+def recorded_lead(facts: List[Dict], doc: str) -> Optional[Tuple[Dict[str, Any], str]]:
+    """会社の記録の「依頼の目安の日数：<書類>」のうち、書類の名前が当たるもの（期間と、出どころの文）。"""
+    for fact in facts:
+        name = unicodedata.normalize("NFKC", fact["名前"]).strip()
+        if not name.startswith(LEAD_FACT):
+            continue
+        target = name[len(LEAD_FACT):].lstrip("：:（(").rstrip("）)").strip()
+        if not target or not names_match(target, doc):
+            continue
+        period = parse_period(fact.get("値"))
+        if period is not None:
+            return period, f"会社の記録 {fact.get('id') or ''}（前に社長に聞いた日数）".replace(" （", "（")
+    return None
 
 
 def _submissions(folder: Path) -> Tuple[List[Dict], str]:
@@ -632,8 +815,15 @@ def _remedies(stage: Dict) -> List[str]:
 
 
 def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Optional[List[str]],
-                ledger_problem: str, events: Optional[Sequence[event_ledger.Event]] = None) -> CaseStatus:
-    """1つの案件の段階・期限・作業・今の段階の必須の書類。events は期限の台帳の、この案件の出来事。"""
+                ledger_problem: str, events: Optional[Sequence[event_ledger.Event]] = None,
+                originals: Optional[List[Original]] = None,
+                requests: Optional[Sequence[task_ledger.Request]] = None,
+                facts: Optional[List[Dict]] = None, today: Optional[date] = None) -> CaseStatus:
+    """1つの案件の段階・期限・作業・今の段階の必須の書類。events は期限の台帳の、この案件の出来事、requests は依頼。
+
+    originals（書類の台帳の原本）・facts（会社の記録の事実）・today があれば、取り直しの作業、期の入れ替わりの知らせ、
+    依頼の作業も作る（K1・K2）。
+    """
     status = CaseStatus(name=case)
     try:
         from lib import seido_data
@@ -665,6 +855,7 @@ def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Option
             nfc(str(e.get("段階") or "")) == status.current_folder
             or nfc(str(e.get("段階") or "")).startswith(status.current_folder + "/") for e in mine)
 
+    open_stages: List[Tuple[Dict, StageRow]] = []  # 済んでいない段階（取り直しと依頼の締切に使う）
     for stage in stages:
         order = _int(stage.get("順番"))
         name = str(stage.get("名前") or stage.get("id") or "")
@@ -675,8 +866,11 @@ def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Option
         else:
             state = "これから"
         due = plan.stage_due(stage, application=stage is application)
-        status.stages.append(StageRow(order=order, name=name, folder=_folder_of(stage), state=state, due=due,
-                                      conditional=stage.get("条件付き") is True))
+        row = StageRow(order=order, name=name, folder=_folder_of(stage), state=state, due=due,
+                       conditional=stage.get("条件付き") is True)
+        status.stages.append(row)
+        if state != "済み":
+            open_stages.append((stage, row))
         if due is None or state == "済み":
             continue
         task = Task(case=case, order=order, stage=name, what=f"{name}の期限", due=due, remedies=_remedies(stage))
@@ -685,7 +879,243 @@ def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Option
         if state == "今":
             task.notes += _document_notes(folder, status, data, stage, ledger, ledger_problem)
         status.tasks.append(task)
+    if today is not None:
+        status.tasks += _reacquire_tasks(status, data, open_stages, originals, today)
+        status.notes += _period_notes(data, open_stages, originals, facts or [], today)
+        status.tasks += _request_tasks(status, data, plan, open_stages, list(requests or []), facts or [], today)
     return status
+
+
+# ---- 取り直しと期の入れ替わり（K1。SPEC F6・T6-5） ----
+
+
+def acquisition_period(doc: Dict) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """書類の取得の決まり（発行からの期間）と出典。制度データの「取得の決まり」が期間の形ならそれ、なければ
+    有効期限の値が「発行から◯か月以内」の形の文ならそこから読む（仮）。どちらもなければ (None, [])。"""
+    rule = doc.get("取得の決まり")
+    if isinstance(rule, dict):
+        period = parse_period(rule.get("値"))
+        if period is not None and period["数"] > 0:
+            return period, source_text(rule)
+    valid = doc.get("有効期限")
+    if isinstance(valid, dict) and isinstance(valid.get("値"), str) and "発行" in valid["値"]:
+        period = parse_period(valid["値"])
+        if period is not None and period["数"] > 0:
+            return period, source_text(valid)
+    return None, []
+
+
+def _docs_for(data: Dict, open_stages: List[Tuple[Dict, StageRow]], required_only: bool = True
+              ) -> List[Tuple[Dict, Dict, StageRow]]:
+    """済んでいない段階で使う、集める書類（様式で作る書類を除く）と、その書類を使ういちばん前の段階。"""
+    found = []
+    docs = data.get("書類")
+    for doc in docs if isinstance(docs, list) else []:
+        if not isinstance(doc, dict) or not isinstance(doc.get("名前"), str):
+            continue
+        if required_only and doc.get("区分") != REQUIRED:
+            continue
+        uses = doc.get("手続き") if isinstance(doc.get("手続き"), list) else []
+        for stage, row in open_stages:
+            if stage.get("id") in uses:
+                if not _is_form(doc, stage, data):
+                    found.append((doc, stage, row))
+                break
+    return found
+
+
+def _latest_original(originals: Optional[List[Original]], name: str) -> Optional[Original]:
+    dated = [o for o in originals or [] if o.day is not None and names_match(name, o.kind)]
+    return max(dated, key=lambda o: o.day) if dated else None
+
+
+def _reacquire_tasks(status: CaseStatus, data: Dict, open_stages: List[Tuple[Dict, StageRow]],
+                     originals: Optional[List[Original]], today: date) -> List[Task]:
+    """取得の決まりのある必須の書類の、取る期間（いちばん早い日〜いちばん遅い日）。
+
+    段階の締切を過ぎたもの（段階の期限切れが知らせる）と、締切の日付がまだ出せないものは作らない。
+    """
+    tasks = []
+    for doc, _stage, row in _docs_for(data, open_stages):
+        period, sources = acquisition_period(doc)
+        due = row.due
+        if period is None or due is None or not due.dated or due.last < today:
+            continue
+        first = sub_period(due.last, period)
+        if first is None:
+            continue
+        name = doc["名前"]
+        window = Due(first=first, last=due.last, window=True, estimate=due.estimate, check=due.check,
+                     sources=sources or list(due.sources), basis=list(due.basis), confirmed=due.confirmed)
+        task = Task(case=status.name, order=row.order, stage=row.name, what=f"{name}を取る（{row.name}に出す）",
+                    due=window, kind=REACQUIRE, doc=name, who="社長")
+        task.notes.append(f"発行から{period_text(period)}以内のものを出します。いちばん遅い日は{row.name}の締切で、"
+                          "早く出すときは、いちばん早い日も早まります")
+        found = _latest_original(originals, name)
+        if found is not None and first <= found.day <= due.last:
+            task.state = task_ledger.DONE
+            task.notes.append(f"今ある原本（{dates.format_date(found.day)}の日付。{found.place}）は取る期間の内です")
+        elif found is not None and found.day < first:
+            task.notes.append(f"今ある原本（{dates.format_date(found.day)}の日付）は取る期間より前のものなので、"
+                              "取る期間の内に取り直します")
+        elif found is None and originals is not None:
+            task.notes.append("書類の台帳に、まだこの書類の原本がありません")
+        tasks.append(task)
+    return tasks
+
+
+def _closing_day(year: int, month: int) -> date:
+    return date(year, month, calendar.monthrange(year, month)[1])
+
+
+def _period_notes(data: Dict, open_stages: List[Tuple[Dict, StageRow]], originals: Optional[List[Original]],
+                  facts: List[Dict], today: date) -> List[str]:
+    """期数のある必須の書類（納税証明書など）の、決算日をまたぐときの知らせ（期の入れ替わり）。"""
+    targets = [(doc, row) for doc, _stage, row in _docs_for(data, open_stages)
+               if isinstance(doc.get("期数"), dict) and row.due is not None and row.due.dated
+               and row.due.last >= today]
+    if not targets:
+        return []
+    month = closing_month(facts)
+    if month is None:
+        names = "、".join(dict.fromkeys(doc["名前"] for doc, _row in targets))
+        return [f"決算の月が会社の記録にないため、決算日をまたぐときの期の入れ替わり（{names}）は確かめていません。"
+                "社長に決算の月を聞いて、会社の記録に残してください"]
+    closed = _closing_day(today.year, month)
+    if closed > today:
+        closed = _closing_day(today.year - 1, month)
+    coming = _closing_day(closed.year + 1, month)
+    notes = []
+    groups: Dict[Tuple[str, date], List[Dict]] = {}
+    for doc, row in targets:
+        groups.setdefault((row.name, row.due.last), []).append(doc)
+    for (stage_name, deadline), docs in groups.items():
+        head = f"{stage_name}の締切（{dates.format_date(deadline)}）"
+        passed, stale, newer = [], [], []
+        for doc in docs:
+            found = _latest_original(originals, doc["名前"])
+            covered = found.day if found is not None else None
+            own = doc.get("発行元") == "自社"
+            if covered is not None and own:
+                # 自社の決算書の日付は事業年度の始めの日（shorui の決まり）。その期の終わりの日で比べ、
+                # 決算日までの期のものなら、直近の期がそろっているとみなす
+                end = add_period(covered, {"数": 1, "単位": "年"})
+                covered = end - timedelta(days=1) if end is not None else covered
+            if covered is not None and (covered >= closed if own else covered > closed):
+                if not own:  # 証明書は、決算日の後に取っても、申告の前なら前の期のまま
+                    newer.append(f"{doc['名前']}（{dates.format_date(found.day)}の日付）")
+                continue
+            if found is not None:
+                stale.append(f"{doc['名前']}（{dates.format_date(found.day)}の日付）")
+            passed.append(doc["名前"])
+        if passed and closed <= deadline and ((today - closed).days <= DAYS_AFTER_CLOSING or stale):
+            text = (f"決算日（{dates.format_date(closed)}）を過ぎました。この決算の申告をした後は、直近の期が入れ替わります"
+                    f"（期の入れ替わり）。{head}までに申告をするなら、{'、'.join(passed)}は申告の後に取ったもので出してください")
+            if stale:
+                text += f"。今ある原本の {'、'.join(stale)} は決算日より前に取ったもので、申告の後は直近の期に足りなくなります"
+            notes.append(text)
+        if newer and (today - closed).days <= DAYS_AFTER_CLOSING:
+            notes.append(f"今ある原本の {'、'.join(newer)} は、決算日（{dates.format_date(closed)}）の後に取ったものです。"
+                         "直近の期（この決算の期）が入っているかを確かめてください")
+        if coming <= deadline:
+            names = "、".join(doc["名前"] for doc in docs)
+            notes.append(f"{head}までに決算日（{dates.format_date(coming)}）を迎えます。その決算の申告の後は直近の期が"
+                         f"入れ替わる（期の入れ替わり）ので、申告の前に取った{names}は使えなくなります。取るのは申告の後にしてください")
+    return notes
+
+
+# ---- 外部への依頼と待ち（K2。SPEC F6・T6-6） ----
+
+
+def find_doc(data: Dict, name: str) -> Optional[Dict]:
+    """制度データの書類のうち、名前が同じもの（なければ、見比べる形で当たるもの）。"""
+    docs = [d for d in data.get("書類") or [] if isinstance(d, dict) and isinstance(d.get("名前"), str)] \
+        if isinstance(data.get("書類"), list) else []
+    exact = [d for d in docs if task_ledger.same_doc(d["名前"], name)]
+    if exact:
+        return exact[0]
+    near = [d for d in docs if names_match(d["名前"], name)]
+    return near[0] if near else None
+
+
+def request_due(data: Dict, plan: "Plan", open_stages: List[Tuple[Dict, StageRow]], doc: Optional[Dict]
+                ) -> Tuple[Due, str]:
+    """依頼の締切（制度データの「依頼の締切」、なければその書類を使う、済んでいない段階の期限）と、何の締切かの文。"""
+    if doc is None:
+        return Due(how="制度データにない書類なので、締切が分かりません"), ""
+    node = doc.get("依頼の締切")
+    if isinstance(node, dict) and node.get("値") is not None:
+        due = plan.compute(node["値"])
+        due.check = due.check or node.get("状態") in CHECK_STATES
+        due.sources = source_text(node) or due.sources
+        return due, "依頼の締切"
+    uses = doc.get("手続き") if isinstance(doc.get("手続き"), list) else []
+    for stage, row in open_stages:
+        if stage.get("id") in uses:
+            if row.due is None:
+                return Due(how=f"{row.name}に期限の決め方がありません"), f"{row.name}の締切"
+            return row.due, f"{row.name}の締切"
+    return Due(how="この書類を使う段階は、もう済んでいます"), ""
+
+
+def request_lead(req: task_ledger.Request, doc: Optional[Dict], facts: List[Dict]
+                 ) -> Tuple[Optional[Dict[str, Any]], str]:
+    """依頼の目安の日数（期間）と出どころ。台帳の値、制度データ、会社の記録の順。分からなければ (None, "")。"""
+    if req.days is not None:
+        return {"数": req.days, "単位": "日"}, req.days_source or "期限の台帳"
+    node = doc.get("依頼の目安の日数") if isinstance(doc, dict) else None
+    if isinstance(node, dict):
+        period = parse_period(node.get("値"))
+        if period is not None:
+            where = "、".join(source_text(node))
+            return period, f"制度データ（{where}）" if where else "制度データ"
+    found = recorded_lead(facts, req.doc)
+    if found is None and isinstance(doc, dict):
+        found = recorded_lead(facts, doc["名前"])
+    if found is not None:
+        return found
+    return None, ""
+
+
+def _request_tasks(status: CaseStatus, data: Dict, plan: "Plan", open_stages: List[Tuple[Dict, StageRow]],
+                   requests: List[task_ledger.Request], facts: List[Dict], today: date) -> List[Task]:
+    tasks = []
+    for req in requests:
+        doc = find_doc(data, req.doc)
+        due, what_due = request_due(data, plan, open_stages, doc)
+        lead, lead_source = request_lead(req, doc, facts)
+        name = req.doc
+        to = req.to  # 依頼先（台帳の値、なければ制度データの依頼先。「出す人」は申請する人の区分なので使わない）
+        if not to and isinstance(doc, dict):
+            node = doc.get("依頼先")
+            to = str(node.get("値") or "") if isinstance(node, dict) else ""
+        order = next((row.order for stage, row in open_stages
+                      if isinstance(doc, dict) and stage.get("id") in (doc.get("手続き") or [])), 0)
+        task = Task(case=status.name, order=order, stage=what_due, what=f"{name}を頼む" + (f"（{to}へ）" if to else ""),
+                    due=due, kind=REQUEST, doc=name, state=req.state)
+        asker = req.asker or "（まだ決めていません）"
+        task.who = f"頼む：{asker}／書く：外部" + (f"（{to}）" if to else "")
+        if lead is not None:
+            task.lead = f"{period_text(lead)}（{lead_source}）" if lead_source else period_text(lead)
+            if due.dated:
+                task.start = sub_period(due.first, lead)
+        if req.state == task_ledger.REQUESTED and req.requested is not None and lead is not None:
+            expected = add_period(req.requested, lead)
+            if expected is not None and expected < today:
+                task.state = task_ledger.WAITING
+                task.notes.append(f"頼んだ日（{dates.format_date(req.requested)}）から目安の{period_text(lead)}を過ぎました。"
+                                  "届いたかを確かめてください")
+        if what_due:
+            task.notes.append(f"締切は{what_due}")
+        if lead is None and not req.finished:
+            task.notes.append("目安の日数をまだ聞いていません（頼んでから届くまでの日数を社長に聞くと、始める日を出せます）")
+        if req.requested is not None:
+            task.notes.append(f"頼んだ日：{dates.format_date(req.requested)}")
+        if req.arrived is not None:
+            task.notes.append(f"届いた日：{dates.format_date(req.arrived)}"
+                              + (f"（{req.arrived_doc}）" if req.arrived_doc else ""))
+        tasks.append(task)
+    return tasks
 
 
 def _document_notes(folder: Path, status: CaseStatus, data: Dict, stage: Dict, ledger: Optional[List[str]],
@@ -733,13 +1163,17 @@ def _document_notes(folder: Path, status: CaseStatus, data: Dict, stage: Dict, l
 
 def classify(tasks: Sequence[Task], today: date, near_days: int = NEAR_DAYS
              ) -> Tuple[Dict[str, List[Task]], List[Task], List[Task]]:
-    """作業を、期限切れ・今日やること・近い締切・遅れている作業と、それより先（later）、日付のないもの（undated）に分ける。"""
+    """作業を、期限切れ・今日やること・近い締切・遅れている作業と、それより先（later）、日付のないもの（undated）に分ける。
+
+    始める日で分けるのは、まだ始めていない作業だけ（依頼した・待っているものは、締切で分ける）。始める日が近い締切の日数の
+    内なら、締切が先でも近い締切に入れる（頼むのが遅れないように）。済んだもの（task.done）は渡さない（build が分ける）。
+    """
     groups: Dict[str, List[Task]] = {g: [] for g in GROUPS}
     later: List[Task] = []
     undated: List[Task] = []
     for task in tasks:
         d = task.due
-        start = task.start
+        start = task.start if task.state in ("", task_ledger.NOT_YET) else None
         if not d.dated:
             if start is not None and start == today:
                 groups[TODAY].append(task)
@@ -754,7 +1188,7 @@ def classify(tasks: Sequence[Task], today: date, near_days: int = NEAR_DAYS
             groups[TODAY].append(task)
         elif start is not None and start < today:
             groups[LATE].append(task)
-        elif (d.first - today).days <= near_days:
+        elif (min(d.first, start) if start is not None else d.first) <= today + timedelta(days=near_days):
             groups[NEAR].append(task)
         else:
             later.append(task)
@@ -765,14 +1199,16 @@ def classify(tasks: Sequence[Task], today: date, near_days: int = NEAR_DAYS
     return groups, later, undated
 
 
-def build(folder: Path, today: Optional[date] = None, near_days: int = NEAR_DAYS) -> Overview:
+def build(folder: Path, today: Optional[date] = None, near_days: Optional[int] = None) -> Overview:
     """会社のフォルダの、すべての案件の期限と作業をまとめる。今日は差し替えた日付を含む（lib/dates.py）。
 
-    今日の日付の差し替えが読めないときは ValueError（呼ぶ側が伝える）。
+    近い締切の日数は、渡されなければ `.hojokin/設定.json` から取る（なければ30日。lib/task_ledger.near_days）。
+    今日の日付の差し替えや近い締切の日数が読めないときは ValueError（呼ぶ側が伝える）。
     """
     folder = Path(folder)
     substituted = dates.substituted_today(folder) is not None
     day = today or dates.today(folder)
+    days = task_ledger.near_days(folder) if near_days is None else near_days
     names, problem = list_cases(folder)
     problems = [problem] if problem else []
     cases: List[CaseStatus] = []
@@ -781,14 +1217,26 @@ def build(folder: Path, today: Optional[date] = None, near_days: int = NEAR_DAYS
         submissions, sub_problem = _submissions(folder)
         if sub_problem:
             problems.append(sub_problem)
-        ledger, ledger_problem = _ledger_kinds(folder)
+        originals, ledger_problem = _ledger_originals(folder)
+        ledger = None if originals is None else [o.kind for o in originals]
         events, events_problem = event_ledger.events_by_case(folder)
         if events_problem:
             problems.append(events_problem)
+        requests, requests_problem = task_ledger.requests_by_case(folder)
+        if requests_problem and requests_problem not in problems:
+            problems.append(requests_problem)
+        facts = _company_facts(folder)
         for name in names:
-            status = case_status(folder, name, submissions, ledger, ledger_problem, events.get(name))
+            status = case_status(folder, name, submissions, ledger, ledger_problem, events.get(name),
+                                 originals=originals, requests=requests.get(name), facts=facts, today=day)
             cases.append(status)
             tasks += status.tasks
-    groups, later, undated = classify(tasks, day, near_days)
-    return Overview(today=day, near_days=near_days, substituted=substituted, cases=cases, groups=groups,
-                    later=later, undated=undated, problems=problems)
+        known = set(names)
+        for case, items in requests.items():
+            if case not in known:
+                problems.append(f"期限の台帳の依頼（{'、'.join(r.doc for r in items)}）の案件「{case}」の"
+                                "フォルダがありません")
+    done = sorted((t for t in tasks if t.done), key=Task.sort_key)
+    groups, later, undated = classify([t for t in tasks if not t.done], day, days)
+    return Overview(today=day, near_days=days, substituted=substituted, cases=cases, groups=groups,
+                    later=later, undated=undated, problems=problems, done=done)
