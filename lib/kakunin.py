@@ -180,9 +180,18 @@ def _mapped_items(seido: Optional[dict]) -> List[Tuple[str, dict]]:
     return out
 
 
+def _screen_form(form: dict) -> bool:
+    """入力先が申請画面の様式か（書き込む位置を持たず、入力シートの欄に書く。DESIGN 9章「様式」の入力先）。"""
+    place = form.get("入力先")
+    value = place.get("値") if isinstance(place, dict) else None
+    return isinstance(value, dict) and value.get("種類") == "画面"
+
+
 def _unmapped_items(seido: Optional[dict]) -> List[str]:
     out = []
     for form in _forms(seido):
+        if _screen_form(form):
+            continue  # 画面に入れる様式は、入力シートで書く（対応づける位置がない）
         for entry in form.get("項目") or []:
             if not isinstance(entry, dict):
                 continue
@@ -459,6 +468,13 @@ def evidence_target(folder: Path, case: str, stage: str) -> Tuple[str, Path]:
 def write_evidence(folder: Path, case: str, stage: str, data: Any, replace: bool = False) -> dict:
     """根拠対照表に行を足す（replace なら置き換える）。"""
     new = konkyo.normalize_rows(data)
+    # 会社の記録から書いた行の出典は、記録の項目（id と名前）にそろえる。記録にない id は断る（T13-4）
+    from lib import company_record
+
+    try:
+        new, from_record = company_record.evidence_rows(folder, new)
+    except company_record.RecordError as e:
+        raise konkyo.EvidenceError(str(e)) from e
     rel, target = evidence_target(folder, case, stage)
     existing = None
     if target.is_file():
@@ -470,7 +486,7 @@ def write_evidence(folder: Path, case: str, stage: str, data: Any, replace: bool
 
     write_replacing(target, blob)
     return {"場所": rel, "行": len(rows), "足した行": len(new), "出典のない行": len(konkyo.unsupported(rows)),
-            "作った": existing is None}
+            "作った": existing is None, "記録から書いた行": from_record}
 
 
 # ---------------------------------------------------------------- 審査役に渡すもの
