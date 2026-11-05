@@ -771,7 +771,7 @@ testdata/（F14 の架空データと、それを作るスクリプト）、expe
 
 hook とスクリプトは Mac の `/usr/bin/python3`（3.9）で動くが、テストは uv が入れた新しい Python で流れる。3.10 以降の書き方を見落とさないよう、速いテストで、lib/・hooks/・skills/*/scripts/ を `/usr/bin/python3` で読み込めるかも確かめる。
 
-開発用の Stop hook は、変わったものがなければ流さない。lib/・hooks/・skills/・agents/・schema/・tests/・evals/・mock/・.claude-plugin/・testdata/・knowledge/・pyproject.toml・uv.lock について、`git ls-files -s`、diff、未追跡のファイルから指紋を作り、最後に通ったときの指紋と比べる。通った指紋は、セッションと worktree をまたいで1つのファイル（Git の共通のフォルダ）に持つ。コミットしただけの回、文書だけを直した回、別の worktree で同じ中身を確かめた後の回は流さず、待ちを増やさない。
+開発用の Stop hook は、変わったものがなければ流さない。lib/・hooks/・skills/・agents/・schema/・tests/・evals/・mock/・.claude-plugin/・testdata/・knowledge/・pyproject.toml・uv.lock について、`git ls-files -s`、diff、未追跡のファイルから指紋を作り、最後に通ったときの指紋と比べる。通った指紋は、セッションと worktree をまたいで1つのファイル（Git の共通のフォルダ）に持つ。コミットしただけの回、文書だけを直した回、別の worktree で同じ中身を確かめた後の回は流さず、待ちを増やさない。同じ Mac で並べて動くセッションが重ねて流さないよう、そのターン（最後の発言の後）に編集の道具（Edit・Write・NotebookEdit）を使っていないセッションは流さず、流すのは1度に1本だけにする（Git の共通のフォルダの錠。ほかのセッションが流していれば少し待ち、通った指紋をもう一度見る。待っても終わらなければ、差し戻さずに知らせる）。並べる数は6まで。
 
 **振る舞いテストの費用を抑える工夫**
 
