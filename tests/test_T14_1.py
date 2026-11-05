@@ -179,7 +179,7 @@ def test_answer_sheet_plan_details() -> None:
     （交付決定から14か月）の内に収まる。T9-7 の材料（どの材料にもない事実）と T0-10 の見る語は入れていない。
     """
     a = _answers()
-    assert [f"L-{n:02d}" for n in range(1, 20)] == sorted(k for k in a if k.startswith("L-"))
+    assert [f"L-{n:02d}" for n in range(1, 22)] == sorted(k for k in a if k.startswith("L-"))
     total_now = int(re.search(r"延べ約(\d+)時間", a["G-03"]).group(1))
     total_after = int(re.search(r"延べ約(\d+)時間", a["H-09"]).group(1))
     now, after = _hours(a["L-01"]), _hours(a["L-03"])
