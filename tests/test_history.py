@@ -54,16 +54,22 @@ BIG_BYTES = 160 * 1024 * 1024
 PYTHON_MISSING = ("補助プログラム（Python）が動かない", "xcode-select")
 
 
+class HistoryCompany(vt.Company):
+    """版の履歴のテストの会社。開いたときの「前回から増えた・変わった書類」（B9）も、start で除く
+    （このテストが見るのは、版や原本の照らしの処理が渡す情報のため）。"""
+    drop_shorui = True
+
+
 @pytest.fixture(params=vt.FORMS)
 def company(request, tmp_path) -> vt.Company:
     """Git の形と、版のファイルの形（同期されるフォルダの形）の両方。"""
-    return vt.Company(tmp_path, form=request.param)
+    return HistoryCompany(tmp_path, form=request.param)
 
 
 @pytest.fixture
 def git_company(tmp_path) -> vt.Company:
     """Git の形だけ（.git の中身にかかわるテスト）。"""
-    return vt.Company(tmp_path)
+    return HistoryCompany(tmp_path)
 
 
 # 時間のかかるテストは、版のファイルの形の側を slow にする（開発用の Stop hook の速いテストを数分に収める）
@@ -419,7 +425,7 @@ def test_nfd_names_from_before_are_renamed_to_nfc_when_changed(tmp_path, form) -
     def before(folder):
         (folder / nfd).write_text("前から", encoding="utf-8")
 
-    company = vt.Company(tmp_path, before_init=before, form=form)
+    company = HistoryCompany(tmp_path, before_init=before, form=form)
     company.write(nfd, "直した")
     company.say("確かめて")
     (record,) = newest(company)
@@ -1119,7 +1125,7 @@ def test_folder_without_git_is_left_untouched(tmp_path) -> None:
                    path=path, home=home, data=data)
         out = r.stdout
         if event == "SessionStart":  # 開いたときに毎回渡す期限と作業・共通の決まり（M3）のほかは、何も渡さない
-            assert vt.without_brief(json.loads(out.decode("utf-8"))) is None, (event, r)
+            assert vt.without_brief(json.loads(out.decode("utf-8")), drop_shorui=True) is None, (event, r)
             out = b""
         assert (r.returncode, out, r.stderr) == (0, b"", b""), (event, r)
     # 道具の控えの場所（.hojokin/一時/。書類の変化の控え〈B9〉と外の場所の控え〈B10〉）のほかは、何も変わらない

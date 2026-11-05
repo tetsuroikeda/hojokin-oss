@@ -49,6 +49,9 @@ INIT_FILES_CODE = (
 class Company:
     """道具で用意した会社のフォルダと、そこで hook を動かす道具。form は版の持ち方（"git"・"files"）。"""
 
+    # 開いたときの「前回から増えた・変わった書類」（B9）も、start で除くか。版の履歴のテストだけが True にする
+    drop_shorui = False
+
     def __init__(self, tmp_path: Path, name: str = "山田 製作所", before_init=None, form: str = GIT) -> None:
         assert form in FORMS, form
         self.form = form
@@ -100,7 +103,7 @@ class Company:
         """開いたとき。M3 が毎回添える「期限と作業・共通の決まり」（lib/status_view.py）は除いて返す
         （版や原本の照らしのテストが見るのは、ほかの処理が渡す情報のため）。除いて何も残らなければ None。
         そのままの出力は start_raw。"""
-        return without_brief(self.start_raw(source, session=session, env=env))
+        return without_brief(self.start_raw(source, session=session, env=env), drop_shorui=self.drop_shorui)
 
     def start_raw(self, source: str = "startup", session: str = SESSION, env: Optional[dict] = None):
         return self.hook("SessionStart", {"source": source}, session=session, env=env)
@@ -211,16 +214,18 @@ def _without_shorui(text: str) -> str:
     return rest.strip("\n")
 
 
-def without_brief(output):
-    """開いたときの出力から、期限と作業・共通の決まりのまとまり（lib/status_view.py の BRIEF_HEAD から後ろ）と、
-    前回から増えた・変わった書類のまとまり（B9）を除く。除いて何も残らなければ None。"""
+def without_brief(output, drop_shorui: bool = False):
+    """開いたときの出力から、期限と作業・共通の決まりのまとまり（lib/status_view.py の BRIEF_HEAD から後ろ）を除く。
+    drop_shorui なら、前回から増えた・変わった書類のまとまり（B9）も除く。除いて何も残らなければ None。"""
     if output is None:
         return None
     hso = output.get("hookSpecificOutput") or {}
     text = hso.get("additionalContext")
     if not isinstance(text, str) or status_view.BRIEF_HEAD not in text:
         return output
-    rest = _without_shorui(status_view.without_brief(text))
+    rest = status_view.without_brief(text)
+    if drop_shorui:
+        rest = _without_shorui(rest)
     if not rest and set(output) == {"hookSpecificOutput"} and set(hso) <= {"hookEventName", "additionalContext"}:
         return None
     result = dict(output)
