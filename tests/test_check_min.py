@@ -351,6 +351,21 @@ def test_count_requires_an_evidence_table(env: kt.Env) -> None:
     assert code_ == 3 and any("根拠対照表.xlsx がありません" in p for p in report["問題"])
 
 
+def test_screen_forms_are_not_listed_as_unmapped() -> None:
+    """入力先が画面の様式（入力シートで書く）は、「書き込む位置をまだ対応づけていない」に挙げない（B1b の前の直し）。"""
+    from lib import kakunin
+
+    def value(v):
+        return {"値": v, "出典": [{"資料": "要領", "ページ": 1}], "根拠の文": "様式", "状態": "確認済み"}
+
+    seido = {"様式": [
+        {"名前": "画面の様式", "入力先": value({"種類": "画面"}), "項目": [{"名前": "経営計画"}]},
+        {"名前": "ファイルの様式", "入力先": value({"種類": "ファイル", "提出の形式": "PDF"}),
+         "項目": [{"名前": "事業計画"}, {"名前": "書いた項目", "書き込む位置": {"範囲": "word/document.xml#1"}}]},
+    ]}
+    assert kakunin._unmapped_items(seido) == ["事業計画"]
+
+
 # ---------------------------------------------------------------- 外と別名、会社のフォルダでないとき
 
 
