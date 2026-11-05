@@ -20,13 +20,20 @@ hooks から次の3つを呼ぶ。どれも会社のフォルダ（目印のあ�
     チェック欄・ラジオボタン・選択欄と、そのラベルへのクリックは、下の「選ぶ欄」の決まりで見る。
     クリックを通したら、控えを捨てる（次の操作の前に、ページを読み直させる）。
   - 入力（form_input）：文字の欄（パスワード・隠れた欄・添付の欄を除く）と、下の「選ぶ欄」。
-  - 選ぶ欄（チェック欄・ラジオボタン・選択欄）：囲むラベルから名前が読め、名前に
-    PROHIBITED_FIELD_WORDS（確認・誓約・同意・宣誓）を含まず、制度データの申請画面で
+  - 選ぶ欄（チェック欄・ラジオボタン・選択欄）：囲むラベルから名前が読め、制度データの申請画面で
     ツールが入れる欄（担当者が入れる＝false）に、種類も合わせて当たるもの。
+    PROHIBITED_FIELD_WORDS（確認・誓約・同意・宣誓）を名前に含むチェック欄は、制度データにかかわらず拒む。
+    ラジオボタンと選択欄は、4つの語を含んでいても、入力シートでツールの欄とされ（「担当者が入れる」が
+    「いいえ」）、制度データの欄の名前に当たれば通す（「決算期の確認」のような、ツールが入れる事実の問い。
+    SPEC 2.3 で担当者が入れるのはチェック欄。DESIGN 14章「画面入力の守りの細部」、TASKS B29）。
     名前の照らし方：画面の名前が欄の名前と同じか、画面の名前の「：」より前が欄の名前と同じか
     （模擬画面の「項目名：説明」の形と、ラジオボタンの「問い：値」の形。NFC・空白をそろえて比べる）。
   - 添付（file_upload）：控えで添付の欄に当たる部品に、会社のフォルダの
-    `案件/<案件>/<段階>/添付する書類/`（効果報告の `<段階>/1年目/添付する書類/` も）の中にあるファイルだけ。
+    `案件/<案件>/<段階>/添付する書類/`（効果報告の `<段階>/1年目/添付する書類/` も）の中にあるファイルで、
+    その段階の入力シート（`<段階>/申請書/入力シート.xlsx`。1年目の下に申請書があればそちら）の
+    添付の欄の値（書類の場所）に当たるものだけ（DESIGN 5章「添付するのは、決まった写しだけ」、TASKS B29）。
+    当たるのは、値が写しの場所・名前そのもの、拡張子を除いた名前が同じ（原本を PDF にした写し）、
+    書類の台帳の写しの元の原本の場所、のどれか。
   - まとめて動かす道具（browser_batch）：中を1つずつ同じ決まりで見る。ページが変わる動作
     （クリック・移動・タブの切り替え）は1回までで、最後に限る。中にまとめて動かす道具は入れない。
 - 座標でのクリック、ダブルクリック・右クリック・ドラッグ、打ち込み、Enter などのキー、
@@ -63,6 +70,11 @@ SNAPSHOT_FILE = "控え.json"
 SCHEME_DIR = ("記録", "制度データ")
 CASE_DIR = "案件"
 ATTACH_DIR = "添付する書類"
+SHEET_DIR = "申請書"
+SHEET_FILE = "入力シート.xlsx"
+LEDGER = ("記録", "書類の台帳.json")
+# 入力シートの種類の名前（lib/input_sheet.py の制度データの欄の種類）
+ATTACH_KIND = "添付"
 
 # ブラウザの種類（部品の番号は、ブラウザごとに別に振られる）
 BUILTIN = "内蔵ブラウザ"
@@ -243,6 +255,101 @@ def _name_keys(name: str) -> List[str]:
     return keys
 
 
+# ---- 入力シート ----
+
+def sheet_rows(path: Path) -> Optional[List[dict]]:
+    """入力シートの行（画面・欄・種類・担当者が入れるか・値）。読めなければ None（通す側に倒さない）。"""
+    try:
+        from lib import input_sheet
+
+        _parts, _name, grid = input_sheet.read_grid(Path(path).read_bytes())
+        _head, cols = grid.header()
+    except Exception:  # 壊れた・形の違う入力シート、読めないファイル
+        return None
+    kind_col, value_col = cols.get("種類"), cols.get(input_sheet.HEAD_VALUE)
+    rows = []
+    for r, screen, field, staff in grid.field_rows():
+        rows.append({
+            "画面": normalize(screen),
+            "欄": normalize(field),
+            "種類": normalize(grid.texts.get(f"{kind_col}{r}", "")) if kind_col else "",
+            "担当者が入れる": staff,
+            "値": grid.texts.get(f"{value_col}{r}", "") if value_col else "",
+        })
+    return rows
+
+
+def company_sheets(folder: Path) -> List[Path]:
+    """会社のフォルダの入力シート（`案件/<案件>/<段階>/申請書/` と、その下にもう1段ある形）。"""
+    top = Path(folder) / CASE_DIR
+    found = []
+    for pattern in (f"*/*/{SHEET_DIR}/{SHEET_FILE}", f"*/*/*/{SHEET_DIR}/{SHEET_FILE}"):
+        try:
+            found += [p for p in sorted(top.glob(pattern)) if p.is_file() and places.is_inside(folder, p)]
+        except OSError:
+            continue
+    return found
+
+
+def _not_applicable(value: str) -> bool:
+    return "".join(unicodedata.normalize("NFKC", str(value or "")).split()) == "該当なし"
+
+
+def attach_values(rows: List[dict]) -> List[str]:
+    """入力シートの、ツールが添付する書類の値（空と「該当なし」を除く）。"""
+    out = []
+    for row in rows:
+        value = normalize(row["値"])
+        if row["種類"] == ATTACH_KIND and not row["担当者が入れる"] and value and not _not_applicable(value):
+            out.append(value)
+    return out
+
+
+def _plain_place(folder: Path, value: str) -> str:
+    """入力シートの値を、会社のフォルダからの場所の形にそろえる（区切りは /、頭の ./ と / を除く）。"""
+    text = unicodedata.normalize("NFC", str(value or "")).strip().replace("\\", "/")
+    if os.path.isabs(text):
+        try:
+            return places.relative_inside(Path(folder), Path(text))
+        except places.PlaceError:
+            return text
+    while text.startswith("./"):
+        text = text[2:]
+    return text.strip("/")
+
+
+def _ledger_originals(folder: Path, copy_rel: str) -> List[str]:
+    """書類の台帳で、この写しの元の原本の場所（台帳がない・読めないときは空）。"""
+    data = _read_json(Path(folder).joinpath(*LEDGER))
+    entries = data.get("写し") if isinstance(data, dict) else None
+    out = []
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict) and unicodedata.normalize("NFC", str(entry.get("場所") or "")) == copy_rel:
+            for original in entry.get("元の原本") or []:
+                if isinstance(original, dict) and original.get("場所"):
+                    out.append(unicodedata.normalize("NFC", str(original["場所"])))
+    return out
+
+
+def attach_matches(folder: Path, value: str, copy_rel: str) -> bool:
+    """入力シートの添付の値が、添付する写し（会社のフォルダからの場所）に当たるか。
+
+    値が写しの場所か名前そのもの、拡張子を除いた名前が同じ（原本を PDF にした写しなど）、
+    書類の台帳で写しの元の原本の場所、のどれかなら当たり。
+    """
+    place = _plain_place(folder, value)
+    copy_rel = unicodedata.normalize("NFC", copy_rel)
+    name = copy_rel.rsplit("/", 1)[-1]
+    value_name = place.rsplit("/", 1)[-1]
+    if not value_name:
+        return False
+    if place == copy_rel or value_name == name:
+        return True
+    if os.path.splitext(value_name)[0] == os.path.splitext(name)[0]:
+        return True
+    return place in _ledger_originals(folder, copy_rel)
+
+
 # ---- 判定 ----
 
 class Denied(Exception):
@@ -258,6 +365,7 @@ class Context:
         self.kind = kind
         self.session_id = data.get("session_id")
         self._scope: Optional[Scope] = None
+        self._sheet_fields: Optional[Dict[str, Set[str]]] = None
         self._snapshot = None
         self.discard = False
 
@@ -266,6 +374,18 @@ class Context:
         if self._scope is None:
             self._scope = Scope.load(self.folder)
         return self._scope
+
+    @property
+    def sheet_tool_fields(self) -> Dict[str, Set[str]]:
+        """会社のフォルダのすべての入力シートで、ツールが入れる欄（担当者が入れる＝いいえ）の名前 → 種類。"""
+        if self._sheet_fields is None:
+            fields: Dict[str, Set[str]] = {}
+            for path in company_sheets(self.folder):
+                for row in sheet_rows(path) or []:
+                    if not row["担当者が入れる"] and row["欄"]:
+                        fields.setdefault(row["欄"], set()).add(row["種類"])
+            self._sheet_fields = fields
+        return self._sheet_fields
 
     def require_permission(self) -> None:
         if not has_permission(self.folder, self.session_id):
@@ -376,25 +496,33 @@ def _check_choice(ctx: Context, page: Page, control_ref: str) -> None:
             "名前の読めない欄（囲むラベルのない欄や、名前の空の選択欄）には入れません（hojokin プラグインの決まり）。"
             "担当者に、その欄を画面で入れてもらってください。"
         )
+    want = ROLE_KIND.get(control.get("role", ""))
     word = _found_word(name, PROHIBITED_FIELD_WORDS)
-    if word:
+    # 4つの語で拒むのはチェック欄だけ（SPEC 2.3 で担当者が入れるのは、確認・誓約・同意のチェック欄）
+    if word and want == "チェック":
         raise Denied(
             f"欄「{name}」は、名前に「{word}」を含むので、ツールは入れません（hojokin プラグインの決まり）。"
             "確認・誓約・同意・宣誓の欄は担当者が入れます。入れるべき欄を担当者に示して止まってください。"
         )
+    keys = _name_keys(name)
     kinds: Set[str] = set()
-    for key in _name_keys(name):
+    for key in keys:
         kinds |= ctx.scope.fields.get(key, set())
     if not kinds:
         raise Denied(
             f"欄「{name}」は、制度データの申請画面で、ツールが入れる欄とされていません（hojokin プラグインの決まり）。"
             "担当者に入れてもらうか、入れる欄かを担当者に確かめてください。"
         )
-    want = ROLE_KIND.get(control.get("role", ""))
     if want not in kinds:
         raise Denied(
             f"欄「{name}」は、制度データでは種類が「{'・'.join(sorted(kinds))}」で、画面の欄の種類と合いません"
             "（hojokin プラグインの決まり）。担当者に入れてもらってください。"
+        )
+    if word and not any(want in ctx.sheet_tool_fields.get(key, set()) for key in keys):
+        # ラジオボタン・選択欄で4つの語を含むものは、入力シートでもツールの欄とされているときだけ入れる
+        raise Denied(
+            f"欄「{name}」は、名前に「{word}」を含み、入力シートでツールが入れる欄とされていないので、"
+            "ツールは入れません（hojokin プラグインの決まり）。担当者に入れてもらうか、入れる欄かを担当者に確かめてください。"
         )
 
 
@@ -510,6 +638,46 @@ def _check_upload(ctx: Context, tool_input: dict) -> None:
                 "添付できるのは、案件の段階のフォルダの「添付する書類」にある写しだけです"
                 "（例：案件/<案件>/1_申請/添付する書類/）。原本や、ほかの場所のファイルは添付しません。"
             )
+        _check_upload_in_sheet(ctx, raw, parts)
+
+
+def _stage_sheet(folder: Path, parts: Tuple[str, ...]) -> Optional[Path]:
+    """添付する写し（`案件/` からの場所の部分）の段階の入力シート。1年目の下に申請書があればそちら。"""
+    case_dir = Path(folder) / CASE_DIR / parts[0] / parts[1]
+    middle = parts[2:-1]
+    candidates = []
+    if middle.index(ATTACH_DIR) == 1:  # 4_効果報告/1年目/添付する書類/
+        candidates.append(case_dir / middle[0] / SHEET_DIR / SHEET_FILE)
+    candidates.append(case_dir / SHEET_DIR / SHEET_FILE)
+    for path in candidates:
+        if path.is_file() and places.is_inside(folder, path):
+            return path
+    return None
+
+
+def _check_upload_in_sheet(ctx: Context, raw, parts: Tuple[str, ...]) -> None:
+    """添付する写しが、その段階の入力シートの添付の欄の値に当たるときだけ通す（DESIGN 5章、TASKS B29）。"""
+    copy_rel = "/".join((CASE_DIR,) + parts)
+    sheet = _stage_sheet(ctx.folder, parts)
+    stage_rel = f"{CASE_DIR}/{parts[0]}/{parts[1]}"
+    if sheet is None:
+        raise Denied(
+            f"「{raw}」の段階の入力シート（{stage_rel}/{SHEET_DIR}/{SHEET_FILE}）がないため、添付できません"
+            "（hojokin プラグインの決まり）。添付するのは、入力シートの添付の欄に書いた書類の写しだけです。"
+            "先に kaku で入力シートを作り、添付の欄に書類の場所を書いてください。"
+        )
+    rows = sheet_rows(sheet)
+    if rows is None:
+        raise Denied(
+            f"入力シート（{places.relative_inside(ctx.folder, sheet)}）を読めないため、添付できません"
+            "（hojokin プラグインの決まり）。入力シートを kaku で作り直してから添付してください。"
+        )
+    if not any(attach_matches(ctx.folder, value, copy_rel) for value in attach_values(rows)):
+        raise Denied(
+            f"「{raw}」は、入力シートの添付の欄に書いた書類に当たらないので、添付できません（hojokin プラグインの決まり）。"
+            "添付するのは、入力シートの添付の欄の書類の写しだけです。この書類を添付するなら、先に kaku で入力シートの"
+            "添付の欄に書類の場所を書き、担当者に確かめてもらってください。"
+        )
 
 
 def _batch_items(tool_input: dict) -> List[Tuple[str, dict]]:

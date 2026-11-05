@@ -382,7 +382,8 @@ def plan(rows: list, controls: list) -> dict:
         if row["担当者が入れる"]:
             result["担当者が入れる"].append({**base, "ref": [c["ref"] for c in hits], "理由": "入力シートで担当者が入れる欄"})
             continue
-        word = prohibited_word(row["欄"]) if row["種類"] in ("チェック", "ラジオ", "選択") else None
+        # 4つの語（確認・誓約・同意・宣誓）で担当者の欄とするのはチェック欄だけ（守りと同じ。DESIGN 14章、B29）
+        word = prohibited_word(row["欄"]) if row["種類"] == "チェック" else None
         if word:
             result["担当者が入れる"].append({**base, "ref": [c["ref"] for c in hits],
                                         "理由": f"名前に「{word}」を含むので、ツールは入れない"})
@@ -428,7 +429,7 @@ def plan(rows: list, controls: list) -> dict:
     for c in controls:
         if c["ref"] in used:
             continue
-        word = prohibited_word(c["name"]) if c["role"] in KIND_ROLES["チェック"] + KIND_ROLES["ラジオ"] + KIND_ROLES["選択"] else None
+        word = prohibited_word(c["name"]) if c["role"] in KIND_ROLES["チェック"] else None
         result["画面だけにある"].append({"ref": c["ref"], "名前": c["name"] or "（名前が読めない欄）", "役割": c["role"],
                                     "種類": c["type"], "担当者が入れる": bool(word) or c["type"] == "password"
                                     or not c["name"]})

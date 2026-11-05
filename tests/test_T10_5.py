@@ -69,7 +69,9 @@ def test_each_kind_of_click_and_input_is_denied(folder, prefix) -> None:
         not_called(nt.pre(folder, prefix + op, tool_input))
 
 
-def test_upload_is_denied_without_permission(folder) -> None:
+def test_upload_is_denied_without_permission(tmp_path) -> None:
+    # 添付する写しは、入力シートの添付の欄に書いたもの（守りは、それ以外を添付させない。B29）
+    folder = nt.make_company(tmp_path, values=nt.SHEET_VALUES + (nt.ATTACH_VALUE,), scheme=nt.seido_with_attach())
     copy = folder / "案件" / nt.CASE / nt.STAGE / "添付する書類" / "履歴事項全部証明書.pdf"
     copy.write_bytes(b"%PDF-1.4 test")
     nt.post(folder, nt.CHROME + "read_page", {}, [{"type": "text", "text": nt.record_text("mock_shinsei.txt")}])
