@@ -1,0 +1,172 @@
+# 模擬の申請画面（12画面版）の ❽ 経費明細・資金調達内訳を、欄の名前を正解に合わせ、表の中の欄を見えないラベルで
+# 囲んだ後（TASKS B29）に、内蔵ブラウザの read_page（filter は all）で読んだ結果（2026-11-05）。何も入れていない。
+# 表の中の欄は、囲むラベルの中の文字（generic）で名前が読める（入れた後は textbox の名前が値に替わるが、ラベルは残る）。
+note "模擬画面（実在のシステムではありません）。架空の練習用の画面で、入れた内容はこのパソコンの中にだけ記録されます。" [ref_1]
+main [ref_2]
+ heading "❽ 経費明細・資金調達内訳" [ref_3]
+ generic "省力化投資補助金（一般型）第8回 応募申請の模擬画面（D11b・12画面版）" [ref_4]
+ navigation "進み具合" [ref_5]
+  list [ref_6]
+   listitem "❶ 宣誓・手引き" [ref_7]
+   listitem "❷ 基本情報" [ref_8]
+   listitem "❸ 要件" [ref_9]
+   listitem "❹ 加点項目" [ref_10]
+   listitem "❺ 事業計画名及び作成者情報" [ref_11]
+   listitem "❻ 最低賃金及び特例希望" [ref_12]
+   listitem "❼ 事業計画数値" [ref_13]
+   listitem "❽ 経費明細・資金調達内訳" [ref_14]
+   listitem "❾ 書類添付" [ref_15]
+   listitem "❿ アンケート" [ref_16]
+   listitem "⓫ メールアドレス認証" [ref_17]
+   listitem "⓬ 確認" [ref_18]
+ form [ref_19]
+  button "戻る" [ref_20] type="submit"
+  button "一時保存" [ref_21] type="submit"
+  button "次へ" [ref_22] type="submit"
+  region [ref_23]
+   heading "8-1. 経費明細表" [ref_24]
+   generic "（A）は税込み、（B）は税抜きで入れます。入れたら「計算」を押します。" [ref_25]
+   generic "ファイナンス・リースを利用してリース会社と共同申請を実施しますか" [ref_26]
+   label [ref_27]
+    radio "はい" [ref_28] type="radio"
+    generic "ファイナンス・リースを利用してリース会社と共同申請を実施しますか：はい" [ref_29]
+   label [ref_30]
+    radio "いいえ" [ref_31] type="radio"
+    generic "ファイナンス・リースを利用してリース会社と共同申請を実施しますか：いいえ" [ref_32]
+   generic "経費明細表" [ref_33]
+   table [ref_34]
+    generic "（A）事業に要する経費（税込みの額）" [ref_35]
+    generic "（B）補助対象経費（税抜きの額）" [ref_36]
+    generic "（C）積算基礎（B）の内訳" [ref_37]
+    generic "機械装置・システム構築費" [ref_38]
+    label [ref_39]
+     generic "機械装置・システム構築費（（A）事業に要する経費（税込みの額））" [ref_40]
+     textbox [ref_41] type="text"
+    label [ref_42]
+     generic "機械装置・システム構築費（（B）補助対象経費（税抜きの額））" [ref_43]
+     textbox [ref_44] type="text"
+    label [ref_45]
+     generic "機械装置・システム構築費（（C）積算基礎（B）の内訳）" [ref_46]
+     textbox [ref_47]
+    generic "運搬費" [ref_48]
+    label [ref_49]
+     generic "運搬費（（A）事業に要する経費（税込みの額））" [ref_50]
+     textbox [ref_51] type="text"
+    label [ref_52]
+     generic "運搬費（（B）補助対象経費（税抜きの額））" [ref_53]
+     textbox [ref_54] type="text"
+    label [ref_55]
+     generic "運搬費（（C）積算基礎（B）の内訳）" [ref_56]
+     textbox [ref_57]
+    generic "技術導入費" [ref_58]
+    label [ref_59]
+     generic "技術導入費（（A）事業に要する経費（税込みの額））" [ref_60]
+     textbox [ref_61] type="text"
+    label [ref_62]
+     generic "技術導入費（（B）補助対象経費（税抜きの額））" [ref_63]
+     textbox [ref_64] type="text"
+    label [ref_65]
+     generic "技術導入費（（C）積算基礎（B）の内訳）" [ref_66]
+     textbox [ref_67]
+    generic "知的財産権等関連経費" [ref_68]
+    label [ref_69]
+     generic "知的財産権等関連経費（（A）事業に要する経費（税込みの額））" [ref_70]
+     textbox [ref_71] type="text"
+    label [ref_72]
+     generic "知的財産権等関連経費（（B）補助対象経費（税抜きの額））" [ref_73]
+     textbox [ref_74] type="text"
+    label [ref_75]
+     generic "知的財産権等関連経費（（C）積算基礎（B）の内訳）" [ref_76]
+     textbox [ref_77]
+    generic "外注費" [ref_78]
+    label [ref_79]
+     generic "外注費（（A）事業に要する経費（税込みの額））" [ref_80]
+     textbox [ref_81] type="text"
+    label [ref_82]
+     generic "外注費（（B）補助対象経費（税抜きの額））" [ref_83]
+     textbox [ref_84] type="text"
+    label [ref_85]
+     generic "外注費（（C）積算基礎（B）の内訳）" [ref_86]
+     textbox [ref_87]
+    generic "専門家経費" [ref_88]
+    label [ref_89]
+     generic "専門家経費（（A）事業に要する経費（税込みの額））" [ref_90]
+     textbox [ref_91] type="text"
+    label [ref_92]
+     generic "専門家経費（（B）補助対象経費（税抜きの額））" [ref_93]
+     textbox [ref_94] type="text"
+    label [ref_95]
+     generic "専門家経費（（C）積算基礎（B）の内訳）" [ref_96]
+     textbox [ref_97]
+    generic "クラウドサービス利用費" [ref_98]
+    label [ref_99]
+     generic "クラウドサービス利用費（（A）事業に要する経費（税込みの額））" [ref_100]
+     textbox [ref_101] type="text"
+    label [ref_102]
+     generic "クラウドサービス利用費（（B）補助対象経費（税抜きの額））" [ref_103]
+     textbox [ref_104] type="text"
+    label [ref_105]
+     generic "クラウドサービス利用費（（C）積算基礎（B）の内訳）" [ref_106]
+     textbox [ref_107]
+   button "計算" [ref_108] type="submit"
+   heading "8-2. 補助金申請額" [ref_109]
+   generic "模擬では（B）の合計に補助率（小規模か最低賃金の特例なら2/3、ほかは1/2）を掛けた額を出します。上限額は見ません。" [ref_110]
+   generic "補助金申請額（D）" [ref_111]
+   heading "8-3. 資金調達内訳" [ref_112]
+   generic "事業全体に要する経費調達一覧" [ref_113]
+   table [ref_114]
+    generic "事業に要する経費（円）" [ref_115]
+    generic "資金の調達先" [ref_116]
+    generic "自己資金" [ref_117]
+    label [ref_118]
+     generic "事業全体に要する経費調達一覧 自己資金（事業に要する経費（円））" [ref_119]
+     textbox [ref_120] type="text"
+    generic "補助金申請額（D）" [ref_121]
+    generic "借入金" [ref_122]
+    label [ref_123]
+     generic "事業全体に要する経費調達一覧 借入金（事業に要する経費（円））" [ref_124]
+     textbox [ref_125] type="text"
+    label [ref_126]
+     generic "事業全体に要する経費調達一覧 借入金（資金の調達先）" [ref_127]
+     textbox [ref_128] type="text"
+    generic "その他 ファイナンス・リース" [ref_129]
+    label [ref_130]
+     generic "事業全体に要する経費調達一覧 その他 ファイナンス・リース（事業に要する経費（円））" [ref_131]
+     textbox [ref_132] type="text"
+    label [ref_133]
+     generic "事業全体に要する経費調達一覧 その他 ファイナンス・リース（資金の調達先）" [ref_134]
+     textbox [ref_135] type="text"
+    generic "合計額" [ref_136]
+   generic "補助金申請額の経費内訳" [ref_137]
+   table [ref_138]
+    generic "事業に要する経費（円）" [ref_139]
+    generic "資金の調達先" [ref_140]
+    generic "自己資金" [ref_141]
+    label [ref_142]
+     generic "補助金申請額の経費内訳 自己資金（事業に要する経費（円））" [ref_143]
+     textbox [ref_144] type="text"
+    generic "借入金" [ref_145]
+    label [ref_146]
+     generic "補助金申請額の経費内訳 借入金（事業に要する経費（円））" [ref_147]
+     textbox [ref_148] type="text"
+    label [ref_149]
+     generic "補助金申請額の経費内訳 借入金（資金の調達先）" [ref_150]
+     textbox [ref_151] type="text"
+    generic "その他 ファイナンス・リース" [ref_152]
+    label [ref_153]
+     generic "補助金申請額の経費内訳 その他 ファイナンス・リース（事業に要する経費（円））" [ref_154]
+     textbox [ref_155] type="text"
+    label [ref_156]
+     generic "補助金申請額の経費内訳 その他 ファイナンス・リース（資金の調達先）" [ref_157]
+     textbox [ref_158] type="text"
+    generic "合計額" [ref_159]
+  button "戻る" [ref_160] type="submit"
+  button "一時保存" [ref_161] type="submit"
+  button "次へ" [ref_162] type="submit"
+
+Viewport: 1024x768
+
+Tab Context:
+- Executed on tabId: seed
+- Available tabs:
+  • tabId seed: "【模擬画面】❽ 経費明細・資金調達内訳（省力化・一般型）" ("http://127.0.0.1:8791/shinsei/8")
