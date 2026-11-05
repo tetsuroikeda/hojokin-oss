@@ -1,13 +1,14 @@
 """説明の練習（想定問答）の材料を出す道具（SPEC F11、DESIGN 4.2・6章。TASKS M9）。
 
 使い方（--folder "${CLAUDE_PROJECT_DIR}" を付ける。なければ今いるフォルダ）：
-  python3 -B <この場所>/renshu.py [--case <案件>] [--stage <段階>] [--seido <制度データ>] [--count 3]
+  python3 -B <この場所>/renshu.py [--case <案件>] [--stage <段階>] [--seido <制度データ>] [--count <数>]
 
 出すもの（何も書かない。読むだけ）：
 1. 進め方：この skill の別ファイル `説明の練習.md` の中身。ファイルの道具はプラグインの中を読めないので、
    道具が出して渡す（DESIGN 4.2・4.7）。
-2. 練習で問う審査項目：制度データの「審査項目」から --count の数（はじめは3つ）。選び方は pick_items のとおり。
-   残りは「そのほかの審査項目」として並べる（続けて練習するとき用）。
+2. 練習で問う審査項目：制度データの「審査項目」のすべて（SPEC T11-2「質問がすべての審査項目にわたる」。TASKS B30）。
+   並べ方は pick_items のとおり。答えてもらうのは3問ずつなので、問1〜3、問4〜6…の組に分けて示す。
+   --count を付けたときだけ、その数に絞り、残りは「そのほかの審査項目」として並べる。
 3. 計画書の本文：申請書（`案件/<案件>/<段階>/申請書/`）から道具が取り出した文字（lib/kakunin.py の plan_text。
    様式の説明の青字は除く）と、財務モデル.xlsx の前提。答えと照らすのは Claude が行う（DESIGN 6章「想定問答」）。
 4. 申請書の状態：今の申請書が、完成の記録（記録/完成の記録.json）にある版と同じか。違っても練習はできる。
@@ -34,7 +35,7 @@ from lib import company  # noqa: E402
 
 GUIDE = Path(__file__).resolve().parents[1] / "説明の練習.md"
 ORAL = "口頭審査"
-DEFAULT_COUNT = 3
+PER_ROUND = 3  # 1回に答えてもらう問いの数（共通の要件「一度に答えてもらう質問は3つまで」）
 
 OK, BROKEN, REFUSED = 0, 1, 2
 
@@ -54,9 +55,9 @@ def parse(argv):
     parser.add_argument("--case", help="案件のフォルダの名前（案件/ の下）。1つなら省いてよい")
     parser.add_argument("--stage", help="段階のフォルダ（1_申請 など）。省くと番号のいちばん小さい段階")
     parser.add_argument("--seido", help="制度データ（記録/制度データ/ の中の JSON）。1つなら省いてよい")
-    parser.add_argument("--count", type=int, default=DEFAULT_COUNT, help="練習で問う審査項目の数（はじめは3）")
+    parser.add_argument("--count", type=int, help="練習で問う審査項目の数（省くと、すべての審査項目）")
     args = parser.parse_args(argv)
-    if args.count < 1:
+    if args.count is not None and args.count < 1:
         raise Refused("--count は1以上にしてください")
     return args
 
@@ -81,8 +82,8 @@ def _viewpoints(item: dict) -> list:
     return []
 
 
-def pick_items(items: list, count: int):
-    """練習で問う審査項目と、そのほかの審査項目に分ける。
+def pick_items(items: list, count=None):
+    """練習で問う審査項目と、そのほかの審査項目に分ける（count が None なら、すべてを問う）。
 
     - 区分が「口頭審査」の項目の観点に、ほかの審査項目の名前が挙がっていれば、それを先に選ぶ（口頭審査で問われる
       項目のため。省力化 第8回では、適格性・技術面・計画面）。
@@ -96,6 +97,8 @@ def pick_items(items: list, count: int):
         named.update(v.strip() for v in _viewpoints(it))
     first = [it for it in written if str(it["名前"]).strip() in named]
     order = first + [it for it in written if it not in first]
+    if count is None:  # すべての審査項目を問う（口頭審査の説明の項目は、ほかに問える項目があれば問わずに残す）
+        return order, [it for it in items if it not in order]
     chosen = order[:count]
     rest = [it for it in items if it not in chosen]
     return chosen, rest
@@ -217,11 +220,16 @@ def materials(folder: Path, args, kk) -> str:
     names = _source_names(seido)
     out = [f"# 説明の練習の材料（案件：{case}　段階：{stage}）", "",
            f"申請書の状態：{_state_line(folder, case, stage, kk)}", "",
-           "下の「進め方」に従って、「練習で問う審査項目」の問1・問2…の項目から1問ずつ作り、社長の答えを「計画書の本文」と照らしてください。",
+           "下の「進め方」に従って、「練習で問う審査項目」の問1・問2…の項目から1問ずつ作り（どの項目も飛ばさない）、"
+           "社長の答えを「計画書の本文」と照らしてください。",
+           f"始めに問いの全体の一覧（問1〜問{len(chosen)}）を示し、答えてもらうのは{PER_ROUND}問ずつにしてください。",
            "この出力は社長にそのまま見せず、問いと結果だけを普段の言葉で伝えてください。", "",
            "## 進め方（kaku の別ファイル「説明の練習」）", ""] + guide + [
            "", f"## 練習で問う審査項目（{len(chosen)}つ。制度データ：{seido_rel}）", ""]
     for n, item in enumerate(chosen, 1):
+        if (n - 1) % PER_ROUND == 0:
+            last = min(n + PER_ROUND - 1, len(chosen))
+            out.append(f"（{(n - 1) // PER_ROUND + 1}回目に答えてもらう問い：問{n}〜問{last}）")
         out += _item_lines(item, f"問{n}：", names)
     out.append("")
     if rest:
