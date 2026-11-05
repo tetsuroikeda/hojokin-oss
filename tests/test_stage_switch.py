@@ -378,13 +378,17 @@ def test_backward_and_past_the_last_stage_are_refused(shop) -> None:
     # 効果報告の期限（毎年の繰り返し）は、事業の完了と決算の月が分かるまで日付が出ない（終了コード 1）。
     # 渡せる出来事はないので、--event で渡し直すようには促さない
     out = shop.tool("--stage", "4_効果報告", "--event", "採択発表日=2027-03-10", code=1)
-    deadline = section(out, "効果報告の期限")
+    deadline = section(out, "効果報告（1年目）の期限")  # 繰り返しの報告は、次に出す回を見出しに付ける（B31a）
     assert "- 毎年の期限は、事業の完了と決算の月が分かってから出します（期限の台帳で扱います）" in deadline
     assert not any("--event" in x for x in deadline)
     before = shop.snapshot()
     assert "今の段階（4_効果報告）より前の段階（2_交付申請）には切り替えません" in shop.tool("--stage", "2_交付申請", code=2)
-    assert "今の段階（4_効果報告）が、フォルダのある最後の段階です" in shop.tool(code=2)
     assert shop.snapshot() == before
+    # 最後の段階でも、繰り返しの報告でまだ出していない回があれば、段階は進めずに次の回（1年目）の年のフォルダを作る（B31a）。
+    # 最後の段階で断るのは、すべての回の提出版を記録した後（tests/test_postaward_shoryokuka.py が次の回を確かめる）
+    out = shop.tool(code=1)
+    assert "今の段階「効果報告（1年目）」のままです" in out, out
+    assert (shop.folder / CASE_DIR / "4_効果報告" / "1年目" / "添付する書類").is_dir()
 
 
 def test_show_writes_nothing(shop) -> None:
