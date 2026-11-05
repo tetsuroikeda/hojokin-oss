@@ -426,6 +426,26 @@ def zaimu_numbers_file() -> str:
     return "記録/財務モデルの数字.json"  # lib/zaimu.py の NUMBERS_FILE と同じ
 
 
+def style_count(folder: Path, texts: Dict[str, str]) -> Tuple[Optional[dict], str]:
+    """文体の A・B と会社の避けたい言い方の数え上げ（lib/buntai.py。TASKS B17）。基準のファイルがなければ (None, 理由)。"""
+    from lib import buntai
+
+    path = Path(__file__).resolve().parents[1] / STYLE_CRITERIA
+    try:
+        criteria = buntai.load(path)
+    except OSError:
+        return None, f"文体の基準（{STYLE_CRITERIA.as_posix()}）が読めないので、文体は数えていません"
+    rules: List[dict] = []
+    try:
+        from lib import company_record
+
+        rules = [it for it in company_record.load(folder).get("項目", []) if it.get("種類") == company_record.RULE]
+    except Exception:
+        pass
+    avoid, keep = buntai.company_phrases(rules)
+    return buntai.count(texts, criteria, avoid, keep), ""
+
+
 def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
     """コードによる確かめ：仮の印・空欄・根拠のない記述の数え上げと、根拠対照表・財務モデルとの照合（lib/shogo.py）。"""
     from lib import shogo
@@ -476,6 +496,9 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
         matched = shogo.check(texts, evidence_rows, _model_numbers(folder), _nouns(folder))
         for f in matched[shogo.NO_SOURCE]:
             findings.append(Finding(UNSUPPORTED, "本文", f["場所"], f"{f['文字']}（{f['理由']}）"))
+    style, style_note = style_count(folder, texts)
+    if style_note:
+        notes.append(style_note)
     if seido is None:
         notes.append("制度データがないので、様式の項目ごとの空欄（まだ書いていない項目）は数えていません")
     else:
@@ -485,7 +508,10 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
                          + "、".join(unmapped))
     by_kind = {k: [f.as_dict() for f in findings if f.kind == k] for k in (PROVISIONAL, BLANK, UNSUPPORTED)}
     extra = {k: matched[k] for k in (shogo.MISMATCH, shogo.CITATION, shogo.MODEL_MISMATCH)}
-    passed = not problems and not any(by_kind.values()) and not any(extra.values())
+    from lib import buntai
+
+    style_failing = buntai.failing(style) if style else 0
+    passed = not problems and not any(by_kind.values()) and not any(extra.values()) and not style_failing
     return {
         "案件": case,
         "段階": stage,
@@ -496,6 +522,7 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
         "食い違い": extra[shogo.MISMATCH],
         "本文の出典": extra[shogo.CITATION],
         "財務モデルとの食い違い": extra[shogo.MODEL_MISMATCH],
+        "文体": style,
         "根拠対照表の行": len(evidence_rows) if evidence_rows is not None else None,
         "問題": problems,
         "注意": notes,
@@ -521,6 +548,15 @@ def report_text(report: dict) -> str:
         if items:
             lines.append(f"{titles[k]}：")
             lines += [f"- {f['場所']}：{f['文字']}（{f['理由']}）" for f in items]
+    style = report.get("文体")
+    if style:
+        lines.append(f"文体：要修正 {len(style['要修正'])}件、避ける言い回し {len(style['避ける言い回し'])}件、"
+                     f"会社の避けたい言い方 {len(style['避けたい言い方'])}件（注意 {len(style['注意'])}件・"
+                     f"弱い注意 {len(style['弱い注意'])}件は合否に使いません）")
+        for key in ("要修正", "避ける言い回し", "避けたい言い方"):
+            for f in style[key]:
+                fix = f"→ {f['直し方']}" if f.get("直し方") else ""
+                lines.append(f"- {key}：{f['場所']}「{f['文字']}」（{f['基準']}）{fix}")
     for p in report["問題"]:
         lines.append(f"問題：{p}")
     for n in report["注意"]:
