@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -378,13 +379,17 @@ def test_backward_and_past_the_last_stage_are_refused(shop) -> None:
     # 効果報告の期限（毎年の繰り返し）は、事業の完了と決算の月が分かるまで日付が出ない（終了コード 1）。
     # 渡せる出来事はないので、--event で渡し直すようには促さない
     out = shop.tool("--stage", "4_効果報告", "--event", "採択発表日=2027-03-10", code=1)
-    deadline = section(out, "効果報告の期限")
+    deadline = section(out, "効果報告（1年目）の期限")  # 繰り返しの報告は、次に出す回を見出しに付ける（B31a）
     assert "- 毎年の期限は、事業の完了と決算の月が分かってから出します（期限の台帳で扱います）" in deadline
     assert not any("--event" in x for x in deadline)
     before = shop.snapshot()
     assert "今の段階（4_効果報告）より前の段階（2_交付申請）には切り替えません" in shop.tool("--stage", "2_交付申請", code=2)
-    assert "今の段階（4_効果報告）が、フォルダのある最後の段階です" in shop.tool(code=2)
     assert shop.snapshot() == before
+    # 最後の段階でも、繰り返しの報告でまだ出していない回があれば、段階は進めずに次の回（1年目）の年のフォルダを作る（B31a）。
+    # 最後の段階で断るのは、すべての回の提出版を記録した後（tests/test_postaward_shoryokuka.py が次の回を確かめる）
+    out = shop.tool(code=1)
+    assert "今の段階「効果報告（1年目）」のままです" in out, out
+    assert (shop.folder / CASE_DIR / "4_効果報告" / "1年目" / "添付する書類").is_dir()
 
 
 def test_show_writes_nothing(shop) -> None:
@@ -437,3 +442,34 @@ def test_stage_folder_link_writes_nothing(shop, tmp_path) -> None:
     assert shop.snapshot() == before
     assert list(outside.iterdir()) == []
     assert not (shop.folder / LEDGER).exists()
+
+
+def test_grant_decision_without_a_deadline_rule_is_recorded_without_switching(tmp_path) -> None:
+    """持続化のように、交付決定がどの段階の期限の決め方にもない制度でも、交付決定の日を台帳に残せる（段階は進めない）。
+    書類の確かめ（shorui の fubi.py rules）は、その日を交付決定の日として返す（事前着手の確かめに使う。TASKS B31c）。"""
+    data = json.loads((hr.REPO_ROOT / "testdata" / "正解" / "持続化_第20回.json").read_text(encoding="utf-8"))
+    shop = Shop(tmp_path, data)
+    case = "2026_持続化（通常枠）第20回"
+    listed = {"案件": case, "制度": {"名前": "小規模事業者持続化補助金", "略称": "持続化", "公募回": "第20回"},
+              "案件の回": "第20回", "資料": []}
+    _write_json(shop.folder / "記録" / "資料の本文" / case / "資料の一覧.json", listed)
+    _write_json(shop.folder / "記録" / "制度データ" / "持続化_第20回.json", data)
+    (shop.folder / "記録" / "制度データ" / f"{SHORT}_第3回.json").unlink()
+    for sub in ("申請書", "添付する書類"):
+        (shop.folder / "案件" / case / "1_申請" / sub).mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(shop.folder / CASE_DIR)
+    shop.set_today("2027-03-15")
+    out = shop.tool("--case", case)
+    assert "採択後の次の段階「見積書等の提出（採択後）」へ切り替えました" in out, out
+    assert "特に注意（交付決定の前）" in out and "事前着手" in out
+    shop.set_today("2027-04-26")
+    out = shop.tool("--case", case, "--event", "交付決定=2027-04-23")
+    assert "今の段階「見積書等の提出（採択後）」のままです" in out, out
+    assert "交付決定 2027年4月23日（金）（確定" in out, out
+    assert not (shop.folder / "案件" / case / "3_実績報告").exists()
+    events = [(e["案件"], e["名前"], e["日付"]) for e in shop.ledger()["出来事"]]
+    assert events == [(case, "交付決定", "2027-04-23")]
+    fubi = subprocess.run([hr.real_python(), "-B", str(hr.REPO_ROOT / "skills" / "shorui" / "scripts" / "fubi.py"), "rules",
+                           "--folder", str(shop.folder), "--case", case, "--stage", "2_見積書等の提出"],
+                          capture_output=True, text=True, timeout=60)
+    assert json.loads(fubi.stdout)["交付決定の日"] == "2027-04-23", fubi.stdout + fubi.stderr

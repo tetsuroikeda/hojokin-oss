@@ -44,9 +44,22 @@ def record_questions(data: dict, folder: Path) -> None:
         pass
 
 
+def refresh_status(folder: Path) -> None:
+    """今の状態の画面と Excel を作り直す（B27。DESIGN 4.6「Claude が応答を終えるたびに」）。版の記録の後に
+    （どちらも .gitignore で版に入れない）。案件がなく画面もないときは作らない。"""
+    try:
+        from lib import status_view
+
+        status_view.refresh_page(folder)
+    except Exception:
+        pass  # hook を落とさない
+
+
 def handle(data: dict, folder: Path) -> Optional[dict]:
     notes = originals_hooks.check(data, folder)  # 原本と公式資料の照らしと戻し（M4）。版の記録より先に
     notes += form_notes(folder)  # Word・Excel の書式の照らしと戻し（B14b）。版の記録より先に
     notes += quote_notes(data, folder)  # 答えの引用の照らし（B26）。外れたら答え直させる
     record_questions(data, folder)
-    return originals_hooks.stop(data, folder, notes, version_hooks.stop(data, folder))
+    result = originals_hooks.stop(data, folder, notes, version_hooks.stop(data, folder))
+    refresh_status(folder)
+    return result

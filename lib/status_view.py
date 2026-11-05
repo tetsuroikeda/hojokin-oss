@@ -105,6 +105,61 @@ def task_line(task: deadlines.Task, today) -> str:
     return line
 
 
+DUTY_HEAD = "### 事業期間中と事業後の義務"
+DUTY_LIST_MAX = 6  # 開いたときに並べる義務の知らせの数（残りは画面に回す）
+DUTY_CUT = 160  # 1つの知らせの字数（超える分は画面に回す）
+
+
+def evidence_summary(case: deadlines.CaseStatus) -> str:
+    if not case.evidence:
+        return case.evidence_note
+    done = sum(1 for e in case.evidence if not e.missing)
+    return f"経費ごとの証拠：そろった経費 {done}/{len(case.evidence)}件"
+
+
+def duty_brief(ov: deadlines.Overview) -> List[str]:
+    """開いたときに渡す、事業期間中と事業後の義務の知らせ（K3）。"""
+    lines = []
+    for c in ov.cases:
+        if not c.period:
+            continue
+        head = f"- {c.name}：{c.duties[0] if c.duties else f'今は{c.period}です'}"
+        summary = evidence_summary(c)
+        lines.append(head + (f"。{summary}" if summary else ""))
+        for d in c.duties[1:DUTY_LIST_MAX + 1]:
+            lines.append("  - " + (d if len(d) <= DUTY_CUT else d[:DUTY_CUT] + "…"))
+        if len(c.duties) > DUTY_LIST_MAX + 1:
+            lines.append(f"  - ほか {len(c.duties) - DUTY_LIST_MAX - 1}件（今の状態.html にあります）")
+    return lines
+
+
+def duty_section(ov: deadlines.Overview) -> List[str]:
+    """今の状態の画面の、事業期間中と事業後の義務の節（経費ごとの証拠の揃い具合の表を含む。K3）。"""
+    cases = [c for c in ov.cases if c.period]
+    if not cases:
+        return []
+    out = ["<h2>事業期間中と事業後の義務</h2>"]
+    for c in cases:
+        out.append(f"<h3>{_e(c.name)}</h3>")
+        out += [f"<p>{_e(c.duties[0])}</p>"] if c.duties else [f"<p>{_e(f'今は{c.period}です')}</p>"]
+        if c.duties[1:]:
+            out.append("<ul>" + "".join(f"<li>{_e(d)}</li>" for d in c.duties[1:]) + "</ul>")
+        out.append("<h4>経費ごとの証拠の揃い具合</h4>")
+        if c.evidence:
+            out += ["<table>", "<tr><th>経費</th><th>相手先</th><th>金額（税抜）</th><th>そろった証拠</th><th>まだの証拠</th>"
+                    "<th>メモ</th></tr>"]
+            for e in c.evidence:
+                cls = "" if not e.missing else ' class="strong"'
+                memo = ("交付決定より前の日付の原本：" + "、".join(e.early)) if e.early else ""
+                out.append(f"<tr{cls}><td>{_e(e.expense)}</td><td>{_e(e.partner or '—')}</td><td>{e.amount:,}円</td>"
+                           f"<td>{_e('、'.join(e.have) or '—')}</td><td>{_e('、'.join(e.missing) or 'そろいました')}</td>"
+                           f"<td>{_e(memo)}</td></tr>")
+            out.append("</table>")
+        else:
+            out.append(f'<p class="note">{_e(c.evidence_note or "ありません")}</p>')
+    return out
+
+
 def deadline_text(ov: deadlines.Overview) -> str:
     """期限と作業の部分（BRIEF_HEAD から）。"""
     today = ov.today
@@ -146,6 +201,9 @@ def deadline_text(ov: deadlines.Overview) -> str:
     notes = [f"- {c.name}：{n}" for c in ov.cases for n in c.notes]
     if notes:
         lines += ["", "### 書類について"] + notes
+    duty_lines = duty_brief(ov)
+    if duty_lines:
+        lines += ["", DUTY_HEAD] + duty_lines
     if ov.later or ov.undated:
         lines += ["", f"そのほかに、{ov.near_days}日より先の期限が{len(ov.later)}件、日付がまだ出せない期限が"
                       f"{len(ov.undated)}件あります（一覧は 今の状態.html）。"]
@@ -209,6 +267,14 @@ th{background:#f6f8fa;white-space:nowrap}
 .now{font-weight:bold}
 .done{color:#57606a}
 ol.flow li{margin:2px 0}
+.gantt{width:auto;font-size:.85em}
+.gantt th,.gantt td{padding:3px 4px}
+.gantt td.g,.gantt th.g{width:16px;min-width:16px;padding:0;text-align:center;white-space:nowrap}
+.gantt td.g-bar{background:#9ec5fe}
+.gantt td.g-mark{background:#9ec5fe;color:#cf222e;font-weight:bold}
+.gantt .g-today{border-left:3px solid #cf222e}
+.gantt th.g-today{background:#fff8c5}
+.wide{overflow-x:auto}
 """
 
 
@@ -282,8 +348,85 @@ def defect_section(folder: Path) -> List[str]:
     return out
 
 
+def _table(head: List[str], rows: List[List[object]], empty: str) -> List[str]:
+    if not rows:
+        return [f'<p class="note">{_e(empty)}</p>']
+    out = ['<div class="wide"><table>', "<tr>" + "".join(f"<th>{_e(h)}</th>" for h in head) + "</tr>"]
+    out += ["<tr>" + "".join(f"<td>{_e(v)}</td>" for v in row) + "</tr>" for row in rows]
+    out.append("</table></div>")
+    return out
+
+
+def gantt_section(ov: deadlines.Overview) -> List[str]:
+    """工程表（案件ごとの手続きの段階の帯、期限の印、今日の線。複数の案件を1つの表に。B27）。"""
+    from lib import status_book
+
+    months, found = status_book.gantt(ov)
+    out = ["<h2>工程表</h2>"]
+    if not found:
+        return out + ['<p class="note">期限の日付が出せる手続きの段階が、まだありません。</p>']
+    today_col = (ov.today.year, ov.today.month)
+    out.append(f'<p class="note">横の帯が手続きの段階（効果報告は年ごとの提出期間）、◆ が期限の月、赤い縦線が今日'
+               f"（{_e(dates.format_date(ov.today))}）です。</p>")
+    head = ["<tr><th>案件</th><th>手続き</th><th>期限</th>"]
+    for y, m in months:
+        cls = "g g-today" if (y, m) == today_col else "g"
+        label = f"{y}<br>{m}" if m == 1 or (y, m) == months[0] else f"{m}"
+        title = f"{y}年{m}月" + ("（今日）" if (y, m) == today_col else "")
+        head.append(f'<th class="{cls}" title="{_e(title)}">{label}</th>')
+    out += ['<div class="wide"><table class="gantt">', "".join(head) + "</tr>"]
+    for b in found:
+        row = [f"<tr><td>{_e(b.case)}</td><td>{_e(b.label)}（{_e(b.state)}）</td><td>{_e(b.due_label)}</td>"]
+        for ym, mark in zip(months, status_book.cells(months, b, ov.today)):
+            cls = ["g"] + ([f"g-{mark}"] if mark else []) + (["g-today"] if ym == today_col else [])
+            text = "◆" if mark == "mark" else ""
+            row.append(f'<td class="{" ".join(cls)}">{text}</td>')
+        out.append("".join(row) + "</tr>")
+    out.append("</table></div>")
+    return out
+
+
+def book_sections(ov: deadlines.Overview, folder: Path) -> List[str]:
+    """長い期限・書類ごとの状態・申請書の進み具合（B27。Excel と同じ行から作る）。"""
+    from lib import status_book as sb
+
+    out = ["<h2>長い期限（効果報告など、年ごと）</h2>"]
+    out += _table(sb.YEAR_HEAD, [sb.year_values(y) for y in sb.long_deadlines(ov)],
+                  "年ごとの期限は、事業の完了の日と決算の月が分かってから出ます。")
+    items, problem = sb.documents(folder, ov)
+    out.append("<h2>書類</h2>")
+    out.append('<p class="note">原本は案件をまたいで1か所に置き、写しは案件の段階ごとに作ります。'
+               "「元の原本より新しい原本」があれば、写しを作り直します（shorui）。</p>")
+    out += _table(sb.DOC_HEAD, [sb.doc_values(d) for d in items], "書類はまだありません。")
+    if problem:
+        out.append(f'<p class="note">{_e(problem)}</p>')
+    out.append("<h2>申請書（様式の項目ごとの進み具合）</h2>")
+    out += _table(sb.FORM_HEAD, [sb.form_values(f) for f in sb.forms(folder, ov)], "様式の項目は、まだありません。")
+    return out
+
+
+def write_all(folder: Path, ov: deadlines.Overview) -> Optional[str]:
+    """今の状態.html と 今の状態.xlsx を作り直す（中身が同じなら書き直さない）。書けなかったときは、そのわけ。"""
+    folder = Path(folder)
+    problems = []
+    try:
+        problem = write_page(folder, render_page(ov, deadlines.nfc(folder.name), folder))
+    except Exception as error:
+        problem = f"{PAGE_NAME} を作れませんでした（{type(error).__name__}: {error}）"
+    if problem:
+        problems.append(problem)
+    try:
+        from lib import status_book
+        problem = status_book.write_book(folder, ov)
+    except Exception as error:
+        problem = f"今の状態.xlsx を作れませんでした（{type(error).__name__}: {error}）"
+    if problem:
+        problems.append(problem)
+    return "。".join(problems) or None
+
+
 def render_page(ov: deadlines.Overview, company_name: str, folder: Optional[Path] = None) -> str:
-    """今の状態.html の中身（最小限。B27 で、工程表・書類ごとの状態・不備・申請書の進み具合などを足す）。"""
+    """今の状態.html の中身（工程表・期限と作業・依頼・案件・長い期限・義務・書類・申請書の進み具合・不備。B27）。"""
     today = ov.today
     when = dates.format_date(today) + ("（日付を差し替えています）" if ov.substituted else "")
     out = [
@@ -295,6 +438,9 @@ def render_page(ov: deadlines.Overview, company_name: str, folder: Optional[Path
         "<h1>今の状態</h1>",
         f'<p class="note">{_e(company_name)}｜{_e(when)}時点（日本時間）。この画面は見るだけです。'
         "Claude を開くたびに作り直すので、ここに書き込んでも残りません。済んだことは、Claude に伝えてください。</p>",
+    ]
+    out += gantt_section(ov)
+    out += [
         "<h2>期限と作業</h2>",
         f'<p class="note">近い締切は{ov.near_days}日以内。{deadlines.STRONG_DAYS}日以内は色を付けています。'
         "「見込み」は、予定の日付から出した期限です。</p>",
@@ -364,6 +510,12 @@ def render_page(ov: deadlines.Overview, company_name: str, folder: Optional[Path
                        "期数・有効期限・中身は、書類の確かめ（shorui）で見ます。</p>")
         for note in case.notes:
             out.append(f'<p class="note">{_e(note)}</p>')
+    if folder is not None:
+        try:
+            out += book_sections(ov, folder)
+        except Exception as error:  # 書類や申請書が読めなくても、画面は作る
+            out.append(f'<p class="note">書類と申請書の一覧を作れませんでした（{_e(type(error).__name__)}: {_e(error)}）</p>')
+    out += duty_section(ov)
     out += defect_section(folder) if folder is not None else []
     if ov.problems:
         out.append("<h2>組み立てられなかったもの</h2><ul>")
@@ -415,7 +567,7 @@ def refresh_page(folder: Path) -> Optional[str]:
     ov = deadlines.build(folder)
     if not page_wanted(folder, ov):
         return None
-    return write_page(folder, render_page(ov, deadlines.nfc(folder.name), folder))
+    return write_all(folder, ov)
 
 
 # ---- 開いたとき ----
@@ -431,10 +583,7 @@ def session_start(folder: Path, output: Optional[dict]) -> dict:
     else:
         text = deadline_text(ov)
         if page_wanted(folder, ov):
-            try:
-                problem = write_page(folder, render_page(ov, deadlines.nfc(folder.name), folder))
-            except Exception as error:
-                problem = f"{PAGE_NAME} を作れませんでした（{type(error).__name__}: {error}）"
+            problem = write_all(folder, ov)
             if problem:
                 text += f"\n{problem}"
     result = dict(output or {})

@@ -46,7 +46,10 @@
   日付を出さずに決め方を示す。決まった日付（公募要領の日付）は、見込みでないものとして扱い、「確定」の印は付けない。
   か月・年は、同じ日の数字の日（応当日）。その日がない月は、その月の終わりの日にする（仮）。
 - 早いほう：日付の分かるもののうち早いほう。分からないものがあれば「遅くとも」その日（上限）とする。
-- 繰り返し（効果報告など）：事業の完了と決算の月が要るので、M3 では日付を出さない（K1）。
+- 繰り返し（効果報告など）：事業の完了の日（期限の台帳の出来事）と会社の記録の決算の月から、回ごとの提出期間を出す
+  （Plan.repeat_dues。B31a）。完了した事業年度の翌年度を1年目とし、1年目が終わった後の最初の「始まりの月」から（仮）。
+  回ごとの提出版（段階が「4_効果報告/1年目」の形）を数え、まだ出していない回のうち、いちばん前の回を作業にする
+  （1年目を出すと2年目の期限が出る）。すべての回を出すまで、段階は済みにしない。完了の日か決算の月がなければ日付を出さない。
 - 申請の段階（いちばん前の、フォルダのある段階）は、「決まった期日」のうち、名前に案件の回と締切を含むものを先に使う。
   制度データは直近回の資料で作ることがあり（M2c）、段階の期限が前の回の締切や「読み取れない」になっていることがあるため（仮）。
 - 決まった期日の名前に公募回があるものは、案件の回のものだけを使う。名前に公募回がないものは、制度データの回と
@@ -151,6 +154,8 @@ class Due:
     basis: List[str] = field(default_factory=list)  # もとにした出来事の日付（期限の台帳のもの。「採択発表日 2027年3月10日（水）（確定。…）」）
     confirmed: bool = False  # 社長に確かめた出来事の日付（期限の台帳の「確定」）から出した（SPEC F6「見込みと確定」）
     window: bool = False  # 取る期間（取り直し）。first がいちばん早い日、last がいちばん遅い日
+    term: bool = False  # 提出期間（繰り返しの報告。効果報告の4月から3か月の間など）。first がはじめの日、last が終わりの日
+    term_word: str = "提出期間"  # term のときの呼び方（事業場内最低賃金の「確かめる時期」など。K3）
 
     @property
     def dated(self) -> bool:
@@ -170,6 +175,8 @@ class Due:
             return f"{head}（{self.how}）" if self.how else head
         if self.window:
             text = f"取る期間 {dates.format_date(self.first)}〜{dates.format_date(self.last)}"
+        elif self.term:
+            text = f"{self.term_word} {dates.format_date(self.first)}〜{dates.format_date(self.last)}"
         elif self.span:
             text = f"{self.span}（日はまだ決まっていません）"
         elif self.first != self.last:
@@ -192,11 +199,12 @@ class Due:
             return ""
         if self.last < today:
             return f"{(today - self.last).days}日過ぎています"
-        if self.window:
+        if self.window or self.term:
+            what = "取る期間" if self.window else self.term_word
             if self.first > today:
-                return f"取る期間まであと{(self.first - today).days}日"
+                return f"{what}まであと{(self.first - today).days}日"
             left = (self.last - today).days
-            return "今が取る期間です（今日まで）" if left == 0 else f"今が取る期間です（あと{left}日）"
+            return f"今が{what}です（今日まで）" if left == 0 else f"今が{what}です（あと{left}日）"
         if self.first <= today < self.last:
             return "今がその時期です"
         days = (self.first - today).days
@@ -206,7 +214,7 @@ class Due:
         """強めて示すか（今日から7日以内。取る期間は、いちばん遅い日まで7日以内）。"""
         if not self.dated or self.last < today:
             return False
-        if self.window:
+        if self.window or self.term:
             return (self.last - today).days <= STRONG_DAYS
         return (self.first - today).days <= STRONG_DAYS
 
@@ -331,7 +339,7 @@ class Plan:
     """1つの案件の制度データから、期限の日付を出す。"""
 
     def __init__(self, data: Dict, case_round: Optional[int],
-                 events: Optional[Sequence[event_ledger.Event]] = None) -> None:
+                 events: Optional[Sequence[event_ledger.Event]] = None, closing: Optional[int] = None) -> None:
         self.data = data if isinstance(data, dict) else {}
         seido = self.data.get("制度") if isinstance(self.data.get("制度"), dict) else {}
         self.data_round = round_of(seido.get("公募回"))
@@ -340,6 +348,7 @@ class Plan:
         self.fixed = [e for e in fixed if isinstance(e, dict) and isinstance(e.get("名前"), str)] \
             if isinstance(fixed, list) else []
         self.events = list(events or [])  # 期限の台帳の、この案件の出来事（lib/event_ledger.py）
+        self.closing = closing  # 会社の記録の決算の月（繰り返しの報告の年度を決める。なければ None）
 
     def ledger_due(self, event: Any) -> Optional[Due]:
         """出来事の日付を、期限の台帳から取る。なければ None。"""
@@ -502,6 +511,116 @@ class Plan:
         reason = str(node.get("理由") or "").strip()
         return Due(how=f"資料から読み取れませんでした（{reason}）" if reason else "資料から読み取れませんでした")
 
+    # ---- 繰り返しの報告（効果報告など。B31a） ----
+
+    def completion_event(self) -> Optional[str]:
+        """制度データの期限の決め方にある出来事のうち、事業の完了（終了）に当たる名前（はじめの1つ）。なければ None。"""
+        for name in rule_event_names(self.data):
+            if any(w in unicodedata.normalize("NFKC", name) for w in COMPLETION_WORDS):
+                return name
+        return None
+
+    def completion_cap(self) -> Optional[Due]:
+        """事業の完了の日が分からないときの見込みの起点：補助事業の実施の段階（id か名前に「実施」）の期限（完了の期限）。
+
+        完了の期限から出した繰り返しの期限は「見込み」とし、完了の日を台帳に残したら計算し直す（B27。testdata/期限 の
+        「完了日が分かるまで見込み」）。出せなければ None。
+        """
+        for stage in _stages(self.data):
+            words = unicodedata.normalize("NFKC", f"{stage.get('id') or ''}{stage.get('名前') or ''}")
+            node = stage.get("期限")
+            if "実施" not in words or not isinstance(node, dict) or node.get("値") is None:
+                continue
+            due = self.compute(node["値"])
+            if due.dated:
+                return Due(first=due.last, last=due.last, estimate=True, check=due.check,
+                           basis=list(due.basis) + [f"事業の完了の期限 {dates.format_date(due.last)}"
+                                                     "（見込み。完了の日を残したら計算し直す）"])
+        return None
+
+    def repeat_dues(self, rule: Any) -> Tuple[List[Due], str]:
+        """繰り返しの期限（{"種類": "繰り返し", "回数", "間隔", "提出期間"}）の、回ごとの提出期間と、決め方の文。
+
+        1回目は、事業の完了の日の属する事業年度（会社の記録の決算の月で区切る）の翌年度を1年目とし、1年目が終わった後の
+        最初の「始まりの月」の1日から、提出期間の長さの間（仮。省力化の効果報告の決め方。制度データに起点の欄がないため。
+        DESIGN 9章の文案）。2回目からは、間隔ずつ後ろにずらす。日付が出せないときは（[], 決め方とわけの文）。
+        """
+        if not isinstance(rule, dict) or rule.get("種類") != "繰り返し":
+            return [], "期限の決め方が繰り返しではありません"
+        count, interval = rule.get("回数"), parse_period(rule.get("間隔"))
+        window = rule.get("提出期間") if isinstance(rule.get("提出期間"), dict) else {}
+        month, length = window.get("始まりの月"), parse_period(window.get("長さ"))
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1 or interval is None or length is None \
+                or not isinstance(month, int) or isinstance(month, bool) or not 1 <= month <= 12:
+            return [], "繰り返しの期限の決め方が読めません"
+        how = f"{period_text(interval)}ごとに{count}回。{month}月から{period_text(length)}の間に出す"
+        event = self.completion_event()
+        if event is None:
+            return [], f"{how}。制度データの期限の決め方に、事業の完了の出来事がないため、日付を出せません"
+        base = self.event_due(event)
+        if base is None or not base.dated:
+            base = self.completion_cap() if self.closing is not None else None
+        if base is None or not base.dated:
+            return [], f"{how}。「{event}」の日付と決算の月が分かってから、日付を出します"
+        if self.closing is None:
+            return [], f"{how}。決算の月が会社の記録にないため、年度を決められません（社長に決算の月を聞いて、会社の記録に残す）"
+        fiscal_end = _closing_day(base.last.year, self.closing)
+        if fiscal_end < base.last:
+            fiscal_end = _closing_day(base.last.year + 1, self.closing)
+        first_year_end = _closing_day(fiscal_end.year + 1, self.closing)
+        start = date(first_year_end.year, month, 1)
+        if start <= first_year_end:
+            start = date(first_year_end.year + 1, month, 1)
+        basis = list(base.basis) + [f"決算の月 {self.closing}月（会社の記録）"]
+        dues = []
+        for i in range(count):
+            step = {"数": interval["数"] * i, "単位": interval["単位"]}
+            first = add_period(start, step) if i else start
+            end = add_period(first, length) if first is not None else None
+            if first is None or end is None:
+                return [], f"{how}（期間が読めません）"
+            dues.append(Due(first=first, last=end - timedelta(days=1), term=True, estimate=base.estimate,
+                            check=base.check, sources=list(base.sources), basis=list(basis),
+                            confirmed=base.confirmed and not base.estimate))
+        return dues, how
+
+
+COMPLETION_WORDS = ("完了", "終了")  # 繰り返しの報告の起点にする出来事の名前の語
+YEAR_WORD = "年目"  # 繰り返しの報告の年のフォルダ（「4_効果報告/1年目」。lib/history.py の YEAR_DIR）
+
+
+def _rule_names(rule: Any, out: List[str]) -> None:
+    if not isinstance(rule, dict):
+        return
+    if rule.get("種類") == "出来事からの期間" and isinstance(rule.get("出来事"), str):
+        if rule["出来事"] not in out:
+            out.append(rule["出来事"])
+    elif rule.get("種類") == "早いほう" and isinstance(rule.get("期限"), list):
+        for part in rule["期限"]:
+            _rule_names(part, out)
+
+
+def rule_event_names(data: Dict) -> List[str]:
+    """制度データの手続きの段階の期限の決め方にある、出来事の名前（段階の順）。"""
+    out: List[str] = []
+    stages = data.get("手続きの段階") if isinstance(data, dict) else None
+    for stage in sorted((s for s in stages if isinstance(s, dict)), key=lambda s: _int(s.get("順番"))) \
+            if isinstance(stages, list) else []:
+        node = stage.get("期限")
+        _rule_names(node.get("値") if isinstance(node, dict) else None, out)
+    return out
+
+
+def repeat_rule(stage: Dict) -> Optional[Dict]:
+    """段階の期限の決め方が繰り返しなら、その決め方。ほかは None。"""
+    node = stage.get("期限") if isinstance(stage, dict) else None
+    rule = node.get("値") if isinstance(node, dict) else None
+    return rule if isinstance(rule, dict) and rule.get("種類") == "繰り返し" else None
+
+
+def year_folder(folder: str, number: int) -> str:
+    return f"{folder}/{number}{YEAR_WORD}"
+
 
 # ---- 作業と案件 ----
 
@@ -537,13 +656,24 @@ class Task:
 
 
 @dataclass
+class YearRow:
+    """繰り返しの報告の1回（効果報告の1年目など）。"""
+
+    number: int
+    due: Due
+    submitted: bool = False  # 提出版（段階が「4_効果報告/1年目」の形）が記録されている
+
+
+@dataclass
 class StageRow:
     order: int
     name: str
     folder: str
     state: str  # 済み・今・これから
-    due: Optional[Due]
+    due: Optional[Due]  # 繰り返しの段階は、まだ出していない回のうち、いちばん前の回の期限
     conditional: bool = False
+    years: List[YearRow] = field(default_factory=list)  # 繰り返しの段階の、回ごとの期限（日付が出せないときは空）
+    next_year: int = 0  # 繰り返しの段階で、次に出す回（すべて出したら 0）
 
 
 @dataclass
@@ -566,6 +696,10 @@ class CaseStatus:
     tasks: List[Task] = field(default_factory=list)
     problem: str = ""
     notes: List[str] = field(default_factory=list)
+    duties: List[str] = field(default_factory=list)  # 事業期間中・事業後の義務の知らせ（lib/obligations.py。K3）
+    evidence: list = field(default_factory=list)  # 経費ごとの証拠の揃い具合（obligations.EvidenceRow）
+    evidence_note: str = ""  # 揃い具合を出せないわけ
+    period: str = ""  # 事業期間中・事業後（交付決定の前は空）
 
     def next_task(self) -> Optional[Task]:
         dated = sorted((t for t in self.tasks if t.due.dated), key=Task.sort_key)
@@ -669,6 +803,7 @@ class Original:
     kind: str
     day: Optional[date]
     place: str
+    partner: str = ""  # 相手先（見積書・請求書などの相手の会社。経費ごとの証拠の揃い具合に使う。K3）
 
 
 def _ledger_originals(folder: Path) -> Tuple[Optional[List[Original]], str]:
@@ -682,7 +817,8 @@ def _ledger_originals(folder: Path) -> Tuple[Optional[List[Original]], str]:
     for entry in ledger.get("原本") or []:
         if isinstance(entry, dict) and isinstance(entry.get("種類"), str):
             day, _time = parse_point(entry.get("日付"))
-            found.append(Original(kind=entry["種類"], day=day, place=str(entry.get("場所") or "")))
+            found.append(Original(kind=entry["種類"], day=day, place=str(entry.get("場所") or ""),
+                                  partner=str(entry.get("相手先") or "")))
     return found, ""
 
 
@@ -839,7 +975,7 @@ def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Option
     if not stages:
         status.problem = "制度データに手続きの段階がないため、期限を組み立てられませんでした"
         return status
-    plan = Plan(data, _case_round(folder, case), events)
+    plan = Plan(data, _case_round(folder, case), events, closing=closing_month(facts or []))
     with_folder = [s for s in stages if _folder_of(s)]
     base = f"{CASES_DIR}/{case}"
     existing = set(_list_dirs(folder, base))
@@ -849,16 +985,26 @@ def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Option
     current_order = _int(current.get("順番"))
     status.current = str(current.get("名前") or "")
     status.current_folder = _folder_of(current)
+    mine = [e for e in submissions if isinstance(e, dict) and nfc(str(e.get("案件") or "")) == case]
+    sent = {nfc(str(e.get("段階") or "")).strip().strip("/") for e in mine}
     if status.current_folder:
-        mine = [e for e in submissions if isinstance(e, dict) and nfc(str(e.get("案件") or "")) == case]
-        status.submitted = any(
-            nfc(str(e.get("段階") or "")) == status.current_folder
-            or nfc(str(e.get("段階") or "")).startswith(status.current_folder + "/") for e in mine)
+        status.submitted = any(s == status.current_folder or s.startswith(status.current_folder + "/") for s in sent)
 
     open_stages: List[Tuple[Dict, StageRow]] = []  # 済んでいない段階（取り直しと依頼の締切に使う）
     for stage in stages:
         order = _int(stage.get("順番"))
         name = str(stage.get("名前") or stage.get("id") or "")
+        repeat = repeat_rule(stage)
+        years: List[YearRow] = []
+        if repeat is not None:
+            dues, how = plan.repeat_dues(repeat)
+            for d in dues:
+                d.sources = source_text(stage.get("期限")) or d.sources
+                d.check = d.check or (isinstance(stage.get("期限"), dict) and stage["期限"].get("状態") in CHECK_STATES)
+            years = [YearRow(number=i + 1, due=d, submitted=year_folder(_folder_of(stage), i + 1) in sent)
+                     for i, d in enumerate(dues)]
+            if stage is current:  # 繰り返しの段階は、すべての回を出してはじめて済み
+                status.submitted = bool(years) and all(y.submitted for y in years)
         if order < current_order or (stage is current and status.submitted):
             state = "済み"
         elif stage is current:
@@ -867,22 +1013,37 @@ def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Option
             state = "これから"
         due = plan.stage_due(stage, application=stage is application)
         row = StageRow(order=order, name=name, folder=_folder_of(stage), state=state, due=due,
-                       conditional=stage.get("条件付き") is True)
+                       conditional=stage.get("条件付き") is True, years=years)
+        if repeat is not None:
+            pending = next((y for y in years if not y.submitted), None)
+            row.next_year = pending.number if pending is not None else 0
+            if pending is not None:
+                row.due = due = pending.due
+            elif not years:
+                row.due = due = Due(how=how, check=due.check if due is not None else False,
+                                    sources=list(due.sources) if due is not None else [])
         status.stages.append(row)
         if state != "済み":
             open_stages.append((stage, row))
         if due is None or state == "済み":
             continue
-        task = Task(case=case, order=order, stage=name, what=f"{name}の期限", due=due, remedies=_remedies(stage))
+        what = f"{name}（{row.next_year}{YEAR_WORD}）の期限" if row.next_year else f"{name}の期限"
+        task = Task(case=case, order=order, stage=name, what=what, due=due, remedies=_remedies(stage))
         if stage.get("条件付き") is True:
             task.notes.append("必要なときだけの手続きです")
         if state == "今":
-            task.notes += _document_notes(folder, status, data, stage, ledger, ledger_problem)
+            where = year_folder(status.current_folder, row.next_year) if row.next_year else status.current_folder
+            task.notes += _document_notes(folder, status, data, stage, ledger, ledger_problem, where)
         status.tasks.append(task)
     if today is not None:
         status.tasks += _reacquire_tasks(status, data, open_stages, originals, today)
         status.notes += _period_notes(data, open_stages, originals, facts or [], today)
         status.tasks += _request_tasks(status, data, plan, open_stages, list(requests or []), facts or [], today)
+        from lib import obligations  # 事業期間中と事業後の義務（K3）
+        duty = obligations.build(folder, status, data, plan, today, originals)
+        status.tasks += duty.tasks
+        status.duties, status.evidence, status.evidence_note, status.period = \
+            duty.notes, duty.evidence, duty.evidence_note, duty.period
     return status
 
 
@@ -1119,12 +1280,15 @@ def _request_tasks(status: CaseStatus, data: Dict, plan: "Plan", open_stages: Li
 
 
 def _document_notes(folder: Path, status: CaseStatus, data: Dict, stage: Dict, ledger: Optional[List[str]],
-                    ledger_problem: str) -> List[str]:
-    """今の段階の必須の書類の揃い具合を status.documents に入れ、作業に添える文を返す。"""
+                    ledger_problem: str, where: str = "") -> List[str]:
+    """今の段階の必須の書類の揃い具合を status.documents に入れ、作業に添える文を返す。
+
+    where は段階のフォルダ（繰り返しの報告は年のフォルダ「4_効果報告/2年目」）。省けば今の段階のフォルダ。
+    """
     stage_id = stage.get("id")
     docs = data.get("書類")
-    attached = _list_files(folder, f"{CASES_DIR}/{status.name}/{status.current_folder}/{ATTACH_DIR}") \
-        if status.current_folder else []
+    where = where or status.current_folder
+    attached = _list_files(folder, f"{CASES_DIR}/{status.name}/{where}/{ATTACH_DIR}") if where else []
     missing = []
     forms = 0
     for doc in docs if isinstance(docs, list) else []:

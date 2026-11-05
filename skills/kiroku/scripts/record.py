@@ -16,6 +16,9 @@
   python3 -B <この場所>/record.py add-result --case <案件> --result <採択|不採択> [--pointed <審査項目> …] [--comment <受けた指摘>]
       --notice-date <通知の日> --source 原本 --file <採否の通知か指摘のメモの原本>
       申請と採否（受けた指摘）を足す（B6）。同じ案件・同じ結果があれば足さない。
+  python3 -B <この場所>/record.py add-defect --case <案件> --stage <段階> --content <中身> --cause <原因>
+                                            --watch <次に注意する書類> --rule <照合の決まり> --file <差し戻しの原本> --received <日>
+      差し戻し（不備）を「不備と差し戻し」として残す（B32）。次からの書類集めで、不備チェックの物差しが前もって示す。
   python3 -B <この場所>/record.py list
       覚えていることの一覧（何を、いつ、どこから）。
 
@@ -104,8 +107,50 @@ def parse(argv):
     p.add_argument("--comment", help="受けた指摘（審査のコメントや、不採択の後の相談で受けた指摘。指摘ごとに番号を付ける）")
     p.add_argument("--notice-date", required=True, help="採否の通知の日（2025-10-28 の形）")
 
+    p = sub.add_parser("add-defect", parents=[common], help="差し戻し（不備）を、次に注意する型として残す")
+    p.add_argument("--case", required=True, help="差し戻された案件")
+    p.add_argument("--stage", required=True, help="手続きの段階のフォルダ（2_交付申請 など）")
+    p.add_argument("--content", required=True, help="差し戻しの中身（何が違ったか）")
+    p.add_argument("--cause", required=True, help="原因（なぜそうなったか）")
+    p.add_argument("--watch", required=True, action="append", help="次に注意する書類（いくつでも。--watch 見積書）")
+    p.add_argument("--rule", required=True, help="照合の決まり（次の書類集めで、何を照らすか）")
+    p.add_argument("--file", required=True, help="差し戻しの文面か写真の原本（会社のフォルダの中の場所）")
+    p.add_argument("--received", required=True, help="受け取った日（2027-06-02 の形）")
+
     sub.add_parser("list", parents=[common], help="覚えていることの一覧")
     return parser.parse_args(argv)
+
+
+def _add_defect(folder, args, record) -> int:
+    """差し戻しを「不備と差し戻し」として残す（B32。DESIGN 10章。次の書類集めで、不備チェックの物差しが前もって示す）。"""
+    from lib import dates
+    received = record._date_arg(args.received, "受け取った日（--received）")
+    if not received:
+        raise Refused("受け取った日（--received）を 2027-06-02 の形で渡してください")
+    source = record.make_source(folder, "原本", file=args.file)
+    texts = {"案件": args.case, "手続きの段階": args.stage, "内容": args.content, "原因": args.cause,
+             "照合の決まり": args.rule}
+    empty = [k for k, v in texts.items() if not (v or "").strip()]
+    watch = [w.strip() for w in args.watch if w and w.strip()]
+    if empty or not watch:
+        raise Refused(f"空の欄があります（{'、'.join(empty + ([] if watch else ['次に注意する書類']))}）")
+    data = record.load(folder)
+    for item in data["項目"]:
+        if item.get("種類") == record.DEFECT and item.get("案件") == texts["案件"].strip() \
+                and record.normalize(item.get("内容", "")) == record.normalize(texts["内容"]) \
+                and item.get("出典", {}).get("ファイル") == source.get("ファイル"):
+            print(f"もう覚えています（同じ案件・同じ中身・同じ原本）。何も足していません：{item['id']}")
+            return 0
+    item = {"id": record._next_id(data, record.DEFECT), "種類": record.DEFECT,
+            **{k: v.strip() for k, v in texts.items()}, "次に注意する書類": watch, "出典": source,
+            "受け取った日": received, "覚えた日": dates.today(folder).isoformat()}
+    data["項目"].append(item)
+    record.save(folder, data)
+    print(f"覚えました：{item['id']}（{item['案件']}／{item['手続きの段階']}）{item['内容']}。"
+          f"次に注意する書類：{'、'.join(watch)}。照合の決まり：{item['照合の決まり']}")
+    print("次からの書類集めでは、shorui の不備チェックの物差し（過去の差し戻しの型）に出て、前もって注意します。"
+          "版は、応答の終わりに自動で残ります。")
+    return 0
 
 
 def _value(args):
@@ -212,7 +257,7 @@ def main(argv) -> int:
         print(f"しませんでした：引数が足りないか違います（{e}）。何も変えていません。")
         return 2
     if args.command is None:
-        print("する事（add-fact・add-rule・add-result・confirm・update-fact・list）を指してください。")
+        print("する事（add-fact・add-rule・add-result・confirm・update-fact・add-defect・list）を指してください。")
         return 2
     folder = Path(args.folder).expanduser() if args.folder else company.project_dir()
     if company.company_folder(folder) is None:
@@ -236,6 +281,8 @@ def main(argv) -> int:
             return _update(folder, args, record)
         if args.command == "add-result":
             return _add_result(folder, args, record)
+        if args.command == "add-defect":
+            return _add_defect(folder, args, record)
         try:
             from lib import record_changes  # 変更の履歴（版の履歴から作る。dulwich を読み込む）
             found = record_changes.changes(folder)

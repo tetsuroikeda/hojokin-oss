@@ -90,8 +90,15 @@ def _value(node):
 
 
 def stage_procedure(seido: dict, stage: str) -> str:
-    """段階のフォルダの名前（1_申請）から、制度データの「手続き」の言葉（応募申請 など）を推す。"""
-    name = re.sub(r"^[0-9]+_", "", nfc(stage))
+    """段階のフォルダの名前（1_申請。効果報告の年は「4_効果報告/1年目」）から、制度データの「手続き」の言葉（段階の id）を出す。
+
+    制度データの手続きの段階に、そのフォルダの名前の段階があれば、その id（採択後の段階も同じ。B31a）。なければ名前から推す。
+    """
+    folder = nfc(stage).strip().strip("/").split("/")[0]
+    for s in (seido or {}).get("手続きの段階") or []:
+        if isinstance(s, dict) and nfc(s.get("フォルダ")) == folder and s.get("id"):
+            return nfc(s["id"])
+    name = re.sub(r"^[0-9]+_", "", folder)
     if "申請" in name and "交付" not in name:
         return "応募申請"
     return name
