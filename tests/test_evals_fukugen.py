@@ -64,11 +64,11 @@ def test_recipe_points_to_files_in_repo(stage: str) -> None:
         assert urls == set(item["ファイル"]), "取る資料の一覧の URL と、downloads/ のファイルの対応がそろっていない"
 
 
-def _restore(stage: str, folder: Path) -> subprocess.CompletedProcess:
+def _restore(stage: str, folder: Path, timeout: int = 120) -> subprocess.CompletedProcess:
     folder.mkdir(parents=True, exist_ok=True)
     env = {"PATH": "/usr/bin:/bin", "HOME": str(folder.parent), "LANG": "ja_JP.UTF-8"}
     return subprocess.run(["bash", str(FUKUGEN_SH), stage, str(folder)], capture_output=True, text=True,
-                          encoding="utf-8", env=env, timeout=120)
+                          encoding="utf-8", env=env, timeout=timeout)
 
 
 def _open(folder: Path) -> dict:
@@ -136,6 +136,47 @@ def test_history_has_one_tool_version_and_nothing_left(restored: Path) -> None:
     assert "保存した状態（書く前）から戻した" in rows[0]["message"]
     assert history.pending_changes(restored) == []
     assert history.remotes(history.open_or_init(restored)) == []
+
+
+def _answer_ids() -> set:
+    sys.path.insert(0, str(REPO_ROOT / "evals" / "_lib"))
+    import fukugen
+
+    return {r["ID"] for r in fukugen.answer_rows(REPO_ROOT / "testdata" / "デモの会社" / "回答表.md")}
+
+
+def test_written_state_adds_plan_details_to_records() -> None:
+    """「書いた後」は、回答表の L 節（組11 で足した、1件目の計画書を厚く書く事実）を会社の記録に足す（TASKS B19・B6）。
+
+    「書く前」の保存した会社の記録は、56ケースの土台なので変えない（L 節の事実が入っていない）。
+    """
+    recipe = json.loads((STATES / "書いた後.json").read_text(encoding="utf-8"))
+    spec = recipe["会社の記録に足す"]
+    ids = _answer_ids()
+    l_rows = sorted(i for i in ids if i.startswith("L-"))
+    assert spec["回答表"] == "testdata/デモの会社/回答表.md" and spec["回答表から"] == l_rows and len(l_rows) == 21
+    saved = (STATES / "書く前" / "記録" / "会社の記録.json").read_text(encoding="utf-8")
+    assert "工程ごとの時間" not in saved and "増えるパックの積み上げ" not in saved
+    fields = {f["欄"]: f["文"] for f in recipe["表の欄"]["欄"]}
+    assert fields["従業員数（2023年度）"] == fields["従業員数（2024年度）"] == "15人"
+
+
+@pytest.mark.slow
+def test_written_state_restores_plan_details(tmp_path: Path) -> None:
+    """「書いた後」を戻すと、L 節の事実が会社の記録と聞き取りの記録に入り、計画書のコードの確かめが通る。"""
+    if not DOWNLOADS.is_dir():
+        pytest.skip("downloads/ がありません（公式資料を取ってから流す）")
+    folder = tmp_path / "会社"
+    done = _restore("書いた後", folder, timeout=900)  # 財務モデルと計画書を製品の道具で作るので、数分かかる
+    assert done.returncode == 0, done.stdout + done.stderr
+    record = json.loads((folder / "記録" / "会社の記録.json").read_text(encoding="utf-8"))
+    names = {it["名前"] for it in record["項目"]}
+    assert {"今の工程ごとの時間（盛り付けから検品まで）", "増えるパックの積み上げ", "機械を入れる日程の見込み"} <= names
+    questions = json.loads((folder / "記録" / "質問の記録.json").read_text(encoding="utf-8"))["質問"]
+    assert {f"L-{n:02d}" for n in range(1, 22)} <= {q["回答表の ID"] for q in questions}
+    check = subprocess.run([real_python(), "-B", str(REPO_ROOT / "skills" / "kaku" / "scripts" / "kakunin.py"), "count",
+                            "--folder", str(folder)], capture_output=True, text=True, encoding="utf-8", timeout=300)
+    assert check.returncode == 0 and "コードの確かめは通りました" in check.stdout, check.stdout + check.stderr
 
 
 def test_opening_the_restored_folder_finds_nothing_changed(restored: Path) -> None:
