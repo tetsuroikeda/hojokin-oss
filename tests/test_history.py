@@ -1122,6 +1122,8 @@ def test_folder_without_git_is_left_untouched(tmp_path) -> None:
             assert vt.without_brief(json.loads(out.decode("utf-8"))) is None, (event, r)
             out = b""
         assert (r.returncode, out, r.stderr) == (0, b"", b""), (event, r)
-    assert hr.snapshot(folder) == before
+    # 道具の控えの場所（.hojokin/一時/。書類の変化の控え〈B9〉と外の場所の控え〈B10〉）のほかは、何も変わらない
+    temp = str(folder / ".hojokin" / "一時")
+    assert {k: v for k, v in hr.snapshot(folder).items() if not k.startswith(temp)} == before
     assert not (folder / ".git").exists()
     assert (tmp_path / "python-ran").exists()

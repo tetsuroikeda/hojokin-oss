@@ -198,16 +198,29 @@ def denied_reason(output) -> str:
     return hso["permissionDecisionReason"]
 
 
+SHORUI_HEAD = "## hojokin：前回から増えた・変わった書類"  # hooks/shorui_hooks.py の HEAD（B9）
+
+
+def _without_shorui(text: str) -> str:
+    """開いたときの、前回から増えた・変わった書類のまとまり（B9）を除く。版の履歴のテストが見るのは、ほかの処理の情報のため。"""
+    start = text.find(SHORUI_HEAD)
+    if start < 0:
+        return text
+    end = text.find("\n## ", start + len(SHORUI_HEAD))
+    rest = text[:start] + (text[end + 1:] if end >= 0 else "")
+    return rest.strip("\n")
+
+
 def without_brief(output):
-    """開いたときの出力から、期限と作業・共通の決まりのまとまり（lib/status_view.py の BRIEF_HEAD から後ろ）を除く。
-    除いて何も残らなければ None。"""
+    """開いたときの出力から、期限と作業・共通の決まりのまとまり（lib/status_view.py の BRIEF_HEAD から後ろ）と、
+    前回から増えた・変わった書類のまとまり（B9）を除く。除いて何も残らなければ None。"""
     if output is None:
         return None
     hso = output.get("hookSpecificOutput") or {}
     text = hso.get("additionalContext")
     if not isinstance(text, str) or status_view.BRIEF_HEAD not in text:
         return output
-    rest = status_view.without_brief(text)
+    rest = _without_shorui(status_view.without_brief(text))
     if not rest and set(output) == {"hookSpecificOutput"} and set(hso) <= {"hookEventName", "additionalContext"}:
         return None
     result = dict(output)
