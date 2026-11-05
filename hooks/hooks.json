@@ -37,7 +37,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "(Claude_Browser|claude-in-chrome)__",
+        "matcher": "(Claude_Browser|claude-in-chrome)__|^AskUserQuestion$",
         "hooks": [
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" PostToolUse", "timeout": 10 }
         ]

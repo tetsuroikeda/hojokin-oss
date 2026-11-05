@@ -17,4 +17,11 @@ from lib import browser_guard
 def handle(data: dict, folder: Path) -> Optional[dict]:
     browser_guard.user_prompt_submit(data, folder)
     version_hooks.user_prompt_submit(data, folder)
+    # 【質問】の答え（B15）。社長の手直しの版を残した後に書く（質問の記録の変化は、次の応答の終わりに「ツール」で残る）
+    try:
+        import shitsumon_hooks
+
+        shitsumon_hooks.user_prompt_submit(data, folder)
+    except Exception:
+        pass
     return None
