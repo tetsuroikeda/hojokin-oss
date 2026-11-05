@@ -87,7 +87,12 @@ def parse(argv):
 
     p = sub.add_parser("outline", help="様式の見出し・表・セルの一覧")
     common(p, seido=False)
+    p.add_argument("--excel", action="store_true", help="Excel の様式（その3 など）の、シートごとの書いてよいセルの一覧")
     p.add_argument("--json", action="store_true", help="JSON で出す")
+    p = sub.add_parser("cells", help="Excel の様式（その3 など）の書いてよいセルに書く")
+    common(p, stage=True)
+    p.add_argument("--input", required=True, help="書く値の JSON（会社のフォルダの中。記録/一時/その3の値.json など）。"
+                                                  "{\"値\": [{\"シート\": \"…\", \"セル\": \"C6\", \"値\": …}]} の形")
     p = sub.add_parser("map", help="読み取り役の対応づけを確かめて、制度データに書く")
     common(p)
     p.add_argument("--input", help="対応づけの JSON（会社のフォルダの中のファイル）。省くか - なら標準入力")
@@ -110,7 +115,7 @@ def parse(argv):
                                     "{\"値\": [{\"画面\": \"…\", \"欄\": \"…\", \"値\": …}]} の形")
     args = parser.parse_args(argv)
     if args.command is None:
-        raise Refused("outline・map・write・sheet・pdf のどれかを付けてください")
+        raise Refused("outline・map・write・sheet・cells・pdf のどれかを付けてください")
     if args.command == "sheet":
         if args.values is not None and (args.field or args.value is not None or args.screen):
             raise Refused("--values と、--field・--value・--screen は一緒に使えません")
@@ -302,8 +307,44 @@ def field_entry(entry, field: str, create: bool = False):
 # ---------------------------------------------------------------- 各コマンド
 
 
+def find_excel_source(folder: Path, case: str, given) -> Path:
+    """公式資料の Excel の様式（その3 など）。--source か、案件の資料の一覧の .xlsx の様式。"""
+    if given:
+        real = inside(folder, given, "公式資料の様式")
+    else:
+        listed_rel = f"{TEXT_DIR}/{case}/{LIST_FILE}"
+        if not places.is_inside(folder, f"{TEXT_DIR}/{case}"):
+            raise Refused(f"{TEXT_DIR}/{case}/ が会社のフォルダの外を指しています（別名）。中を見ません。別名を外してください")
+        listed_path = places.actual(folder, listed_rel)
+        placed = {}
+        if listed_path is not None and listed_path.is_file():
+            listed, _ = read_json(folder, str(listed_path), "案件の資料の一覧")
+            placed = listed.get("置き場所") or {} if isinstance(listed, dict) else {}
+        books = sorted({v.get("ファイル") for v in placed.values()
+                        if isinstance(v, dict) and str(v.get("ファイル", "")).lower().endswith((".xlsx", ".xlsm"))})
+        if len(books) != 1:
+            raise Refused(f"公式資料の Excel の様式を決められません（資料の一覧の .xlsx が{len(books)}つ）。"
+                          "--source で、公式資料/ の様式を渡してください")
+        real = inside(folder, books[0], "公式資料の様式")
+    if real.suffix.lower() not in (".xlsx", ".xlsm") or not real.is_file():
+        raise Refused(f"{places.relative_inside(folder, real)} は Excel の様式ではありません")
+    return real
+
+
 def do_outline(folder: Path, args, yw) -> int:
     case = find_case(folder, args.case)
+    if args.excel:
+        from lib import yoshiki_excel
+
+        source = find_excel_source(folder, case, args.source)
+        entries = yoshiki_excel.outline(source.read_bytes())
+        rel = places.relative_inside(folder, source)
+        if args.json:
+            print(json.dumps({"様式": rel, "シート": entries}, ensure_ascii=False, indent=1))
+        else:
+            print(f"様式：{rel}（書いてよいセルは、様式が入力の欄として開けているセル。数式のセルには書かない）")
+            print(yoshiki_excel.outline_text(entries), end="")
+        return OK
     source = find_source(folder, case, args.source)
     _infos, parts = yw.read_parts(source.read_bytes())
     if yw.DOC not in parts:
@@ -443,6 +484,49 @@ def do_write(folder: Path, args, yw) -> int:
     if summary["消した説明の青字の段落"]:
         print(f"- 様式の説明の青字（{summary['消した説明の青字の段落']}段落）は、様式の求めに合わせて消しました。")
     print("- 直前の版と比べ、書いてよい範囲の外は変わっていません。")
+    return OK
+
+
+EXCEL_FILE = "その3.xlsx"
+
+
+def do_cells(folder: Path, args, yw) -> int:
+    """Excel の様式の書いてよいセルに、まとめて書く。1件でも書けなければ何も書かない。"""
+    from lib import yoshiki_excel
+    from lib.docx_min import write_replacing
+
+    case = find_case(folder, args.case)
+    stage = find_stage(folder, case, args.stage)
+    data, _ = read_json(folder, args.input, "書く値の JSON")
+    items = data.get("値") if isinstance(data, dict) else None
+    if not isinstance(items, list) or not items:
+        raise Refused("書く値は {\"値\": [{\"シート\": \"…\", \"セル\": \"C6\", \"値\": …}]} の形で渡してください")
+    target = application_file(folder, case, stage, EXCEL_FILE)
+    first = not os.path.lexists(str(target))
+    if first:
+        before = yoshiki_excel.first_copy(find_excel_source(folder, case, args.source).read_bytes())
+    else:
+        before = target.read_bytes()
+    try:
+        new_blob, summary = yoshiki_excel.write_cells(before, items)
+    except yw.OutsideChange as e:
+        print(f"保存しませんでした：{EXCEL_FILE} に書くと、書いてよい範囲の外が変わります（{len(e.differences)}か所）。"
+              "前のファイルのままです。道具か様式の想定が違うので、作者に知らせてください。")
+        for d in e.differences:
+            print(f"- {d}")
+        return OUTSIDE
+    except yw.FormError as e:
+        print(f"しませんでした（{EXCEL_FILE} は前のままです）。{e}")
+        print("書いてよいセルは outline --excel で確かめてください。")
+        return REFUSED
+    target = application_file(folder, case, stage, EXCEL_FILE)
+    write_replacing(target, new_blob)
+    rel = places.relative_inside(folder, target)
+    made = "公式資料の様式から写して作り（開いたときに計算し直す設定を付けた）、" if first else ""
+    print(f"{rel} に、{made}{summary['書いたセル']}個のセルを書きました（シート：{'・'.join(summary['シート'])}）。")
+    print("- 直前の版と比べ、書いてよい範囲（様式の入力の欄）の外は変わっていません。")
+    print("- 数式のセル（省力化指数・投資回収期間・別紙4 の伸び率など）は、Excel で開いたときに計算されます。"
+          "計画書に書く数字は、財務モデルの道具の出力から取ってください。")
     return OK
 
 
@@ -669,7 +753,8 @@ def main(argv) -> int:
         print(f"補助プログラムを読み込めませんでした（{type(e).__name__}: {e}）。"
               "プラグインを入れ直してから、もう一度試してください。")
         return BROKEN
-    handlers = {"outline": do_outline, "map": do_map, "write": do_write, "sheet": do_sheet, "pdf": do_pdf}
+    handlers = {"outline": do_outline, "map": do_map, "write": do_write, "sheet": do_sheet, "pdf": do_pdf,
+                "cells": do_cells}
     try:
         return handlers[args.command](folder, args, yw)
     except Refused as e:
