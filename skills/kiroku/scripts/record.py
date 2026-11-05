@@ -13,6 +13,9 @@
       記録のままでよいと社長が確かめた。最後に確かめた日を今日にする。
   python3 -B <この場所>/record.py update-fact --id <事実の id> --value <新しい値> --source … [--changeable | --fixed]
       社長が決めた新しい値にする（食い違いを決めてもらった後や、社長が直したとき）。
+  python3 -B <この場所>/record.py add-result --case <案件> --result <採択|不採択> [--pointed <審査項目> …] [--comment <受けた指摘>]
+      --notice-date <通知の日> --source 原本 --file <採否の通知か指摘のメモの原本>
+      申請と採否（受けた指摘）を足す（B6）。同じ案件・同じ結果があれば足さない。
   python3 -B <この場所>/record.py list
       覚えていることの一覧（何を、いつ、どこから）。
 
@@ -43,6 +46,7 @@ from lib import company  # noqa: E402
 
 SOURCE_KINDS = ("原本", "質問", "社長の手直し", "社長の発言")
 RULE_KINDS = ("直した表現", "好む言い方", "避けたい言い方", "書き方の方針", "構成")
+RESULTS = ("採択", "不採択")
 
 
 class Refused(Exception):
@@ -92,6 +96,13 @@ def parse(argv):
     group = p.add_mutually_exclusive_group()
     group.add_argument("--changeable", action="store_true", help="変わりうる情報にする")
     group.add_argument("--fixed", action="store_true", help="変わらない情報にする")
+
+    p = sub.add_parser("add-result", parents=[common, source], help="申請と採否（受けた指摘）を足す")
+    p.add_argument("--case", required=True, help="申請した案件（例：2025_ものづくり補助金 20次締切）")
+    p.add_argument("--result", required=True, choices=RESULTS, help="結果")
+    p.add_argument("--pointed", action="append", default=[], help="指摘に当たる審査項目（いくつでも。--pointed を繰り返す）")
+    p.add_argument("--comment", help="受けた指摘（審査のコメントや、不採択の後の相談で受けた指摘。指摘ごとに番号を付ける）")
+    p.add_argument("--notice-date", required=True, help="採否の通知の日（2025-10-28 の形）")
 
     sub.add_parser("list", parents=[common], help="覚えていることの一覧")
     return parser.parse_args(argv)
@@ -158,6 +169,41 @@ def _update(folder, args, record) -> int:
     return 0
 
 
+def _add_result(folder, args, record) -> int:
+    """申請と採否を足す（SPEC F13「最初に会社の資料と過去の書類から学ぶ」、DESIGN 10章。TASKS B6）。
+
+    同じ案件・同じ結果がもうあれば、足さない（指摘が増えたときは、社長に確かめて記録を直してもらう）。
+    出典は採否の通知か、受けた指摘のメモの原本（--source 原本 --file …）。
+    """
+    case = (args.case or "").strip()
+    if not case:
+        raise Refused("申請した案件（--case）が空です")
+    pointed = [p.strip() for p in args.pointed if p and p.strip()]
+    comment = (args.comment or "").strip()
+    if args.result == "不採択" and not pointed and not comment:
+        raise Refused("不採択のときは、受けた指摘（--comment）か、指摘に当たる審査項目（--pointed）を渡してください。"
+                      "指摘が分からなければ、--comment に「指摘は分からない（理由は開示されていない）」と書く")
+    notice = record._date_arg(args.notice_date, "通知の日（--notice-date）")
+    data = record.load(folder)
+    for item in data["項目"]:
+        if item["種類"] == record.RESULT and record.normalize(item["案件"]) == record.normalize(case) \
+                and item["結果"] == args.result:
+            print(f"もう覚えています（同じ案件・同じ結果）。何も足していません：[{item['id']}] {item['案件']}：{item['結果']}")
+            return 0
+    item = {"id": record._next_id(data, record.RESULT), "種類": record.RESULT, "案件": case, "結果": args.result,
+            "指摘された審査項目": pointed, "出典": _source(folder, args, record), "通知の日": notice,
+            "覚えた日": record.dates.today(folder).isoformat()}
+    if comment:
+        item["審査コメント"] = comment
+    data["項目"].append(item)
+    record.save(folder, data)
+    shown = "、".join(pointed) or "なし"
+    print(f"覚えました：[{item['id']}] {case}：{args.result}（指摘された審査項目：{shown}。"
+          f"出典：{record.source_text(item['出典'])}。通知の日 {notice}）")
+    print("次の申請書を書くときは、この指摘に応える記述を入れ、審査役が「過去の指摘」で確かめます。版は、応答の終わりに自動で残ります。")
+    return 0
+
+
 def main(argv) -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     try:
@@ -166,7 +212,7 @@ def main(argv) -> int:
         print(f"しませんでした：引数が足りないか違います（{e}）。何も変えていません。")
         return 2
     if args.command is None:
-        print("する事（add-fact・add-rule・confirm・update-fact・list）を指してください。")
+        print("する事（add-fact・add-rule・add-result・confirm・update-fact・list）を指してください。")
         return 2
     folder = Path(args.folder).expanduser() if args.folder else company.project_dir()
     if company.company_folder(folder) is None:
@@ -188,6 +234,8 @@ def main(argv) -> int:
             return _confirm(folder, args, record)
         if args.command == "update-fact":
             return _update(folder, args, record)
+        if args.command == "add-result":
+            return _add_result(folder, args, record)
         try:
             from lib import record_changes  # 変更の履歴（版の履歴から作る。dulwich を読み込む）
             found = record_changes.changes(folder)
