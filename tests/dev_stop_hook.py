@@ -1,7 +1,11 @@
 """開発用の Stop hook（DESIGN 12章）。プラグインには入れない。
 
 Claude が応答を終えるたびに、前に通ったときからファイルが変わっていれば、
-構成の検査と速いテスト（通信なし）を流す。落ちたら、直すまで続けさせる（8回まで）。
+構成の検査と速いテスト（通信なし）を流す。落ちたら、直すまで続けさせる（2回まで）。
+
+変わったかは、プラグインとテストに関わるファイル（WATCHED）の中身の指紋で見る。コミットしただけ、文書だけを直した、
+別の worktree で同じ中身を確かめた、のときは流さない。通った指紋は、セッションと worktree をまたいで
+1つのファイル（Git の共通のフォルダの hojokin-dev-stop.json）に持つ。
 """
 
 from __future__ import annotations
@@ -15,7 +19,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-MAX_BLOCKS = 8
+MAX_BLOCKS = 2
+# 指紋を作るファイル（ここが変わらなければ、検査とテストの結果も変わらない）
+WATCHED = ["lib", "hooks", "skills", "agents", "schema", "tests", "evals", "mock", ".claude-plugin", "testdata",
+           "knowledge", "pyproject.toml", "uv.lock"]
+PASSED_FILE = "hojokin-dev-stop.json"
+PASSED_KEEP = 50
 # 速いテストは並べて4分ほど。Workflow の作業役が同じ Mac でテストを流している間は遅くなるので、余裕を持たせる
 # （.claude/settings.json の hook の時間切れ 660秒より短くする）
 CHECK_TIMEOUT = 600
@@ -49,15 +58,44 @@ def save_state(path: Path, state: dict) -> None:
     path.write_text(json.dumps(state), encoding="utf-8")
 
 
+def passed_path(root: Path) -> Path:
+    """通った指紋を持つファイル。Git の共通のフォルダ（worktree でも同じ所）に置く。Git でなければ一時のフォルダ。"""
+    out = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=root, capture_output=True, text=True).stdout.strip()
+    if out:
+        common = Path(out)
+        return (common if common.is_absolute() else root / common) / PASSED_FILE
+    return Path(tempfile.gettempdir()) / "hojokin-dev-stop" / PASSED_FILE
+
+
+def load_passed(path: Path) -> list:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [x for x in data if isinstance(x, str)] if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def add_passed(path: Path, fingerprint: str) -> None:
+    passed = [x for x in load_passed(path) if x != fingerprint] + [fingerprint]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(passed[-PASSED_KEEP:]), encoding="utf-8")
+    except OSError:
+        pass  # 持てなくても、次にもう一度流すだけ
+
+
 def tree_fingerprint(root: Path) -> str:
-    """今のコミットと、コミットしていない変更（Git の外のファイルを除く）から指紋を作る。"""
+    """WATCHED のファイルの中身（Git の索引、コミットしていない変更、Git の外のファイル）から指紋を作る。
+
+    今のコミットそのものは入れない（コミットしただけでは中身が変わらないため）。
+    """
 
     def git(*args: str) -> bytes:
-        return subprocess.run(["git", *args], cwd=root, capture_output=True).stdout
+        return subprocess.run(["git", *args, "--", *WATCHED], cwd=root, capture_output=True).stdout
 
     h = hashlib.sha256()
-    h.update(git("rev-parse", "HEAD"))
-    h.update(git("diff", "HEAD", "--binary"))
+    h.update(git("ls-files", "-s"))
+    h.update(git("diff", "--binary"))
     for name in git("ls-files", "-z", "--others", "--exclude-standard").split(b"\0"):
         if not name:
             continue
@@ -144,11 +182,14 @@ def main() -> int:
     path = state_path(str(payload.get("session_id", "")))
     state = load_state(path)
     fingerprint = tree_fingerprint(root)
-    if fingerprint == state.get("passed"):
-        # 前に通ったときから何も変わっていない
+    shared = passed_path(root)
+    if fingerprint == state.get("passed") or fingerprint in load_passed(shared):
+        # 前に通ったときから何も変わっていない（ほかのセッションや worktree で通った中身も含む）
         return 0
     new_state, output = decide(state, fingerprint, *run_checks(root))
     save_state(path, new_state)
+    if new_state.get("passed") == fingerprint:
+        add_passed(shared, fingerprint)
     print(json.dumps(output, ensure_ascii=False))
     return 0
 

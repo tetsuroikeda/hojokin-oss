@@ -1,0 +1,21 @@
+{
+  "説明": "省力化投資補助金（一般型）第9回の公式資料（2026-11-05 にダウンロードのページで確かめた）。第9回のものが出ているのは公募要領とスケジュールのページだけで、応募申請の手引き・電子申請マニュアル（応募申請）・事業計画書 その1・その2・その3 は「準備中」のため、第8回のものを使う。第9回のものが出たら、その資料の id・公募回・URL を直して取り直す。ダウンロードのページには、第9回の最低賃金の要件確認書（指定様式、Excel 2つ）も出ているが、第8回の一覧と同じく入れていない",
+  "制度": {
+    "名前": "中小企業省力化投資補助金",
+    "略称": "省力化",
+    "枠": "一般型",
+    "種類": "補助金",
+    "公募回": "第9回"
+  },
+  "資料": [
+    {"id": "要領9", "名前": "公募要領", "公募回": "第9回", "URL": "https://shoryokuka.smrj.go.jp/assets/pdf/application_guidelines_ippan_09.pdf"},
+    {"id": "応募手引8", "名前": "応募申請の手引き", "公募回": "第8回", "URL": "https://shoryokuka.smrj.go.jp/assets/pdf/oubo_manual_ippan_08.pdf"},
+    {"id": "電子申請マニュアル8", "名前": "電子申請マニュアル（応募申請）", "公募回": "第8回", "URL": "https://shoryokuka.smrj.go.jp/assets/pdf/electronic_application_manual_ippan_08.pdf"},
+    {"id": "Wordその1・2", "名前": "事業計画書 その1・その2（参考様式）", "公募回": "第8回", "URL": "https://shoryokuka.smrj.go.jp/assets/doc/yoshiki_business_plan_part1_part2_ippan.docx"},
+    {"id": "Excelその3", "名前": "事業計画書 その3（指定様式）", "公募回": "第8回", "URL": "https://shoryokuka.smrj.go.jp/assets/xls/yoshiki_business_plan_part3_ippan_08.xlsx"},
+    {"id": "交付申請の手引き6", "名前": "交付申請の手引き", "公募回": "第6回", "URL": "https://shoryokuka.smrj.go.jp/assets/pdf/application_manual_ippan_06.pdf"},
+    {"id": "実績報告の手引き", "名前": "実績報告の手引き", "公募回": "全公募回共通", "URL": "https://shoryokuka.smrj.go.jp/assets/pdf/completion_manual_ippan.pdf"},
+    {"id": "状況報告の手引き", "名前": "状況報告の手引き", "公募回": "記載なし", "URL": "https://shoryokuka.smrj.go.jp/assets/pdf/status_report_manual_ippan.pdf"},
+    {"id": "スケジュール9", "名前": "スケジュール（一般型）のページ", "公募回": "第9回", "URL": "https://shoryokuka.smrj.go.jp/ippan/schedule/"}
+  ]
+}

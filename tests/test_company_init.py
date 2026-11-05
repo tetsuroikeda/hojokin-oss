@@ -171,8 +171,9 @@ def test_settings_follow_design_4_7(tmp_path) -> None:
         assert not denied(deny, rel), rel
     # 読むことは止めない（原本も読めないと、書類を確かめられない）
     assert not any(r.startswith("Read(") for r in deny)
-    # 規則の allow：Web 検索と、公的なサイト（go.jp、lg.jp）の取得だけ。下のドメインにも当たる書き方にする
-    assert permissions["allow"] == ["WebSearch", "WebFetch(domain:*.go.jp)", "WebFetch(domain:*.lg.jp)"]
+    # 規則の allow：Web 検索と、公的なサイト（go.jp、lg.jp）と持続化の公式サイトの取得だけ。下のドメインにも当たる書き方にする
+    assert permissions["allow"] == ["WebSearch", "WebFetch(domain:*.go.jp)", "WebFetch(domain:*.lg.jp)",
+                                    "WebFetch(domain:*.jizokukahojokin.info)"]
     # この区分のほかは書かない
     assert set(settings_of(folder)) == {"permissions"}
 

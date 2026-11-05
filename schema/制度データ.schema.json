@@ -290,6 +290,28 @@
           "出す人": { "type": "string" },
           "発行元": { "enum": ["自社", "役所", "外部機関"] },
           "有効期限": { "$ref": "#/$defs/出典つき値" },
+          "取得の決まり": {
+            "allOf": [
+              { "$ref": "#/$defs/出典つき値" },
+              { "properties": { "値": { "anyOf": [{ "$ref": "#/$defs/期間" }, { "type": "string", "minLength": 1 }, { "type": "null" }] } } }
+            ],
+            "description": "発行からの期間など（履歴事項全部証明書は発行から3か月以内 など）。期間の形なら、期限の台帳が取り直しの時期を計算する"
+          },
+          "依頼先": { "$ref": "#/$defs/出典つき値", "description": "書類を頼む相手（商工会・商工会議所など）。資料にあるときだけ" },
+          "依頼の締切": {
+            "allOf": [
+              { "$ref": "#/$defs/出典つき値" },
+              { "properties": { "値": { "anyOf": [{ "$ref": "#/$defs/期限" }, { "type": "null" }] } } }
+            ],
+            "description": "依頼の締切（公募の締切の何日前まで など）。資料にあるときだけ"
+          },
+          "依頼の目安の日数": {
+            "allOf": [
+              { "$ref": "#/$defs/出典つき値" },
+              { "properties": { "値": { "anyOf": [{ "$ref": "#/$defs/期間" }, { "type": "null" }] } } }
+            ],
+            "description": "頼んでから届くまでの目安。資料にないものは社長に聞いて会社の記録に持つ"
+          },
           "期数": { "$ref": "#/$defs/出典つき値" },
           "形式": { "type": "string" },
           "効く審査項目": { "type": "array", "items": { "type": "string" } },
@@ -425,6 +447,43 @@
           "様式": { "type": "array", "items": { "type": "string" } },
           "画面": { "type": "string" },
           "注意": { "type": "array", "items": { "$ref": "#/$defs/出典つき値" } }
+        }
+      }
+    },
+    "義務": {
+      "description": "事業期間中と事業後の義務（証拠をそろえる・事前に申請する・報告する・守り続ける・残す）。期限の台帳が、始まりと終わりと繰り返しから作業を作る（TASKS K1・K3）",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["名前", "種類", "内容"],
+        "properties": {
+          "名前": { "type": "string", "minLength": 1 },
+          "種類": { "enum": ["証拠をそろえる", "事前に申請する", "報告する", "守り続ける", "残す"] },
+          "時期": { "enum": ["事業期間中", "事業後"] },
+          "内容": { "$ref": "#/$defs/出典つき値" },
+          "始まり": {
+            "allOf": [
+              { "$ref": "#/$defs/出典つき値" },
+              { "properties": { "値": { "anyOf": [{ "$ref": "#/$defs/期限" }, { "type": "null" }] } } }
+            ]
+          },
+          "終わり": {
+            "allOf": [
+              { "$ref": "#/$defs/出典つき値" },
+              { "properties": { "値": { "anyOf": [{ "$ref": "#/$defs/期限" }, { "type": "null" }] } } }
+            ]
+          },
+          "繰り返し": {
+            "allOf": [
+              { "$ref": "#/$defs/出典つき値" },
+              { "properties": { "値": { "anyOf": [{ "$ref": "#/$defs/期限" }, { "type": "null" }] } } }
+            ],
+            "description": "毎年の報告など。期限の決め方の「繰り返し」の形"
+          },
+          "確かめ方": { "$ref": "#/$defs/出典つき値" },
+          "守れないとき": { "$ref": "#/$defs/出典つき値", "description": "返還など" },
+          "証拠の書類": { "type": "array", "items": { "type": "string" }, "description": "経費ごとにそろえる書類の種類（見積書・発注書・納品書・請求書・振込の控え など）" }
         }
       }
     },

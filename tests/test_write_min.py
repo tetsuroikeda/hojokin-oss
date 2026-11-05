@@ -305,6 +305,20 @@ def test_rewrite_replaces_the_previous_text(env: Env) -> None:
     assert yw.compare_docx(first, second, [("1-2 経営課題", KEIEI)]) == []
 
 
+def test_write_reads_text_from_a_file_inside(env: Env, tmp_path: Path) -> None:
+    """書く文は、Claude が Write で置いた会社のフォルダの中のファイルでも渡せる（SKILL.md の手順）。外のファイルは読まない。"""
+    env.set_positions({"1-2 経営課題": KEIEI})
+    src = env.folder / "記録" / "一時" / "書く文.txt"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("ファイルから書く文（試し）\n2つ目の段落", encoding="utf-8")
+    ok(env.run("write", "--item", "1-2 経営課題", "--input", "記録/一時/書く文.txt"))
+    assert yw.item_text((env.folder / APP).read_bytes(), KEIEI) == "ファイルから書く文（試し）\n2つ目の段落"
+    outside = tmp_path / "外の文.txt"
+    outside.write_text("外の文", encoding="utf-8")
+    text = refused(env.run("write", "--item", "1-2 経営課題", "--input", str(outside)))
+    assert "会社のフォルダの外" in text
+
+
 def test_second_item_keeps_the_first(env: Env) -> None:
     """別の項目（セルの形の（２）事業計画名）にも書ける。前に書いた項目はそのまま残る。"""
     env.set_positions({"1-2 経営課題": KEIEI, "（２）事業計画名": PLAN_NAME})
