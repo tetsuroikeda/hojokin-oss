@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,10 @@ DOWNLOADS = REPO_ROOT / "downloads"
 
 # lib/（スクリプトと hooks が共通に使うコード）を import できるようにする
 sys.path.insert(0, str(REPO_ROOT))
+
+# 開いたときの公式サイトの確かめ（B28。hooks/kaitei_hooks.py）は、テストでは止める。環境を受け継いで hook を動かす
+# テストの補助（tests/jizokuka_tool.py など）にも効く。確かめるテスト（tests/test_T7_2.py）は、その場で "1" にする
+os.environ.setdefault("HOJOKIN_SITE_CHECK", "0")
 
 
 @pytest.fixture(scope="session")

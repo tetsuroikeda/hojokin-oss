@@ -172,6 +172,9 @@ def run(command: str, payload: dict, *, plugin: Path, folder: Path, path: str, h
            "CLAUDE_PLUGIN_ROOT": str(plugin), "CLAUDE_PLUGIN_DATA": str(data)}
     if project_dir_env:
         env["CLAUDE_PROJECT_DIR"] = str(folder)
+    # 開いたときの公式サイトの確かめ（B28。hooks/kaitei_hooks.py）は、テストでは止める（通信と、ほかの処理の出力を変えないため）。
+    # 確かめるテスト（tests/test_T7_2.py）は extra_env で "1" を渡す
+    env["HOJOKIN_SITE_CHECK"] = "0"
     env.update(extra_env or {})
     return subprocess.run(
         ["/bin/sh", "-c", command],
