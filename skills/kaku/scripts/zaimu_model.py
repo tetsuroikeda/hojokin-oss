@@ -246,21 +246,6 @@ def report_text(result: dict) -> str:
 # ---------------------------------------------------------------- 数字の控え
 
 
-def numbers_record(spec, book, seido_rel, when: str) -> dict:
-    """計画書・様式・入力シートと照らすための、財務モデルの数字の控え。"""
-    assumptions = []
-    for prefix, items in (("P", spec.assumptions), ("J", list(spec.base.values()))):
-        for n, item in enumerate(items, start=1):
-            assumptions.append({"番号": f"{prefix}-{n:02d}", "名前": item.name, "値": item.value, "単位": item.unit,
-                                "根拠": item.basis, "出典": item.source, "仮": item.provisional})
-    if spec.shoryoku is not None:
-        for n, item in enumerate(spec.shoryoku.items.values(), start=1):
-            assumptions.append({"番号": f"S-{n:02d}", "名前": item.name, "値": item.value, "単位": item.unit,
-                                "根拠": item.basis, "出典": item.source, "仮": item.provisional})
-    return {"説明": "財務モデル.xlsx を作ったときの数字の控え（zaimu_model.py が書く。書き換えない）",
-            "作った日時": when, "制度データ": seido_rel, "前提": assumptions, "中身": book.summary}
-
-
 def write_numbers(folder: Path, data: dict) -> str:
     places.no_link_on_the_way(folder, NUMBERS_FILE)
     target = places.actual(folder, NUMBERS_FILE, partial=True)
@@ -455,7 +440,7 @@ def main(argv) -> int:
             placed = True
             seido_rel = relative(folder, seido_path) if seido_path is not None else None
             when = dates.format_datetime(dates.now(folder))
-            numbers_rel = write_numbers(folder, numbers_record(spec, book, seido_rel, when))
+            numbers_rel = write_numbers(folder, zaimu.numbers_record(spec, book, seido_rel, when))
     except places.PlaceError as e:
         print(f"しませんでした：{e.link or e} が別名（シンボリックリンク）になっているので、書きません。")
         return REFUSED

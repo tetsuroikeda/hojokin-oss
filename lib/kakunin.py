@@ -367,13 +367,75 @@ def _read_bytes(path: Path, rel: str) -> bytes:
         raise CheckError(f"{rel} を読めませんでした（{e.strerror or e}）")
 
 
+def _texts_of(blob: bytes, rel: str, suffix: str, seido: Optional[dict]) -> Dict[str, str]:
+    """照合に使う本文（書いた場所 → 文）。Word は様式の項目と欄ごと、入力シートは「画面／欄」ごと、文字のファイルは全体。"""
+    out: Dict[str, str] = {}
+    if suffix in WORD_SUFFIXES:
+        root = _word_root(blob, rel)
+        items = _item_ranges(root, seido)
+        if items:
+            for name, ps in items:
+                out[name] = _non_blue_text(ps)
+        else:
+            out[rel] = _non_blue_text(_outer_paragraphs(root))
+    elif suffix in EXCEL_SUFFIXES and places.nfc(Path(rel).name) == input_sheet.FILE_NAME:
+        _parts, _name, grid = input_sheet.read_grid(blob)
+        _head, cols = grid.header()
+        for r, screen, field, staff in grid.field_rows():
+            value = grid.texts.get(f"{cols[input_sheet.HEAD_VALUE]}{r}", "").strip()
+            if value and not staff and not input_sheet.is_not_applicable(value):
+                out[f"{screen}／{field}"] = value
+    elif suffix in TEXT_SUFFIXES:
+        out[rel] = blob.decode("utf-8", errors="replace")
+    return out
+
+
+def _nouns(folder: Path) -> List[str]:
+    """固有名詞の一覧（会社の記録の名前の事実と、書類の台帳の相手先）。DESIGN 6章。"""
+    out: List[str] = []
+    try:
+        from lib import company_record
+
+        for it in company_record.load(folder).get("項目", []):
+            if it.get("種類") == company_record.FACT and re.search(r"会社名|社名|代表者|取引先|業者|仕入先", str(it.get("名前"))):
+                value = str(it.get("値") or "")
+                out += [v for v in re.split(r"[、,（）()]", value) if v.strip()]
+    except Exception:
+        pass
+    try:
+        ledger = json.loads(places.actual(folder, "記録/書類の台帳.json").read_text(encoding="utf-8"))
+        for entry in ledger.get("原本") or []:
+            if isinstance(entry, dict) and str(entry.get("相手先") or "").strip():
+                out.append(str(entry["相手先"]).strip())
+    except Exception:
+        pass
+    return out
+
+
+def _model_numbers(folder: Path) -> Optional[dict]:
+    path = places.actual(folder, zaimu_numbers_file())
+    if path is None or not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def zaimu_numbers_file() -> str:
+    return "記録/財務モデルの数字.json"  # lib/zaimu.py の NUMBERS_FILE と同じ
+
+
 def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
-    """コードによる確かめ（今は、仮の印・空欄・根拠のない記述の数え上げ）。"""
+    """コードによる確かめ：仮の印・空欄・根拠のない記述の数え上げと、根拠対照表・財務モデルとの照合（lib/shogo.py）。"""
+    from lib import shogo
+
     files = application_files(folder, case, stage)
     findings: List[Finding] = []
     problems: List[str] = []
     notes: List[str] = []
     looked: List[str] = []
+    texts: Dict[str, str] = {}
     evidence_rel = f"{shinsa_result.application_rel(case, stage)}/{konkyo.FILE_NAME}"
     evidence_rows = None
     for rel, path in sorted(files.items()):
@@ -385,6 +447,8 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
                 problems.append(f"{rel} を読めません（{e}）")
             continue
         try:
+            if rel != MODEL_FILE:
+                texts.update(_texts_of(_read_bytes(path, rel), rel, suffix, seido))
             if suffix in WORD_SUFFIXES:
                 findings += word_findings(_read_bytes(path, rel), rel, seido)
             elif suffix in EXCEL_SUFFIXES:
@@ -407,6 +471,11 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
         for n, row in enumerate(evidence_rows, 1):
             if not row.get("出典"):
                 findings.append(Finding(UNSUPPORTED, evidence_rel, f"{n}行目", row.get("記述", "")))
+    matched = {k: [] for k in shogo.KINDS}
+    if evidence_rows is not None and texts:
+        matched = shogo.check(texts, evidence_rows, _model_numbers(folder), _nouns(folder))
+        for f in matched[shogo.NO_SOURCE]:
+            findings.append(Finding(UNSUPPORTED, "本文", f["場所"], f"{f['文字']}（{f['理由']}）"))
     if seido is None:
         notes.append("制度データがないので、様式の項目ごとの空欄（まだ書いていない項目）は数えていません")
     else:
@@ -415,7 +484,8 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
             notes.append("様式の項目のうち、書き込む位置をまだ対応づけていないもの（まだ書いていないかは数えていません）："
                          + "、".join(unmapped))
     by_kind = {k: [f.as_dict() for f in findings if f.kind == k] for k in (PROVISIONAL, BLANK, UNSUPPORTED)}
-    passed = not problems and not any(by_kind.values())
+    extra = {k: matched[k] for k in (shogo.MISMATCH, shogo.CITATION, shogo.MODEL_MISMATCH)}
+    passed = not problems and not any(by_kind.values()) and not any(extra.values())
     return {
         "案件": case,
         "段階": stage,
@@ -423,6 +493,9 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
         "仮の印": by_kind[PROVISIONAL],
         "空欄": by_kind[BLANK],
         "根拠なし": by_kind[UNSUPPORTED],
+        "食い違い": extra[shogo.MISMATCH],
+        "本文の出典": extra[shogo.CITATION],
+        "財務モデルとの食い違い": extra[shogo.MODEL_MISMATCH],
         "根拠対照表の行": len(evidence_rows) if evidence_rows is not None else None,
         "問題": problems,
         "注意": notes,
@@ -432,12 +505,22 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
 
 def report_text(report: dict) -> str:
     """数え上げの結果を、社長と Claude に見せる文にする。"""
+    extra = [(k, report.get(k) or []) for k in ("食い違い", "本文の出典", "財務モデルとの食い違い")]
     lines = [f"案件：{report['案件']}　段階：{report['段階']}",
-             f"仮の印 {len(report['仮の印'])}件、空欄 {len(report['空欄'])}件、根拠のない記述 {len(report['根拠なし'])}件"]
-    for kind, title in ((PROVISIONAL, "仮の印"), (BLANK, "空欄"), (UNSUPPORTED, "根拠のない記述（根拠対照表の出典が空）")):
+             f"仮の印 {len(report['仮の印'])}件、空欄 {len(report['空欄'])}件、根拠のない記述 {len(report['根拠なし'])}件、"
+             + "、".join(f"{k} {len(v)}件" for k, v in extra)]
+    for kind, title in ((PROVISIONAL, "仮の印"), (BLANK, "空欄"),
+                        (UNSUPPORTED, "根拠のない記述（根拠対照表の出典が空か、本文の数字・固有名詞・日付が根拠対照表にない）")):
         if report[kind]:
             lines.append(f"{title}：")
             lines += [f"- {Finding(f['種類'], f['ファイル'], f['場所'], f['文字']).line()}" for f in report[kind]]
+    titles = {"食い違い": "根拠対照表と本文の食い違い（表の記述が本文にない）",
+              "本文の出典": "本文に書いた出典（出典は根拠対照表だけに書く）",
+              "財務モデルとの食い違い": "財務モデルとの食い違い（数字は財務モデルの道具の出力から取る）"}
+    for k, items in extra:
+        if items:
+            lines.append(f"{titles[k]}：")
+            lines += [f"- {f['場所']}：{f['文字']}（{f['理由']}）" for f in items]
     for p in report["問題"]:
         lines.append(f"問題：{p}")
     for n in report["注意"]:

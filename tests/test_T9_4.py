@@ -61,7 +61,7 @@ def test_words_that_only_look_like_marks_are_not_counted(env: kt.Env) -> None:
         "1-2 経営課題": ["空欄のまま出さないよう、社長が確かめた。【空欄の多い書類】は使わない。"],
         "6. 補足事項": ["特になし。"],
     }, sheet_values=kt.GOOD_SHEET)
-    env.evidence(kt.GOOD_EVIDENCE)
+    env.evidence([{"記述": "冷凍惣菜", "種類": "そのほか", "書いた場所": "1-1 現状分析", "出典": "社長の答え（架空）"}])
     code, report = env.count()
     assert (report["仮の印"], report["空欄"]) == ([], [])
     assert code == 0 and report["通った"]
@@ -179,7 +179,7 @@ def test_completed_official_form_has_no_marks(env: kt.Env) -> None:
     write("1-2 経営課題", "盛り付けを【仮：4人】の手作業で行っている。\n繁忙期は断る注文が月30件ある。")
     for field, value in kt.GOOD_SHEET.items():
         kt.ok(env.yoshiki("sheet", "--field", field, "--value", value))
-    env.evidence(kt.GOOD_EVIDENCE)
+    env.evidence([r for r in kt.GOOD_EVIDENCE if r["書いた場所"] == "1-2 経営課題"])  # 書いた項目の分だけ（B16）
     code, report = env.count()
     assert code == 3
     assert places_of(report, "仮の印") == [(kt.WORD, "1-2 経営課題")]

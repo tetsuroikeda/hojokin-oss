@@ -1271,6 +1271,25 @@ def _derived_rows(pl: Sheet, py: Dict[Tuple[str, str], List[float]], at: Dict[Tu
     pl.formula(r["営業利益"], f"={r['売上']}-{r['原材料費']}-{r['人件費']}-{r['減価償却費']}-{r['その他の経費']}", op, FMT_YEN)
 
 
+# ---------------------------------------------------------------- 数字の控え（計画書との照合に使う。TASKS B13・B16）
+
+NUMBERS_FILE = "記録/財務モデルの数字.json"
+
+
+def numbers_record(spec: Spec, book: Book, seido_rel: Optional[str], when: str) -> Dict[str, Any]:
+    """計画書・様式・入力シートと照らすための、財務モデルの数字の控え（前提の番号・値と、計画の数字）。"""
+    assumptions = []
+    groups = [("P", spec.assumptions), ("J", list(spec.base.values()))]
+    if spec.shoryoku is not None:
+        groups.append(("S", list(spec.shoryoku.items.values())))
+    for prefix, items in groups:
+        for n, item in enumerate(items, start=1):
+            assumptions.append({"番号": f"{prefix}-{n:02d}", "名前": item.name, "値": item.value, "単位": item.unit,
+                                "根拠": item.basis, "出典": item.source, "仮": item.provisional})
+    return {"説明": "財務モデル.xlsx を作ったときの数字の控え（zaimu_model.py が書く。書き換えない）",
+            "作った日時": when, "制度データ": seido_rel, "前提": assumptions, "中身": book.summary}
+
+
 # ---------------------------------------------------------------- 計算し直した値と比べる
 
 
