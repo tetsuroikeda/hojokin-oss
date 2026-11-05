@@ -105,6 +105,61 @@ def task_line(task: deadlines.Task, today) -> str:
     return line
 
 
+DUTY_HEAD = "### 事業期間中と事業後の義務"
+DUTY_LIST_MAX = 6  # 開いたときに並べる義務の知らせの数（残りは画面に回す）
+DUTY_CUT = 160  # 1つの知らせの字数（超える分は画面に回す）
+
+
+def evidence_summary(case: deadlines.CaseStatus) -> str:
+    if not case.evidence:
+        return case.evidence_note
+    done = sum(1 for e in case.evidence if not e.missing)
+    return f"経費ごとの証拠：そろった経費 {done}/{len(case.evidence)}件"
+
+
+def duty_brief(ov: deadlines.Overview) -> List[str]:
+    """開いたときに渡す、事業期間中と事業後の義務の知らせ（K3）。"""
+    lines = []
+    for c in ov.cases:
+        if not c.period:
+            continue
+        head = f"- {c.name}：{c.duties[0] if c.duties else f'今は{c.period}です'}"
+        summary = evidence_summary(c)
+        lines.append(head + (f"。{summary}" if summary else ""))
+        for d in c.duties[1:DUTY_LIST_MAX + 1]:
+            lines.append("  - " + (d if len(d) <= DUTY_CUT else d[:DUTY_CUT] + "…"))
+        if len(c.duties) > DUTY_LIST_MAX + 1:
+            lines.append(f"  - ほか {len(c.duties) - DUTY_LIST_MAX - 1}件（今の状態.html にあります）")
+    return lines
+
+
+def duty_section(ov: deadlines.Overview) -> List[str]:
+    """今の状態の画面の、事業期間中と事業後の義務の節（経費ごとの証拠の揃い具合の表を含む。K3）。"""
+    cases = [c for c in ov.cases if c.period]
+    if not cases:
+        return []
+    out = ["<h2>事業期間中と事業後の義務</h2>"]
+    for c in cases:
+        out.append(f"<h3>{_e(c.name)}</h3>")
+        out += [f"<p>{_e(c.duties[0])}</p>"] if c.duties else [f"<p>{_e(f'今は{c.period}です')}</p>"]
+        if c.duties[1:]:
+            out.append("<ul>" + "".join(f"<li>{_e(d)}</li>" for d in c.duties[1:]) + "</ul>")
+        out.append("<h4>経費ごとの証拠の揃い具合</h4>")
+        if c.evidence:
+            out += ["<table>", "<tr><th>経費</th><th>相手先</th><th>金額（税抜）</th><th>そろった証拠</th><th>まだの証拠</th>"
+                    "<th>メモ</th></tr>"]
+            for e in c.evidence:
+                cls = "" if not e.missing else ' class="strong"'
+                memo = ("交付決定より前の日付の原本：" + "、".join(e.early)) if e.early else ""
+                out.append(f"<tr{cls}><td>{_e(e.expense)}</td><td>{_e(e.partner or '—')}</td><td>{e.amount:,}円</td>"
+                           f"<td>{_e('、'.join(e.have) or '—')}</td><td>{_e('、'.join(e.missing) or 'そろいました')}</td>"
+                           f"<td>{_e(memo)}</td></tr>")
+            out.append("</table>")
+        else:
+            out.append(f'<p class="note">{_e(c.evidence_note or "ありません")}</p>')
+    return out
+
+
 def deadline_text(ov: deadlines.Overview) -> str:
     """期限と作業の部分（BRIEF_HEAD から）。"""
     today = ov.today
@@ -146,6 +201,9 @@ def deadline_text(ov: deadlines.Overview) -> str:
     notes = [f"- {c.name}：{n}" for c in ov.cases for n in c.notes]
     if notes:
         lines += ["", "### 書類について"] + notes
+    duty_lines = duty_brief(ov)
+    if duty_lines:
+        lines += ["", DUTY_HEAD] + duty_lines
     if ov.later or ov.undated:
         lines += ["", f"そのほかに、{ov.near_days}日より先の期限が{len(ov.later)}件、日付がまだ出せない期限が"
                       f"{len(ov.undated)}件あります（一覧は 今の状態.html）。"]
@@ -364,6 +422,7 @@ def render_page(ov: deadlines.Overview, company_name: str, folder: Optional[Path
                        "期数・有効期限・中身は、書類の確かめ（shorui）で見ます。</p>")
         for note in case.notes:
             out.append(f'<p class="note">{_e(note)}</p>')
+    out += duty_section(ov)
     out += defect_section(folder) if folder is not None else []
     if ov.problems:
         out.append("<h2>組み立てられなかったもの</h2><ul>")

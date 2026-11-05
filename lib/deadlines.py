@@ -155,6 +155,7 @@ class Due:
     confirmed: bool = False  # 社長に確かめた出来事の日付（期限の台帳の「確定」）から出した（SPEC F6「見込みと確定」）
     window: bool = False  # 取る期間（取り直し）。first がいちばん早い日、last がいちばん遅い日
     term: bool = False  # 提出期間（繰り返しの報告。効果報告の4月から3か月の間など）。first がはじめの日、last が終わりの日
+    term_word: str = "提出期間"  # term のときの呼び方（事業場内最低賃金の「確かめる時期」など。K3）
 
     @property
     def dated(self) -> bool:
@@ -175,7 +176,7 @@ class Due:
         if self.window:
             text = f"取る期間 {dates.format_date(self.first)}〜{dates.format_date(self.last)}"
         elif self.term:
-            text = f"提出期間 {dates.format_date(self.first)}〜{dates.format_date(self.last)}"
+            text = f"{self.term_word} {dates.format_date(self.first)}〜{dates.format_date(self.last)}"
         elif self.span:
             text = f"{self.span}（日はまだ決まっていません）"
         elif self.first != self.last:
@@ -199,7 +200,7 @@ class Due:
         if self.last < today:
             return f"{(today - self.last).days}日過ぎています"
         if self.window or self.term:
-            what = "取る期間" if self.window else "提出期間"
+            what = "取る期間" if self.window else self.term_word
             if self.first > today:
                 return f"{what}まであと{(self.first - today).days}日"
             left = (self.last - today).days
@@ -675,6 +676,10 @@ class CaseStatus:
     tasks: List[Task] = field(default_factory=list)
     problem: str = ""
     notes: List[str] = field(default_factory=list)
+    duties: List[str] = field(default_factory=list)  # 事業期間中・事業後の義務の知らせ（lib/obligations.py。K3）
+    evidence: list = field(default_factory=list)  # 経費ごとの証拠の揃い具合（obligations.EvidenceRow）
+    evidence_note: str = ""  # 揃い具合を出せないわけ
+    period: str = ""  # 事業期間中・事業後（交付決定の前は空）
 
     def next_task(self) -> Optional[Task]:
         dated = sorted((t for t in self.tasks if t.due.dated), key=Task.sort_key)
@@ -778,6 +783,7 @@ class Original:
     kind: str
     day: Optional[date]
     place: str
+    partner: str = ""  # 相手先（見積書・請求書などの相手の会社。経費ごとの証拠の揃い具合に使う。K3）
 
 
 def _ledger_originals(folder: Path) -> Tuple[Optional[List[Original]], str]:
@@ -791,7 +797,8 @@ def _ledger_originals(folder: Path) -> Tuple[Optional[List[Original]], str]:
     for entry in ledger.get("原本") or []:
         if isinstance(entry, dict) and isinstance(entry.get("種類"), str):
             day, _time = parse_point(entry.get("日付"))
-            found.append(Original(kind=entry["種類"], day=day, place=str(entry.get("場所") or "")))
+            found.append(Original(kind=entry["種類"], day=day, place=str(entry.get("場所") or ""),
+                                  partner=str(entry.get("相手先") or "")))
     return found, ""
 
 
@@ -1012,6 +1019,11 @@ def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Option
         status.tasks += _reacquire_tasks(status, data, open_stages, originals, today)
         status.notes += _period_notes(data, open_stages, originals, facts or [], today)
         status.tasks += _request_tasks(status, data, plan, open_stages, list(requests or []), facts or [], today)
+        from lib import obligations  # 事業期間中と事業後の義務（K3）
+        duty = obligations.build(folder, status, data, plan, today, originals)
+        status.tasks += duty.tasks
+        status.duties, status.evidence, status.evidence_note, status.period = \
+            duty.notes, duty.evidence, duty.evidence_note, duty.period
     return status
 
 
