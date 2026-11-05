@@ -3,7 +3,7 @@ type: regex
 target:
   source: file
   path: 記録/審査役の結果/確かめ-0001.json
-pattern: '"応えているか": "(応えていない|一部|足りない)'
+pattern: '"応えているか?": "(応えていない|一部|足りない)'
 match: not_contains
 ---
 
