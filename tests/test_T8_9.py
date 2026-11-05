@@ -145,6 +145,19 @@ def test_completion_needs_no_gaps_and_no_length_problems(env: kt.Env) -> None:
     assert full["4つの段"] == "4/4" and full["切れ目"] == 0 and full["足りない・長すぎる"] == 0
 
 
+def test_length_verdict_on_an_item_not_given_does_not_stop_completion(env: kt.Env) -> None:
+    """「足りない」「長すぎる」は、分母と同じ項目（計画書の本文で渡した、目安のない項目）の中だけで数える（B19 の直し）。"""
+    pt.place(env, pt.form_or_skip())
+    flow = {"段": {"現状と目標": ["1-1 現状分析"], "課題": ["1-2 経営課題"], "解決策": ["2. 省力化投資"], "効果": ["2-2"]},
+            "切れ目": []}
+    not_given = "算定根拠 ①付加価値額（最終年の年平均成長率を含む）"  # その3 の項目。本文で渡していない
+    review_once(env, [], 筋立て=flow, 分量=[{"項目": not_given, "判定": "足りない", "理由": "その3 がない"},
+                                         {"項目": "1-1 現状分析", "判定": "足りる", "理由": "…"}])
+    full = json.loads((env.folder / kt.RESULTS / "確かめ-0001.json").read_text(encoding="utf-8"))["そろい具合"]
+    assert full["足りない・長すぎる"] == 0 and full["渡していない項目への分量の判定"] == [not_given]
+    assert "完成にしました" in kt.ok(env.tool("finish"))
+
+
 def test_completeness_counts_against_what_was_given(env: kt.Env) -> None:
     pt.place(env, pt.form_or_skip())
     kt.ok(env.tool("prepare"))

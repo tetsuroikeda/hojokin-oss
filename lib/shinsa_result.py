@@ -299,7 +299,14 @@ def completeness(folder: Path, parsed: Optional[dict]) -> dict:
     length_missing = [n for n in no_target if judged.get(_nfkc(n)) not in LENGTH_VERDICTS]
     out["分量"] = f"{len(no_target) - len(length_missing)}/{len(no_target)}"
     out["分量の判定のない項目"] = length_missing
-    out["足りない・長すぎる"] = sum(1 for v in judged.values() if v in ("足りない", "長すぎる"))
+    # 「足りない」「長すぎる」は、分母と同じ項目（計画書の本文で渡した、目安のない項目）の中だけで数える（B19 の直し）。
+    # 渡していない項目（まだ書いていない様式の項目など）への判定は、完成を止めない
+    short_or_long = [n for n in no_target if judged.get(_nfkc(n)) in ("足りない", "長すぎる")]
+    out["足りない・長すぎる"] = len(short_or_long)
+    out["足りない・長すぎる項目"] = short_or_long
+    out["渡していない項目への分量の判定"] = sorted(
+        e.get("項目") for e in parsed.get("分量") or []
+        if isinstance(e, dict) and _nfkc(e.get("項目")) not in {_nfkc(n) for n in no_target})
     out["そろった"] = not c_missing and not missing and len(present) == len(STAGES) and not length_missing \
         and bool(c_expected) and bool(names)
     return out

@@ -210,6 +210,38 @@ def _questions(target: Path, item: Dict, when: str) -> int:
     return len(entries)
 
 
+def _round(value: float, digits: int):
+    from decimal import ROUND_HALF_UP, Decimal
+
+    q = Decimal(1).scaleb(-digits)
+    got = Decimal(repr(float(value))).quantize(q, rounding=ROUND_HALF_UP)
+    return int(got) if digits == 0 else float(got)
+
+
+def _from_numbers(target: Path, specs: List[Dict]) -> List[Dict]:
+    """数字の控え（財務モデルの道具が書いたもの）から、その3 のセルの値を取り出す（計算はしない。丸めるだけ）。"""
+    numbers = json.loads((target / "記録" / "財務モデルの数字.json").read_text(encoding="utf-8"))["中身"]
+
+    def pick(path: str):
+        node = numbers
+        for key in path.split("."):
+            node = node[key]
+        return node
+
+    out = []
+    for s in specs:
+        node = pick(s["控え"])
+        digits = int(s.get("桁", 0))
+        if "セル" in s:
+            value = node[s["年"]] if isinstance(node, list) else node
+            out.append({"シート": s["シート"], "セル": s["セル"], "値": _round(value, digits)})
+            continue
+        for k, col in enumerate(s["列"]):
+            year = int(s.get("最初の年", 0)) + k
+            out.append({"シート": s["シート"], "セル": f"{col}{s['行']}", "値": _round(node[year], digits)})
+    return out
+
+
 def _write_plan(target: Path, recipe: Dict, plan_name: Optional[str]) -> Dict:
     """財務モデル・様式の対応・その1・2 の本文・根拠対照表を、製品の道具で書く（書いた後の状態）。"""
     from lib import dates
@@ -241,11 +273,28 @@ def _write_plan(target: Path, recipe: Dict, plan_name: Optional[str]) -> Dict:
             path.write_text(it["本文"], encoding="utf-8")
             _tool("kaku/scripts/yoshiki.py", target, "write", "--item", it["名前"], "--input", "記録/一時/書く文.txt")
         rows = json.loads((base / "根拠対照表.json").read_text(encoding="utf-8"))["行"] + list(plan_item.get("足す根拠", []))
+        fields = recipe.get("表の欄")
+        if fields:  # 表の欄を持つ項目（（1）事業者情報など）を、欄ごとに対応づけて書く（B19 の直し）
+            pairs = [{"項目": f["項目"], "欄": f["欄"], "書き込む位置": f["書き込む位置"]} for f in fields["欄"]]
+            _tool("kaku/scripts/yoshiki.py", target, "map", "--input",
+                  _write_json(target, "記録/一時/様式の対応.json", {"様式": plan["様式"], "対応": pairs}))
+            for f in fields["欄"]:
+                (target / "記録" / "一時" / "書く文.txt").write_text(f["文"], encoding="utf-8")
+                _tool("kaku/scripts/yoshiki.py", target, "write", "--item", f["項目"], "--field", f["欄"],
+                      "--input", "記録/一時/書く文.txt")
+            rows += list(fields.get("足す根拠", []))
+            out["表の欄"] = len(fields["欄"])
         _tool("kaku/scripts/kakunin.py", target, "konkyo", "--input",
               _write_json(target, "記録/一時/根拠.json", {"行": rows}))
         out["計画書"] = base.name
         out["項目"] = len(plan["項目"])
         out["根拠対照表の行"] = len(rows)
+    form3 = recipe.get("その3")
+    if form3:
+        values = list(form3.get("値", [])) + _from_numbers(target, form3.get("控えから", []))
+        _tool("kaku/scripts/yoshiki.py", target, "cells", "--input",
+              _write_json(target, "記録/一時/その3の値.json", {"値": values}))
+        out["その3のセル"] = len(values)
     q = recipe.get("質問の記録")
     if q:
         out["聞き取り"] = _questions(target, q, dates.format_datetime(dates.now(target)))
