@@ -1,6 +1,6 @@
 ---
 name: kiroku
-description: この会社について覚えていることを見る・直すとき、書類の前の版を見る・戻すとき、「提出した」と言われたときに使う。「覚えていることを見せて」「前の版に戻して」「さっきの直しを取り消して」「申請を出した」と言われたときに使う。
+description: この会社について覚えていることを見る・直す・覚えさせるとき（会社の資料や前の申請の書類・採否の通知・指摘のメモを読んで覚えるときを含む）、書類の前の版を見る・戻すとき、「提出した」と言われたときに使う。「覚えていることを見せて」「資料を読んで覚えておいて」「前の版に戻して」「さっきの直しを取り消して」「申請を出した」と言われたときに使う。
 allowed-tools:
   - Bash(python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/*)
   - Bash(python3 -B ${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/*)
@@ -114,6 +114,9 @@ python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" confirm --fol
 # 社長が決めた新しい値にする
 python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" update-fact --folder "${CLAUDE_PROJECT_DIR}" --id <事実の id> --value "<新しい値>" --source 社長の発言 --utterance "<社長の発言>"
 
+# 過去の申請と採否、受けた指摘を足す（出典は採否の通知か指摘のメモの原本）
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" add-result --folder "${CLAUDE_PROJECT_DIR}" --case "<申請した案件>" --result 不採択 --pointed "<指摘に当たる審査項目>" [--pointed …] --comment "1. <指摘の要点> 2. …" --notice-date <通知の日> --source 原本 --file "<原本の場所>"
+
 # 覚えていることの一覧（何を、いつ、どこから）
 python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" list --folder "${CLAUDE_PROJECT_DIR}"
 ```
@@ -123,6 +126,16 @@ python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" list --folder
 - 出典の書類は、会社のフォルダの中の場所で指す。外のファイルは、取り込みの道具で写してから指す。
 - 終了コード2は、しなかったとき（引数が足りない、出典の書類がない、記録が読めない、食い違いなど）。記録は変わっていない。理由を読み、直せることなら直してから、もう一度流す。同じ呼び方で繰り返さない。
 - 版は応答の終わりに hook が自動で残す。前の値は版の履歴から見られ、戻せる（上の「版の扱い」）。
+
+### 会社の資料と過去の書類を最初に取り込むとき
+
+目的は、社長に聞く前に、会社の資料・過去の申請書・採否の通知・受けた指摘のメモ・決算書から分かることを、出典と日付を付けて覚えること（SPEC F13「最初に会社の資料と過去の書類から学ぶ」）。
+
+- 入れ口などに入った書類は、先に shorui の skill で原本の置き場に整理する（原本の場所が出典になるため）。整理が終わったら、この skill を呼び直して続ける。
+- 中身は kaku の文字を出す道具（moji.py。kaku の skill から動かす）か、読み取り役で読む。書いてある会社の事実（成り立ち、取引先、商品、強み、工程と時間、人、設備、売上など）を、`add-fact --source 原本 --file "<原本の場所>" --page <ページ>` で1つずつ残す。名前は社長が見て分かる短い言葉にし、値は書類の言葉のまま書く。推測や、Claude が考えたことは残さない。
+- 過去の申請の採否は `add-result` で残す。採択結果の理由を開示しない制度もあるので、不採択の後の相談で受けた指摘のメモも、審査のコメントと同じく `--comment` に指摘ごとに番号を付けて書く。指摘に当たる審査項目（例：計画面、効果の根拠）を `--pointed` で挙げる。出典は採否の通知か指摘のメモの原本。理由が書かれていない通知だけのときは、`--comment` にそのことを書く。
+- 覚えたことは、何を・どの書類の何ページから覚えたかを、一覧（`list`）で社長に示す。取り込んだことは、次からの聞き取りで聞かない（kaku の書く前の取り出しで使われる）。
+- 前の申請で受けた指摘は、次に申請書を書くときに応える記述を入れ、審査役が「過去の指摘」ごとに応えているかを確かめる（kaku）。
 
 ### 社長が申請書を手で直したとき
 
