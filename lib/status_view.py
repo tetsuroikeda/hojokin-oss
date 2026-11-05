@@ -251,7 +251,38 @@ def _task_table(tasks: List[deadlines.Task], today, empty: str, overdue: bool = 
     return ["<table>", TASK_HEAD] + _task_rows(tasks, today, overdue) + ["</table>"]
 
 
-def render_page(ov: deadlines.Overview, company_name: str) -> str:
+DEFECTS_FILE = "記録/不備の一覧.json"  # 書類の不備チェック（skills/shorui/scripts/fubi.py が書く。TASKS B12）
+WEIGHTS = ("重大", "要確認", "助言")
+
+
+def defect_section(folder: Path) -> List[str]:
+    """不備の節（重さごとの件数と一覧。直し方、直したか）。不備の一覧がなければ空（B12 の最小限。B27 で仕上げる）。"""
+    import json
+
+    path = Path(folder) / DEFECTS_FILE
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        items = [i for i in data.get("不備") or [] if isinstance(i, dict)]
+    except (OSError, ValueError, AttributeError):
+        return ["<h2>不備</h2>", f'<p class="note">{_e(DEFECTS_FILE)} が読めません</p>']
+    left = [i for i in items if not i.get("直した")]
+    counts = "、".join(f"{w} {sum(1 for i in left if i.get('重さ') == w)}件" for w in WEIGHTS)
+    out = ["<h2>不備</h2>",
+           f"<p>直していない不備：{_e(counts)}（{_e(data.get('案件', ''))}。確かめた日時 {_e(data.get('確かめた日時', ''))}）</p>"]
+    if items:
+        out += ["<table>", "<tr><th>重さ</th><th>種類</th><th>書類</th><th>直し方</th><th>直したか</th></tr>"]
+        order = {w: n for n, w in enumerate(WEIGHTS)}
+        for i in sorted(items, key=lambda i: (bool(i.get("直した")), order.get(i.get("重さ"), 9))):
+            cls = ' class="overdue"' if i.get("重さ") == "重大" and not i.get("直した") else ""
+            out.append(f"<tr{cls}><td>{_e(i.get('重さ', ''))}</td><td>{_e(i.get('種類', ''))}</td><td>{_e(i.get('書類', ''))}</td>"
+                       f"<td>{_e(i.get('直し方', ''))}</td><td>{'直した' if i.get('直した') else 'まだ'}</td></tr>")
+        out.append("</table>")
+    return out
+
+
+def render_page(ov: deadlines.Overview, company_name: str, folder: Optional[Path] = None) -> str:
     """今の状態.html の中身（最小限。B27 で、工程表・書類ごとの状態・不備・申請書の進み具合などを足す）。"""
     today = ov.today
     when = dates.format_date(today) + ("（日付を差し替えています）" if ov.substituted else "")
@@ -333,6 +364,7 @@ def render_page(ov: deadlines.Overview, company_name: str) -> str:
                        "期数・有効期限・中身は、書類の確かめ（shorui）で見ます。</p>")
         for note in case.notes:
             out.append(f'<p class="note">{_e(note)}</p>')
+    out += defect_section(folder) if folder is not None else []
     if ov.problems:
         out.append("<h2>組み立てられなかったもの</h2><ul>")
         out += [f"<li>{_e(p)}</li>" for p in ov.problems]
@@ -377,6 +409,15 @@ def page_wanted(folder: Path, ov: deadlines.Overview) -> bool:
     return bool(ov.cases) or os.path.lexists(str(Path(folder) / PAGE_NAME))
 
 
+def refresh_page(folder: Path) -> Optional[str]:
+    """今の状態の画面だけを作り直す（書類の不備を残した後など。TASKS B12）。作れなかったときは、そのわけ。"""
+    folder = Path(folder)
+    ov = deadlines.build(folder)
+    if not page_wanted(folder, ov):
+        return None
+    return write_page(folder, render_page(ov, deadlines.nfc(folder.name), folder))
+
+
 # ---- 開いたとき ----
 
 
@@ -391,7 +432,7 @@ def session_start(folder: Path, output: Optional[dict]) -> dict:
         text = deadline_text(ov)
         if page_wanted(folder, ov):
             try:
-                problem = write_page(folder, render_page(ov, deadlines.nfc(folder.name)))
+                problem = write_page(folder, render_page(ov, deadlines.nfc(folder.name), folder))
             except Exception as error:
                 problem = f"{PAGE_NAME} を作れませんでした（{type(error).__name__}: {error}）"
             if problem:

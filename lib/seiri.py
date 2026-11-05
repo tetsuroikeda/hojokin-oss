@@ -4,10 +4,16 @@
 答えが1つに決まる処理（ハッシュ、移す、名前を付ける、台帳に書く）だけをここで行う。
 何の書類か（種類・日付・相手先・区分）を読み取るのは Claude で、道具には引数で渡す（DESIGN 6章）。
 
-- 見つける：`入れ口/`（下のフォルダも）と、`原本/` のうち台帳にない書類を、中身のハッシュ（sha256）で見る。
+- 見つける：会社のフォルダのどこに入れた書類も（入れ口、社長が作ったフォルダ、根に置いたものも。SPEC F5）、
+  台帳にないものを中身のハッシュ（sha256）で見る。ツールの置き場（記録/・案件/・見るだけ/・目印など）と、
+  根にあるツールが作るファイル（今の状態.html など）は見ない。
   台帳の原本と同じ中身のもの、見つけた書類どうしで同じ中身のものは「同じ中身」として分ける（動かさない）。
   前に「確かめ済み」と残したものと同じ中身なら、場所や名前が変わっていても出さない
   （動かしただけ・名前を変えただけは、変わったとしない。SPEC F5）。
+- 開いたときの変化（TASKS B9。DESIGN 4.7 の2）：開いたときに見つけた書類の控え（`.hojokin/一時/見つけた書類.json`。
+  版の履歴に入れない）と、中身のハッシュで比べる。前の控えにない中身で、前の控えにない場所なら「増えた」、
+  前の控えにある場所なら「変わった」。前の控えにある中身は、場所や名前が変わっていても出さない。
+  見つける道具（scan）は、書類ごとに「前回から」（増えた・変わった・前からある・開いた後に入れた）を付けて返す。
 - 移す：`原本/<区分>/<日付>_<種類>[_<相手先>][_<補足>]<拡張子>` にする（例：「2026-10-20_見積書_〇〇機械.pdf」）。
   名前の文字は1文字の形（NFC）にそろえる（DESIGN 10章）。中身は1バイトも変えない（名前と場所だけ）。
   移した原本は読み取り専用にする（DESIGN 4.5）。同じ名前の原本があるときと、同じ中身の原本があるときは、移さない。
@@ -50,10 +56,16 @@ LEDGER_NOTE = ("書類の台帳。原本ごとの場所・種類・日付・相�
                "動かさずに確かめた書類を残す。書類を整理する道具（skills/shorui/scripts/seiri.py）が書く")
 READ_ONLY = 0o444
 CHUNK = 1024 * 1024
-# 見つける場所（会社のフォルダからの場所の始まり）
-SCAN_TOPS = (INBOX_DIR, ORIGINALS_DIR)
 # 書類を持ってこない場所（ツールの置き場、案件の書類、見るだけ）
 FORBIDDEN_TOPS = (".git", company.MARKER_DIR, ".claude", RECORDS_DIR, CASES_DIR, VIEW_DIR)
+# 会社のフォルダの根にある、ツールが作るファイル（書類として扱わない。DESIGN 4.5）
+TOOL_FILES = ("今の状態.html", "今の状態.xlsx", "補助金の候補.docx", "財務モデル.xlsx")
+# 開いたときに見つけた書類の控え（版の履歴に入れない。TASKS B9）
+SEEN_FILE = f"{company.MARKER_DIR}/{company.TEMP_DIR}/見つけた書類.json"
+ADDED = "増えた"
+CHANGED = "変わった"
+EARLIER = "前からある"
+AFTER_OPEN = "開いた後に入れた"
 # 書類として扱わないもの（パソコンや Word・Excel が自動で作るファイル）
 IGNORED_NAMES = (".DS_Store", "Thumbs.db", "desktop.ini")
 IGNORED_PREFIXES = (".", "~$")
@@ -182,16 +194,26 @@ def _rel(folder: Path, path: Path) -> str:
     return nfc(Path(os.path.relpath(str(path), str(folder))).as_posix())
 
 
-def _walk_documents(folder: Path, top: str) -> List[Path]:
-    """top の下の書類（ふつうのファイル。別名と、自動で作られるファイルは除く）。"""
-    base = Path(folder) / top
+def _walk_documents(folder: Path) -> List[Path]:
+    """会社のフォルダの書類（ふつうのファイル）。ツールの置き場の中、根のツールのファイル、別名と、
+    自動で作られるファイルは除く。入れ口を先に、ほかは名前の順に返す。"""
+    base = Path(folder)
     found: List[Path] = []
-    if not base.is_dir() or base.is_symlink():
+    if not base.is_dir():
         return found
+    real_folder = str(places.real(base))
     for dirpath, dirnames, filenames in os.walk(str(base)):
-        dirnames[:] = sorted(d for d in dirnames if not _ignored(d) and not os.path.islink(os.path.join(dirpath, d)))
+        at_root = os.path.normpath(dirpath) == os.path.normpath(str(base))
+        keep = [d for d in dirnames if not _ignored(d) and not os.path.islink(os.path.join(dirpath, d))]
+        if at_root:
+            keep = [d for d in keep if not _forbidden_top(real_folder, d)]
+            # 入れ口を先に見る（同じ中身のとき、入れ口のものを「新しい書類」にする）
+            keep.sort(key=lambda d: (nfc(d) != INBOX_DIR, d))
+        else:
+            keep.sort()
+        dirnames[:] = keep
         for name in sorted(filenames):
-            if _ignored(name):
+            if _ignored(name) or (at_root and nfc(name) in TOOL_FILES):
                 continue
             path = Path(dirpath) / name
             try:
@@ -255,6 +277,8 @@ def resolve_document(folder: Path, given: str) -> Tuple[Path, str]:
         raise SeiriError(f"{rel} は書類を整理する場所の外です（「.」で始まる名前の {hidden} の中のもの・隠しファイルは原本にしません）")
     if _forbidden_top(real_folder, top):
         raise SeiriError(f"{rel} は書類を整理する場所の外です（{top}/ の中のものは原本にしません）")
+    if len(parts) == 1 and nfc(top) in TOOL_FILES:
+        raise SeiriError(f"{rel} はツールが作るファイルです。原本にしません")
     if not os.path.isfile(real):
         raise SeiriError(f"{rel} が見つからないか、ファイルではありません")
     return Path(real), rel
@@ -328,42 +352,154 @@ class ScanResult:
         return {"新しい書類": self.new, "同じ中身": self.same, "確かめ済みで出さなかった数": self.kept}
 
 
-def scan(folder: Path) -> ScanResult:
-    """入れ口と、原本の置き場のうち台帳にない書類を、中身のハッシュで見つける。何も変えない。"""
-    folder = Path(folder)
-    ledger = load_ledger(folder)
+def _registered(folder: Path, ledger: dict) -> Tuple[set, Dict[str, dict]]:
+    """整理した原本の場所の集まりと、中身のハッシュ → 原本。控えにある原本は、台帳から項目が消えていても含める。"""
     registered = {nfc(e["場所"]) for e in originals(ledger)}
     by_hash = {e.get("ハッシュ"): e for e in originals(ledger)}
-    # 控えにある原本は、台帳から項目が消えていても整理した原本として扱う
     for rel, anchor in anchored_originals(folder).items():
         registered.add(rel)
         by_hash.setdefault(anchor["ハッシュ"], {"場所": rel})
+    return registered, by_hash
+
+
+def _unorganized(folder: Path, registered: set) -> List[Tuple[str, str, int, Path]]:
+    """整理していない書類（場所、中身のハッシュ、大きさ、実際の場所）。"""
+    found = []
+    for path in _walk_documents(folder):
+        rel = _rel(folder, path)
+        if rel in registered:
+            continue  # 整理した原本（照らすのは lib/originals_guard.py）
+        try:
+            digest = sha256_of(path)
+            size = path.stat().st_size
+        except OSError:
+            continue
+        found.append((rel, digest, size, path))
+    return found
+
+
+def scan(folder: Path) -> ScanResult:
+    """会社のフォルダの書類のうち台帳にないものを、中身のハッシュで見つける。何も変えない。
+
+    新しい書類には「前回から」を付ける（開いたときに見つけた変化。lib/seiri.py の説明）。
+    """
+    folder = Path(folder)
+    ledger = load_ledger(folder)
+    registered, by_hash = _registered(folder, ledger)
     kept_hashes = {e.get("ハッシュ") for e in ledger.get(KEPT_KEY, [])}
+    seen = load_seen(folder)
+    seen_docs = seen.get("書類", {})
+    seen_hashes = set(seen_docs.values())
+    at_open = {(c["場所"], c.get("ハッシュ")): c["変化"] for c in seen.get("開いたときの変化", [])}
     result = ScanResult()
     first: Dict[str, str] = {}
-    for top in SCAN_TOPS:
-        for path in _walk_documents(folder, top):
-            rel = _rel(folder, path)
-            if rel in registered:
-                continue  # 整理した原本（照らすのは lib/originals_guard.py）
-            try:
-                digest = sha256_of(path)
-                size = path.stat().st_size
-            except OSError:
-                continue
-            if digest in kept_hashes:
-                result.kept += 1
-                continue
-            original = by_hash.get(digest)
-            if original is not None:
-                result.same.append({"場所": rel, "同じ中身の書類": original["場所"], "同じ中身の書類は": "台帳の原本"})
-                continue
-            if digest in first:
-                result.same.append({"場所": rel, "同じ中身の書類": first[digest], "同じ中身の書類は": "新しい書類"})
-                continue
-            first[digest] = rel
-            result.new.append({"場所": rel, "大きさ": size, "形式": path.suffix.lower() or "（拡張子なし）"})
+    for rel, digest, size, path in _unorganized(folder, registered):
+        if digest in kept_hashes:
+            result.kept += 1
+            continue
+        if (rel, digest) in at_open:
+            since = at_open[(rel, digest)]
+        elif digest in seen_hashes:
+            since = EARLIER
+        else:
+            since = AFTER_OPEN
+        original = by_hash.get(digest)
+        if original is not None:
+            result.same.append({"場所": rel, "同じ中身の書類": original["場所"], "同じ中身の書類は": "台帳の原本",
+                                "前回から": since})
+            continue
+        if digest in first:
+            result.same.append({"場所": rel, "同じ中身の書類": first[digest], "同じ中身の書類は": "新しい書類",
+                                "前回から": since})
+            continue
+        first[digest] = rel
+        result.new.append({"場所": rel, "大きさ": size, "形式": path.suffix.lower() or "（拡張子なし）", "前回から": since})
     return result
+
+
+# ---- 開いたときの変化（TASKS B9。DESIGN 4.7 の2） ----
+
+
+def load_seen(folder: Path) -> dict:
+    """開いたときに見つけた書類の控え。ないとき・読めないときは空（控えは作り直せるので、止めない）。"""
+    path = Path(folder) / SEEN_FILE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict) or not isinstance(data.get("書類"), dict):
+        return {}
+    changes = data.get("開いたときの変化")
+    data["開いたときの変化"] = [c for c in changes if isinstance(c, dict) and isinstance(c.get("場所"), str)] \
+        if isinstance(changes, list) else []
+    return data
+
+
+def save_seen(folder: Path, data: dict) -> None:
+    """控えを書く。書きかけが残らないよう、隣に書いてから置き換える。置き場に別名があれば書かない。"""
+    folder = Path(folder)
+    if place_text.write_problem(folder, SEEN_FILE, "控えを書いていません"):
+        return
+    path = folder / SEEN_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".見つけた書類_", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, ensure_ascii=False, indent=1) + "\n")
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def opening_changes(folder: Path, keep_previous: bool = False) -> dict:
+    """開いたときに、前回開いたときから増えた・変わった書類を中身のハッシュで見つけ、控えを今の形にする。
+
+    返すもの：{"変化": [{場所, 変化, ハッシュ, 同じ中身の書類?}], "前からある数": 整理していない前からの書類の数,
+    "初めて": 控えがなかったか}。
+    - 前の控えにある中身は、場所や名前が変わっていても出さない（動かしただけ・名前を変えただけ。SPEC F5）。
+    - 確かめ済み（keep）にした中身は出さない。
+    - keep_previous は、会話を縮めた後（compact）などで開き直したとき。前に見つけた変化のうち、まだ整理していない
+      ものも続けて出す（縮めると、前に渡した情報が消えるため）。
+    """
+    folder = Path(folder)
+    ledger = load_ledger(folder)
+    registered, by_hash = _registered(folder, ledger)
+    kept_hashes = {e.get("ハッシュ") for e in ledger.get(KEPT_KEY, [])}
+    seen = load_seen(folder)
+    first_time = not seen
+    seen_docs = seen.get("書類", {})
+    seen_hashes = set(seen_docs.values())
+    current = _unorganized(folder, registered)
+    changes: List[dict] = []
+    earlier = 0
+    for rel, digest, _size, _path in current:
+        if digest in kept_hashes:
+            continue
+        if digest in seen_hashes:
+            earlier += 1
+            continue
+        change = {"場所": rel, "変化": CHANGED if rel in seen_docs else ADDED, "ハッシュ": digest}
+        original = by_hash.get(digest)
+        if original is not None:
+            change["同じ中身の書類"] = original["場所"]
+        changes.append(change)
+    if keep_previous:
+        now = {(rel, digest) for rel, digest, _s, _p in current}
+        listed = {(c["場所"], c["ハッシュ"]) for c in changes}
+        for c in seen.get("開いたときの変化", []):
+            key = (c["場所"], c.get("ハッシュ"))
+            if key in now and key not in listed and c.get("ハッシュ") not in kept_hashes:
+                changes.append(c)
+                earlier -= 1
+    save_seen(folder, {
+        "説明": "開いたときに見つけた書類の控え（lib/seiri.py の opening_changes が書く）。中身のハッシュで、"
+                "次に開いたときに増えた・変わった書類を見つけるのに使う",
+        "見た日時": dates.now(folder).isoformat(timespec="seconds"),
+        "書類": {rel: digest for rel, digest, _s, _p in current},
+        "開いたときの変化": changes,
+    })
+    return {"変化": changes, "前からある数": max(earlier, 0), "初めて": first_time}
 
 
 # ---- 移す ----

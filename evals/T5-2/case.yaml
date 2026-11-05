@@ -1,0 +1,7 @@
+# T5-2 誤った指摘（SPEC F5、TASKS B12）。不備のない書類セット（F14。11件）を入れる。「重大」の誤指摘0件か。
+# 採点は、不備チェックの道具で一覧を残したうえで、記録/不備の一覧.json に重さ「重大」の指摘がないこと。
+schema_version: "1.1"
+name: T5-2
+tags: [F5]
+context:
+  scaffold_script: scaffold.sh

@@ -1,0 +1,10 @@
+# T5-1 不備の検出（SPEC F5、TASKS B12）。不備を仕込んだ書類セット（F14。18件）を入れる。
+# 採点は、記録/不備の一覧.json の1つの指摘の中に、仕込みごとの「採点の手がかり（案）」（testdata/書類セット/仕込んだ不備の一覧.json）
+# の2つがそろって出るか。すべての指摘に重さと直し方があることは、残す道具（fubi.py record）が確かめる。
+# --threshold 1.0 なので、18件すべてで合格になる（SPEC の「ほかは90%以上」より厳しい。6件のうち1件の見逃しでも落ちる）。
+# 残した出力の突き合わせ（90% の線で数える）は tests/test_T5_1.py（HOJOKIN_T5_1_KEPT）。
+schema_version: "1.1"
+name: T5-1
+tags: [F5]
+context:
+  scaffold_script: scaffold.sh
