@@ -520,6 +520,24 @@ class Plan:
                 return name
         return None
 
+    def completion_cap(self) -> Optional[Due]:
+        """事業の完了の日が分からないときの見込みの起点：補助事業の実施の段階（id か名前に「実施」）の期限（完了の期限）。
+
+        完了の期限から出した繰り返しの期限は「見込み」とし、完了の日を台帳に残したら計算し直す（B27。testdata/期限 の
+        「完了日が分かるまで見込み」）。出せなければ None。
+        """
+        for stage in _stages(self.data):
+            words = unicodedata.normalize("NFKC", f"{stage.get('id') or ''}{stage.get('名前') or ''}")
+            node = stage.get("期限")
+            if "実施" not in words or not isinstance(node, dict) or node.get("値") is None:
+                continue
+            due = self.compute(node["値"])
+            if due.dated:
+                return Due(first=due.last, last=due.last, estimate=True, check=due.check,
+                           basis=list(due.basis) + [f"事業の完了の期限 {dates.format_date(due.last)}"
+                                                     "（見込み。完了の日を残したら計算し直す）"])
+        return None
+
     def repeat_dues(self, rule: Any) -> Tuple[List[Due], str]:
         """繰り返しの期限（{"種類": "繰り返し", "回数", "間隔", "提出期間"}）の、回ごとの提出期間と、決め方の文。
 
@@ -540,6 +558,8 @@ class Plan:
         if event is None:
             return [], f"{how}。制度データの期限の決め方に、事業の完了の出来事がないため、日付を出せません"
         base = self.event_due(event)
+        if base is None or not base.dated:
+            base = self.completion_cap() if self.closing is not None else None
         if base is None or not base.dated:
             return [], f"{how}。「{event}」の日付と決算の月が分かってから、日付を出します"
         if self.closing is None:
