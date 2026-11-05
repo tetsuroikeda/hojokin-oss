@@ -1,0 +1,25 @@
+{
+  "説明": "保存した状態「制度データの前」の戻し方（evals/_lib/fukugen.py が読む。TASKS B25）。「書く前」と同じデモの会社（架空）のフォルダで、公式資料と資料の本文（第8回）はあるが、制度データ・段階のフォルダ・概要と流れ.docx はまだない形。T3-7（第8回の資料から制度データを作り、第8回の正解と突き合わせる）で使う。M14 で、デモの会社のフォルダでは第8回の資料は「前の回の資料」に移ったが、この状態は第8回の資料だけを「資料」に置くので、第8回で制度データを作れる。保存したものは evals/状態/書く前/ を使い回す",
+  "保存した状態": "書く前",
+  "除くもの": ["補助金の候補.docx"],
+  "今日の日付": "2026-11-05",
+  "公式資料": [
+    {
+      "取る資料": "skills/junbi/取る資料/省力化_一般型_第8回.json",
+      "案件": "2026_省力化（一般型）第9回",
+      "案件の回": "第9回",
+      "注記": "「書く前」と同じ（第9回の案件を、直近回の第8回の資料で進める形）",
+      "ファイル": {
+        "https://shoryokuka.smrj.go.jp/assets/pdf/application_guidelines_ippan_08.pdf": "shoryokuka_ippan/application_guidelines_ippan_08.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/oubo_manual_ippan_08.pdf": "shoryokuka_ippan/oubo_manual_ippan_08.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/electronic_application_manual_ippan_08.pdf": "shoryokuka_ippan/electronic_application_manual_ippan_08.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/doc/yoshiki_business_plan_part1_part2_ippan.docx": "shoryokuka_ippan/yoshiki_business_plan_part1_part2_ippan.docx",
+        "https://shoryokuka.smrj.go.jp/assets/xls/yoshiki_business_plan_part3_ippan_08.xlsx": "shoryokuka_ippan/yoshiki_business_plan_part3_ippan_08.xlsx",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/application_manual_ippan_06.pdf": "shoryokuka_ippan/application_manual_ippan_06.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/completion_manual_ippan.pdf": "shoryokuka_ippan/completion_manual_ippan.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/status_report_manual_ippan.pdf": "shoryokuka_ippan/status_report_manual_ippan.pdf",
+        "https://shoryokuka.smrj.go.jp/ippan/schedule/": "shoryokuka_ippan/site_html/ippan_schedule.html"
+      }
+    }
+  ]
+}
