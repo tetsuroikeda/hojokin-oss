@@ -60,7 +60,8 @@ def main_command(model: str, budget: float, session: Optional[str]) -> List[str]
     host = {"mcpServers": {HOST_NAME: {"command": PY, "args": ["-B", str(HERE / "host.py")]}}}
     settings = {
         "permissions": {"blockReadsExemptPaths": [str(PLUGIN_ROOT)]},
-        "hooks": {"PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [
+        # Bash・Write・Edit も記録だけする（初稿を書いた呼び出しを見つけるため。B7。defer_hook はほかの道具には何も返さない）
+        "hooks": {"PreToolUse": [{"matcher": "^(AskUserQuestion|Bash|Write|Edit)$", "hooks": [
             {"type": "command", "command": f"{PY} -B \"{HERE / 'defer_hook.py'}\""}]}]},
     }
     cmd = ["claude", "-p", "--plugin-dir", str(PLUGIN_ROOT), "--output-format", "json", "--model", model,
@@ -156,6 +157,8 @@ def run(args) -> int:
 
     def note(who: str, kind: str, text: str, extra: Optional[dict] = None) -> None:
         item = {"番": len(log) + 1, "だれ": who, "種類": kind, "文": text}
+        if who == "ツール":
+            item["呼び出し"] = calls  # 道具の記録の「呼び出し」の印と突き合わせる（tests/multiturn/nikenme.py）
         if extra:
             item.update(extra)
         log.append(item)
@@ -164,8 +167,11 @@ def run(args) -> int:
 
     note("社長役", "発言", prompt)
     turns += 1
+    calls = 0
     try:
         while True:
+            calls += 1
+            _mark(out / "道具と確かめの画面.jsonl", calls)
             result = call_main(folder, main_command(args.model, args.budget, session), prompt, env)
             session = result.get("session_id") or session
             cost["試す側"] += float(result.get("total_cost_usd") or 0)
@@ -193,6 +199,9 @@ def run(args) -> int:
             note("ツール", "応答", result.get("result") or "")
             if turns >= args.turns:
                 break
+            if args.until_draft and drafted(out / "道具と確かめの画面.jsonl"):
+                stopped = "初稿を書いたので終えました"
+                break
             reply, c = call_owner(system, "これまでの会話：\n" + transcript_text(log) +
                                   "\n\n最後のツールの発言に、社長として返事をしてください。", args.owner_model, args.owner_budget,
                                   out / "社長役")
@@ -208,7 +217,46 @@ def run(args) -> int:
                "確かめの画面": _count_prompts(out / "道具と確かめの画面.jsonl")}
     (out / "まとめ.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False))
-    return 1 if stopped and not stopped.startswith("往復の数") else 0
+    return 1 if stopped and not stopped.startswith(("往復の数", "初稿を書いた")) else 0
+
+
+DRAFT_BASH = re.compile(r"yoshiki\.py[\"']?\s+(write|sheet|cells)\b")
+
+
+def is_draft(row: dict) -> bool:
+    """道具の記録の1行が、申請書（様式・入力シート、または申請書/ の中の文書）に書いたものか。"""
+    tool = row.get("道具")
+    given = row.get("入力") or {}
+    if tool == "Bash":
+        command = str(given.get("command") or "")
+        for m in DRAFT_BASH.finditer(command):
+            rest = re.split(r"\n|;|\||&&", command[m.start():], 1)[0]
+            if "--help" not in rest:  # 使い方を見ただけのものは、書いたものに数えない
+                return True
+        return False
+    if tool in ("Write", "Edit"):
+        return "/申請書/" in str(given.get("file_path") or "")
+    return False
+
+
+def drafted(path: Path) -> bool:
+    """これまでに申請書に書いたか（--until-draft。B7）。"""
+    if not path.is_file():
+        return False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("場面") == "PreToolUse" and is_draft(row):
+            return True
+    return False
+
+
+def _mark(path: Path, number: int) -> None:
+    """道具の記録に、試す側の何回目の呼び出しかの印を足す（その後の行は、その呼び出しの中の道具）。"""
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"場面": "呼び出し", "番": number}, ensure_ascii=False) + "\n")
 
 
 def _count_prompts(path: Path) -> int:
@@ -229,6 +277,7 @@ def parse(argv: List[str]):
     p.add_argument("--owner-model", default="haiku", help="社長役のモデル")
     p.add_argument("--budget", type=float, default=2.0, help="試す側の1回の費用の上限（USD）")
     p.add_argument("--owner-budget", type=float, default=0.2, help="社長役の1回の費用の上限（USD）")
+    p.add_argument("--until-draft", action="store_true", help="申請書に初めて書いた応答の後で終える（2件目の初稿まで。B7）")
     return p.parse_args(argv)
 
 
