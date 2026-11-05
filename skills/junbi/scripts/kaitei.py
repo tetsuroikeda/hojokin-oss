@@ -71,11 +71,67 @@ def pages_report(kaitei, folder, case, diffs) -> str:
             where = f"p.{c.new_page}" if c.new_page is not None else "（ページなし）"
             out.append(f"  - {where}（前 p.{c.old_page}）{c.kind}：{short(c.old_lines) or '（なし）'} → {short(c.new_lines) or '（なし）'}")
     out += ["", "変わったページに当たる章（前の回の資料で読んだページ）："]
-    for path in kaitei.reading_files(folder, case):
+    try:
+        files = kaitei.reading_files(folder, case)
+    except kaitei.KaiteiError as e:  # 章ごとの読み取りがない（制度データを、ほかの形で置いたときなど）。変わったページは示せる
+        files = []
+        out.append(f"- （{e}。当たる章は出せません。下の制度データの項目で、影響する所を見てください）")
+    for path in files:
         chapter = kaitei._load_json(folder, path)
         hits = kaitei.chapter_hits(chapter, diffs)
         out.append(f"- {chapter['読み取り']['章']}：" + ("、".join(f"p.{p}" for p in hits) if hits else "当たらない"))
+    out += ["", "変わったページを出典にしている制度データの項目（今の値。変わった後の値は、変わったページの文で確かめる）："]
+    out += seido_hits(folder, case, diffs)
     return "\n".join(out) + "\n"
+
+
+def seido_hits(folder, case, diffs) -> list:
+    """制度データ（`記録/制度データ/<略称>_<公募回>.json`）の出典つき値のうち、前の資料の変わったページを出典にしているもの（B28）。"""
+    from lib import seido_data, urakadori
+
+    try:
+        _path, data = seido_data.load_data(folder, case)
+    except Exception as e:  # 制度データがない・読めない
+        return [f"- （制度データを読めませんでした：{e}）"]
+    changed = {old: {c.old_page for c in d.changes if c.old_page is not None} for old, d in diffs.items() if not d.same}
+    if not changed:
+        return ["- 変わったページがないので、当たる項目はありません"]
+    # 変わった行（前の版）の中の数。値の数がこれと重なる項目を「数の合う項目」として先に出す
+    line_numbers = {}
+    for old, d in diffs.items():
+        for c in d.changes:
+            if c.old_page is not None:
+                line_numbers.setdefault((old, c.old_page), set()).update(seido_data.numbers_in(" ".join(c.old_lines)))
+    found, near = [], []
+
+    def visit(node, path):
+        if isinstance(node, dict) and "値" in node and "状態" in node:
+            for s in node.get("出典") or []:
+                if isinstance(s, dict) and s.get("ページ") in changed.get(s.get("資料"), set()):
+                    value = json.dumps(node.get("値"), ensure_ascii=False)
+                    value = value if len(value) <= 80 else value[:78] + "…"
+                    line = f"- {urakadori.readable(path, data)}：今の値 {value}（出典 {s.get('資料')} p.{s.get('ページ')}）"
+                    nums = seido_data.numbers_in(node.get("値")) - {0, 1}
+                    (found if nums & line_numbers.get((s.get("資料"), s.get("ページ")), set()) else near).append(line)
+                    break
+            return
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if path == [] and k == "資料":
+                    continue
+                visit(v, path + [k])
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                visit(v, path + [i])
+
+    visit(data, [])
+    if not found and not near:
+        return ["- 当たる項目はありません"]
+    out = ["（変わった行の数と、値の数が重なる項目）"] + (found or ["- なし"])
+    if near:
+        out.append(f"（同じページを出典にしている、ほかの項目 {len(near)}件。数は重ならないが、文が変わっていないかを見る）")
+        out += near[:10] + ([f"- ほか {len(near) - 10}件"] if len(near) > 10 else [])
+    return out
 
 
 def carry_report(kaitei, carried, todo) -> str:

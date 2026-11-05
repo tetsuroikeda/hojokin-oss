@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 import hand_edit_hooks
+import kaitei_hooks
 import originals_hooks
 import record_hooks
 import shorui_hooks
@@ -24,4 +25,5 @@ def handle(data: dict, folder: Path) -> Optional[dict]:
     output = record_hooks.session_start(data, folder, output)  # 会社の記録の要約（M11）
     output = hand_edit_hooks.add(output, folder, "SessionStart")  # 閉じている間の申請書の手直しの差分（B5）
     output = shorui_hooks.session_start(data, folder, output)  # 前回から増えた・変わった書類（B9）
+    output = kaitei_hooks.session_start(data, folder, output)  # 公式サイトの改訂の確かめ。短い時間で区切る（B28）
     return status_hooks.session_start(data, folder, output)  # 期限と作業・共通の決まり・今の状態の画面（M3）。最後に

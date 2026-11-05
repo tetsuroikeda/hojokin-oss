@@ -1,0 +1,7 @@
+# T7-1 改訂と新しい回（SPEC F7。TASKS B28）の変更なしの組。作りは T7-1-改訂-変更あり と同じで、後の版が前の版と同じ文字。
+# 合格ライン：変更がなければ「変更なし」。変わっていない値を、変わったと言わない。
+schema_version: "1.1"
+name: T7-1-改訂-変更なし
+tags: [F7]
+context:
+  scaffold_script: scaffold.sh
