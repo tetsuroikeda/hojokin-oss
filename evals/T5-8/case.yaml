@@ -1,0 +1,9 @@
+# T5-8 スキャンした書類の金額（SPEC F5、DESIGN 8.4、TASKS B11）。スキャンした PDF と写真の見積書3通・納品書・請求書を読ませ、
+# 読み取り役（Sonnet 5.5）が読んだ金額と明細を道具が計算で照合し、記録/金額の読み取り.json に残すか。
+# 請求書の写真の、しみで隠れた単価は、推測で埋めずに社長に確かめるか。
+# 読み取った値と正解の突き合わせは、残した出力を tests/test_T5_8.py（HOJOKIN_T5_8_KEPT）で行う。
+schema_version: "1.1"
+name: T5-8
+tags: [F5]
+context:
+  scaffold_script: scaffold.sh
