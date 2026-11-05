@@ -157,6 +157,81 @@ def test_answer_tables() -> None:
     assert t0_10["テスト"] == "T0-10" and t0_10["会社のこと"]["見る語"] and t0_10["制度のこと"]["見る語"]
 
 
+def _answers() -> Dict[str, str]:
+    """デモの会社の回答表の ID → 答え。"""
+    out = {}
+    for line in (TD / "デモの会社" / "回答表.md").read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^\| ([A-L]-\d{2}) \|[^|]*\| (.*?) \|$", line)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+def _hours(text: str) -> Dict[str, int]:
+    return {k: int(v) for k, v in re.findall(r"(盛り付け|計量|包装|ラベル貼り|検品)約(\d+)時間", text)}
+
+
+def test_answer_sheet_plan_details() -> None:
+    """回答表の L 節（組11 で足した、1件目の計画書を厚く書く事実）が、ほかの行と食い違わない（TASKS B19・B6・D9）。
+
+    工程ごとの時間の和が今の延べ（G-03）と入れた後の延べ（H-09）になり、増えるパックの積み上げが財務モデルの年200,000パックと
+    合い、1日に増やせる量（H-10 − E-06）の内に収まる。日程は、頼んでから届くまで（H-07）と、第9回の補助事業の実施期間
+    （交付決定から14か月）の内に収まる。T9-7 の材料（どの材料にもない事実）と T0-10 の見る語は入れていない。
+    """
+    a = _answers()
+    assert [f"L-{n:02d}" for n in range(1, 20)] == sorted(k for k in a if k.startswith("L-"))
+    total_now = int(re.search(r"延べ約(\d+)時間", a["G-03"]).group(1))
+    total_after = int(re.search(r"延べ約(\d+)時間", a["H-09"]).group(1))
+    now, after = _hours(a["L-01"]), _hours(a["L-03"])
+    assert len(now) == len(after) == 5 and sum(now.values()) == total_now == 38 and sum(after.values()) == total_after == 14
+    assert "2026年8月" in a["L-01"] and "2週間" in a["L-01"]
+    # 増えるパック：病院・介護施設6か所（L-07）とスーパーの新しい3店舗（L-08）の積み上げ（L-09）
+    assert "病院1か所と介護施設5か所" in a["L-07"] and "3店舗" in a["L-08"] and "6か所" in a["L-09"] and "3店舗" in a["L-09"]
+    hospital, supermarket, per_day = (int(x) for x in re.findall(r"1日約(\d+)パック", a["L-09"])[:3])
+    assert hospital + supermarket == per_day == 660
+    per_year = per_day * int(re.search(r"約(\d+)日", a["E-07"]).group(1))
+    model = json.loads((TD / "計画書" / "材料" / "6_計画を下回る実績" / "財務モデルの指定.json").read_text(encoding="utf-8"))
+    planned = next(p["値"] for p in model["前提"] if p["名前"] == "増えるパック_満年度")
+    assert abs(per_year - planned) / planned <= 0.02 and "200,000パック" in a["L-09"]
+    capacity = int(re.search(r"約([\d,]+)パック", a["H-10"]).group(1).replace(",", "")) - \
+        int(re.search(r"約([\d,]+)パック", a["E-06"]).group(1).replace(",", ""))
+    assert per_day <= capacity == 1000
+    # 日程：交付決定の後に発注し、頼んでから約5か月で届き、交付決定から14か月の内にラインを動かす
+    order = re.search(r"(\d{4})年(\d{1,2})月に見積を取り直して発注", a["L-11"])
+    arrive = re.search(r"約(\d+)か月の(\d{4})年(\d{1,2})月", a["L-11"])
+    start = re.search(r"(\d{4})年(\d{1,2})月からラインを動かし", a["L-11"])
+    decided = re.search(r"交付決定は(\d{4})年(\d{1,2})月ごろ", a["L-11"])
+    assert order and arrive and start and decided
+    ym = lambda y, mo: int(y) * 12 + int(mo)  # noqa: E731
+    assert ym(*order.groups()) + int(arrive.group(1)) == ym(arrive.group(2), arrive.group(3))
+    assert f"約{arrive.group(1)}か月" in a["H-07"]
+    assert ym(*decided.groups()) < ym(*order.groups()) < ym(*start.groups()) <= ym(*decided.groups()) + 14
+    # T9-7 の「どの材料にもない事実」（testdata/計画書/make_plans.py の NEEDS_ANSWER）と、T0-10 の見る語は入れない
+    sheet = (TD / "デモの会社" / "回答表.md").read_text(encoding="utf-8")
+    for word in ("2027年10月", "介護施設2か所", "新しく取引を始める", "2028年4月", "大家", "家主", "テレビ", "取材"):
+        assert word not in sheet, word
+
+
+def test_correct_plan_uses_plan_details() -> None:
+    """正しい計画書（D9）が、回答表の L 節の事実で厚くしてある（工程ごとの時間、積み上げ、年月の入った日程）。
+
+    根拠対照表の出典に L 節の ID があり、T9-7 で足す文と T9-2 で混ぜる文の元の文は1つずつ残っている。
+    """
+    base = TD / "計画書" / "材料" / "1_正しい計画書"
+    texts = {it["名前"]: it["本文"] for it in json.loads((base / "本文.json").read_text(encoding="utf-8"))["項目"]}
+    rows = json.loads((base / "根拠対照表.json").read_text(encoding="utf-8"))["行"]
+    used = {rid for r in rows for rid in re.findall(r"回答表 (L-\d{2})", r["出典"])}
+    assert used >= {f"L-{n:02d}" for n in range(1, 15)} - {"L-04"}
+    flow = texts["2-1 設備導入による業務プロセスや配置のビフォーアフター"]
+    assert all(w in flow for w in ("約18時間", "約6時間", "約7時間", "約1時間", "約3時間"))
+    assert "約660パック" in texts["3. 省力化投資で生まれる経営資源の活用による新たな付加価値の創出"]
+    schedule = texts["5. 事業の実施体制とスケジュール"]
+    assert all(w in schedule for w in ("2027年7月", "2027年12月", "2028年1月", "2028年2月", "SECURITY ACTION"))
+    assert texts["3. 省力化投資で生まれる経営資源の活用による新たな付加価値の創出"].count("3年後には、会社全体の売上を約240,000千円にします。") == 1
+    assert texts["3-1 労働生産性と1人当たり給与支給総額等の向上"].count("賃上げの目標値は、計画が決まったら全従業員に伝えます。") == 1
+    assert texts["1-1 現状分析"].count("病院・介護施設ごとのきめ細かな対応") == 1
+
+
 def test_defect_set_has_list() -> None:
     """不備を仕込んだセットに、不備の一覧が付く（種類15以上。一覧の書類がセットにある）。2つのセットに PDF・写真・Word・Excel がある。"""
     listed = json.loads((TD / "書類セット" / "仕込んだ不備の一覧.json").read_text(encoding="utf-8"))
