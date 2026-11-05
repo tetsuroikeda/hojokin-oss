@@ -1,0 +1,46 @@
+{
+  "説明": "保存した状態「質問の前」の戻し方（evals/_lib/fukugen.py が読む。TASKS B26）。「書く前」と同じデモの会社（架空）のフォルダに、2件目の持続化（通常枠）第20回の案件の公式資料と資料の本文も置いた形。制度の質問に答える（F4）のケース（T4-1 の20問、T0-10）で使う。保存したものは evals/状態/書く前/ を使い回す。制度データは両方とも、リポにある正解（資料の文を写さない形）を置く",
+  "保存した状態": "書く前",
+  "今日の日付": "2026-11-05",
+  "制度データ": [
+    {
+      "元": "testdata/正解/省力化_第8回.json",
+      "先": "記録/制度データ/省力化_第8回.json",
+      "注記": "「書く前」と同じ"
+    },
+    {
+      "元": "testdata/正解/持続化_第20回.json",
+      "先": "記録/制度データ/持続化_第20回.json",
+      "注記": "仮の正解（A3 の下書き）。資料の文を写さない形"
+    }
+  ],
+  "公式資料": [
+    {
+      "取る資料": "skills/junbi/取る資料/省力化_一般型_第8回.json",
+      "案件": "2026_省力化（一般型）第9回",
+      "案件の回": "第9回",
+      "注記": "「書く前」と同じ（第9回の案件を、直近回の第8回の資料で進める形）",
+      "ファイル": {
+        "https://shoryokuka.smrj.go.jp/assets/pdf/application_guidelines_ippan_08.pdf": "shoryokuka_ippan/application_guidelines_ippan_08.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/oubo_manual_ippan_08.pdf": "shoryokuka_ippan/oubo_manual_ippan_08.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/electronic_application_manual_ippan_08.pdf": "shoryokuka_ippan/electronic_application_manual_ippan_08.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/doc/yoshiki_business_plan_part1_part2_ippan.docx": "shoryokuka_ippan/yoshiki_business_plan_part1_part2_ippan.docx",
+        "https://shoryokuka.smrj.go.jp/assets/xls/yoshiki_business_plan_part3_ippan_08.xlsx": "shoryokuka_ippan/yoshiki_business_plan_part3_ippan_08.xlsx",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/application_manual_ippan_06.pdf": "shoryokuka_ippan/application_manual_ippan_06.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/completion_manual_ippan.pdf": "shoryokuka_ippan/completion_manual_ippan.pdf",
+        "https://shoryokuka.smrj.go.jp/assets/pdf/status_report_manual_ippan.pdf": "shoryokuka_ippan/status_report_manual_ippan.pdf",
+        "https://shoryokuka.smrj.go.jp/ippan/schedule/": "shoryokuka_ippan/site_html/ippan_schedule.html"
+      }
+    },
+    {
+      "取る資料": "evals/_lib/T4-1/持続化_第20回_質問用.json",
+      "案件": "2026_持続化（通常枠）第20回",
+      "注記": "2件目の案件。scaffold の時間を短くするため、公募要領・Q&A・参考資料の3つだけを置く（判定シート・操作手引き・補助事業の手引きは置かない）",
+      "ファイル": {
+        "https://r6.jizokukahojokin.info/doc/r6_koubover8_ip20.pdf": "jizokuka_20/r6_koubover8_ip20.pdf",
+        "https://r6.jizokukahojokin.info/doc/r6_qa_ip20.pdf": "jizokuka_20/r6_qa_ip20.pdf",
+        "https://r6.jizokukahojokin.info/doc/r6_sanko_ip20.pdf": "jizokuka_20/r6_sanko_ip20.pdf"
+      }
+    }
+  ]
+}

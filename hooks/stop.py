@@ -1,7 +1,7 @@
 """Stop（Claude が応答を終えたとき）。DESIGN 4.1・5章の処理を、後のタスクでここに作る。
 
 ツールが変えたファイルを「ツール」として履歴に残すこと、結果の確かめと戻し
-（原本と公式資料のハッシュ、Word・Excel の書式、版の名前のファイル、答えの引用）、
+（原本と公式資料のハッシュ、Word・Excel の書式、版の名前のファイル、答えの引用〈B26。inyou_hooks.py〉）、
 質問の記録、今の状態の画面の作り直し。
 """
 
@@ -24,6 +24,16 @@ def form_notes(folder: Path) -> List[str]:
         return []  # hook を落とさない（落ちると、run.sh が書き込みと Bash を拒んでしまう）
 
 
+def quote_notes(data: dict, folder: Path) -> List[str]:
+    """答えの引用が、示した資料のページにあるかを照らす（B26。inyou_hooks.py）。外れたら答え直させる文。"""
+    try:
+        import inyou_hooks
+
+        return inyou_hooks.notes(data, folder)
+    except Exception:
+        return []
+
+
 def record_questions(data: dict, folder: Path) -> None:
     """最後の応答の【質問】を、質問の記録に残す（B15。shitsumon_hooks.py）。版の記録より先に（同じ版に入れる）。"""
     try:
@@ -37,5 +47,6 @@ def record_questions(data: dict, folder: Path) -> None:
 def handle(data: dict, folder: Path) -> Optional[dict]:
     notes = originals_hooks.check(data, folder)  # 原本と公式資料の照らしと戻し（M4）。版の記録より先に
     notes += form_notes(folder)  # Word・Excel の書式の照らしと戻し（B14b）。版の記録より先に
+    notes += quote_notes(data, folder)  # 答えの引用の照らし（B26）。外れたら答え直させる
     record_questions(data, folder)
     return originals_hooks.stop(data, folder, notes, version_hooks.stop(data, folder))

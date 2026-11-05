@@ -1,0 +1,7 @@
+# T4-1 質問への回答（SPEC F4。TASKS B26）のうち、持続化（通常枠）第20回の9問（答えが資料にある7問：番9〜15、ない2問：番19・20）。
+# 作りと合否の見方は T4-1-省力化 と同じ（ある15問の90%以上は、両方のケースの、ある問の grader の合否から数える）。
+schema_version: "1.1"
+name: T4-1-持続化
+tags: [F4]
+context:
+  scaffold_script: scaffold.sh
