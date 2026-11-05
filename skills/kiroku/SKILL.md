@@ -114,9 +114,14 @@ python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" confirm --fol
 # 社長が決めた新しい値にする
 python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" update-fact --folder "${CLAUDE_PROJECT_DIR}" --id <事実の id> --value "<新しい値>" --source 社長の発言 --utterance "<社長の発言>"
 
+# 差し戻し（不備）を、次に注意する型として残す（kaku の差し戻しへの対応の最後に。--watch は次に注意する書類、いくつでも）
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" add-defect --folder "${CLAUDE_PROJECT_DIR}" --case "<案件>" --stage <段階> --content "<何が違ったか>" --cause "<原因>" --watch "<書類>" --rule "<次に照らす決まり>" --file "<差し戻しの原本の場所>" --received <受け取った日>
+
 # 覚えていることの一覧（何を、いつ、どこから）
 python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py" list --folder "${CLAUDE_PROJECT_DIR}"
 ```
+
+- 差し戻しは、残した型が、次からの書類集め（shorui の不備チェックの物差しの「過去の差し戻しの型」）に出て、同じ不備を前もって注意できるようにする。照合の決まりは、次の書類で照らせる形に書く（例：「見積書の有効期限が、出す日より後か」）。
 
 - 名前は、社長が見て分かる短い言葉にする（例：「従業員の数」「いちばん低い時給」）。同じことには同じ名前を使う（道具は、同じ名前の事実を同じものとして比べる）。
 - 値は、社長の答えや書類の言葉をそのまま書く。単位と、何を含むか（「役員は入れない」など）も書く。

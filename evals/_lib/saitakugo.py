@@ -3,7 +3,7 @@
 
 使い方（今いるフォルダが会社のフォルダ。ケースの scaffold.sh か、tests/multiturn/t12_1.py から）：
   /usr/bin/python3 -B evals/_lib/saitakugo.py <場面> [<会社のフォルダ>]
-  場面：申請の後・採択後・差し戻しの後
+  場面：申請の後・採択後・差し戻しの後・差し戻し1〜差し戻し5
 
 材料は testdata/期限（通知の日付）と testdata/計画書（D9 の交付申請の提出版と差し戻し）のとおり。製品の道具（lib/stage_switch.py、
 lib/submission.py、lib/company_record.py）で作る。
@@ -12,9 +12,11 @@ lib/submission.py、lib/company_record.py）で作る。
   testdata/期限）を決まった期日として足し、制度データの正解にまだない「義務」（tests/data/gimu/ の下書き）を足す。会社の記録に、
   決算の月（回答表 A-10）とお金の用意（H-12）を足す。2件目（持続化 第20回。制度データは testdata/正解/ の下書き）の案件を足す。
   どちらも申請の段階の提出版を記録する（申請書の控えを1つ置いて、「提出した」と伝えたときと同じ道具で）。
-- 採択後（T12-2・T13-5 の土台。今日 2027-06-02）：持続化は採択（2027-03-12）の後に見積書等の提出の段階へ、省力化は採択
-  （2027-04-16）の後に交付申請の段階へ切り替える。省力化の交付申請の提出版（2027-05-28）は、D9 の交付申請の入力と、
-  見積書2通（D2b）の写し。
+- 採択後（T12-2・T12-3・T13-5 の土台。今日 2027-06-02）：採択の通知（testdata/期限）を原本にし、持続化は採択（2027-03-12）の
+  後に見積書等の提出の段階へ、省力化は採択（2027-04-16）の後に交付申請の段階へ切り替える。省力化の交付申請の提出版
+  （2027-05-28）は、D9 の交付申請の入力と、応募のときの見積書2通（原本）から作った写し。申請の提出版には D9 の正しい計画書の本文。
+- 差し戻し1〜5（T12-2）：採択後に、差し戻しの材料（1 は文面と取り直した見積書。今日 2027-06-07。5 は画面の写真）を入れ口に入れる。
+  2〜4 は、文面を社長が発言に貼り付けるので、何も入れない。
 - 差し戻しの後（T13-5。今日 2027-06-14）：省力化の交付申請の差し戻し1（見積書の有効期限）を受け取って直し、不備の型として
   会社の記録に残した（kiroku の add-defect と同じ形）。差し戻しの文面は原本（役所からの通知）として置く。
 
@@ -43,7 +45,6 @@ SEIDO_1 = "記録/制度データ/省力化_第8回.json"
 SEIDO_2 = PLUGIN_ROOT / "testdata" / "正解" / "持続化_第20回.json"
 DUTIES = PLUGIN_ROOT / "tests" / "data" / "gimu" / "省力化_第8回_義務.json"
 D9 = PLUGIN_ROOT / "testdata" / "計画書" / "材料" / "5_差し戻し"
-QUOTES = PLUGIN_ROOT / "testdata" / "デモの会社" / "書類"
 NOTICES = PLUGIN_ROOT / "testdata" / "期限" / "材料" / "通知"
 NOTE = "（テスト用の値。資料の文は写していない）"
 RETURN_1 = "差し戻し_1_見積書の有効期限.txt"
@@ -144,7 +145,8 @@ def prepare(folder: Path, scene: str) -> None:
     base(folder)
     add_second_case(folder)
     submit(folder, CASE_2, "1_申請")
-    submit(folder, CASE_1, "1_申請")
+    plan = (PLUGIN_ROOT / "testdata" / "計画書" / "材料" / "1_正しい計画書" / "本文.md").read_bytes()
+    submit(folder, CASE_1, "1_申請", {"申請書/事業計画書（その1・その2）の本文.md": plan})  # D9 の正しい計画書
     if step >= 1:
         set_today(folder, "2027-03-15")
         receive(folder, NOTICES / "持続化_第20回_採択通知書.pdf", "採択通知書", "2027-03-12", "持続化")
@@ -155,10 +157,11 @@ def prepare(folder: Path, scene: str) -> None:
         stage_switch.switch(folder, CASE_1, events=["採択発表日=2027-04-16"], source=notice)
         set_today(folder, "2027-05-28")
         inputs = (D9 / "提出版" / "交付申請の入力.json").read_bytes()
-        files = {"申請書/交付申請の入力.json": inputs}
-        for name in ("見積書_つばさ台フードシステム.pdf", "見積書_ほしみ機工.pdf"):
-            files[f"添付する書類/{name}"] = (QUOTES / name).read_bytes()
-        submit(folder, CASE_1, "2_交付申請", files)
+        from lib import utsushi
+        for partner in ("つばさ台フードシステム", "ほしみ機工"):  # 応募のときの見積書（原本）から、交付申請に添える写しを作る
+            utsushi.make(folder, [f"原本/見積・契約・請求/2026-10-20_見積書_{partner}.pdf"], CASE_1, "2_交付申請",
+                         document="見積書")
+        submit(folder, CASE_1, "2_交付申請", {"申請書/交付申請の入力.json": inputs})
         set_today(folder, "2027-06-02")
     if step >= 2:
         from lib import company_record
@@ -179,13 +182,32 @@ def prepare(folder: Path, scene: str) -> None:
     history.record(folder, history.TOOL, f"採択後の準備（{scene} の始まり）", when=dates.now(folder))
 
 
+RETURNS = {  # T12-2 の差し戻しの場面：入れ口に入れておくもの（D9 の材料。1 は取り直した見積書も）
+    "差し戻し1": [RETURN_1, "届いた書類/見積書_つばさ台フードシステム_2027年6月.pdf", "届いた書類/見積書_ほしみ機工_2027年6月.pdf"],
+    "差し戻し5": ["差し戻し_5_機械の名称と型番.png"],
+}
+
+
+def prepare_return(folder: Path, scene: str) -> None:
+    """採択後（2027-06-02）の状態に、差し戻しの材料を入れ口に入れる（2〜4 は文面を発言に貼り付けるので、何も入れない）。"""
+    from lib import dates, history
+    prepare(folder, "採択後")
+    inbox = folder / "入れ口"
+    inbox.mkdir(exist_ok=True)
+    for rel in RETURNS.get(scene, []):
+        shutil.copyfile(D9 / rel, inbox / Path(rel).name)
+    set_today(folder, "2027-06-07" if scene == "差し戻し1" else "2027-06-02")  # 1 は取り直した見積書が届いた日
+    history.record(folder, history.TOOL, f"採択後の準備（{scene} の始まり）", when=dates.now(folder))
+
+
 def main(argv) -> int:
-    if not argv or argv[0] not in SCENES or len(argv) > 2:
-        print(f"使い方：saitakugo.py <場面>（{'・'.join(SCENES)}） [<会社のフォルダ>]", file=sys.stderr)
+    scenes = SCENES + tuple(f"差し戻し{n}" for n in range(1, 6))
+    if not argv or argv[0] not in scenes or len(argv) > 2:
+        print(f"使い方：saitakugo.py <場面>（{'・'.join(scenes)}） [<会社のフォルダ>]", file=sys.stderr)
         return 1
     folder = Path(argv[1]) if len(argv) == 2 else Path.cwd()
     try:
-        prepare(folder.resolve(), argv[0])
+        (prepare_return if argv[0].startswith("差し戻し") and argv[0] != "差し戻しの後" else prepare)(folder.resolve(), argv[0])
     except Exception as error:
         print(f"saitakugo: 作れませんでした（{type(error).__name__}: {error}）", file=sys.stderr)
         return 1
