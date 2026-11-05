@@ -1286,8 +1286,14 @@ def numbers_record(spec: Spec, book: Book, seido_rel: Optional[str], when: str) 
         for n, item in enumerate(items, start=1):
             assumptions.append({"番号": f"{prefix}-{n:02d}", "名前": item.name, "値": item.value, "単位": item.unit,
                                 "根拠": item.basis, "出典": item.source, "仮": item.provisional})
+    steps = []
+    if spec.shoryoku is not None:
+        for side, items in (("導入前", spec.shoryoku.before), ("導入後", spec.shoryoku.after)):
+            steps += [{"側": side, "No": s.no, "工程": s.name, "分": s.minutes, "種別": s.kind,
+                       "対応する導入前": s.before_no} for s in items]
     return {"説明": "財務モデル.xlsx を作ったときの数字の控え（zaimu_model.py が書く。書き換えない）",
-            "作った日時": when, "制度データ": seido_rel, "前提": assumptions, "中身": book.summary}
+            "作った日時": when, "制度データ": seido_rel, "前提": assumptions, "中身": book.summary,
+            "省力化の作業": steps}
 
 
 # ---------------------------------------------------------------- 計算し直した値と比べる

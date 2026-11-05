@@ -92,3 +92,108 @@ def test_rounding_follows_the_shown_digits() -> None:
     rate = [{"記述": "4.1%", "出典": "財務モデル.xlsx（賃上げ率）"}]
     assert shogo.model_findings(rate, numbers) == []  # 率の前提（小数）は百分率で比べる
     assert shogo.model_findings(copy.deepcopy(rate), None)[0][2].startswith("財務モデルの数字の控え")
+
+
+# ---------------------------------------------------------------- 様式（その3）と入力シートの数（B16 の直し）
+
+FORM3 = kt.REPO_ROOT / "downloads" / "shoryokuka_ippan" / "yoshiki_business_plan_part3_ippan_08.xlsx"
+S3 = "【指定様式】事業計画書（その3）"
+B4 = "(別紙4）事業計画目標値算出シート"
+SCREEN = "事業計画数値"
+COLS = "FGHIJK"  # 別紙4 の基準年度〜5年目
+
+
+def model_cells(numbers: dict) -> list:
+    """数字の控えから取った、その3 の入力の欄の値（道具 cells に渡す形）。"""
+    s = numbers["中身"]
+    out = [{"シート": S3, "セル": "B14", "値": s["計画の年数"]},
+           {"シート": S3, "セル": "I19", "値": round(s["指標"]["付加価値額の伸び"][5], 2)},
+           {"シート": S3, "セル": "I25", "値": round(s["指標"]["労働生産性の伸び"][5], 2)},
+           {"シート": S3, "セル": "I32", "値": round(s["指標"]["1人当たり給与の伸び"][5], 2)}]
+    for y, col in enumerate(COLS):
+        out.append({"シート": B4, "セル": f"{col}14", "値": round(s["合算"]["売上"][y])})
+        out.append({"シート": B4, "セル": f"{col}26", "値": round(s["人数"]["常勤従業員数"][y])})
+    return out
+
+
+def sheet_values(numbers: dict) -> dict:
+    sales = numbers["中身"]["合算"]["売上"]
+    return {f"売上高（{y}年目計画）": round(sales[y]) for y in range(1, 6)}
+
+
+def place_forms(env: kt.Env, cells: list, values: dict, evidence=None) -> None:
+    if not FORM3.is_file():
+        pytest.skip("downloads/ に省力化の様式（その3）がありません")
+    from lib import input_sheet
+    from lib import yoshiki_excel as ye
+
+    pt.place(env, pt.form_or_skip(), evidence=evidence)
+    blob, _summary = ye.write_cells(ye.first_copy(FORM3.read_bytes()), cells)
+    env.put(f"{kt.APP_DIR}/その3.xlsx", blob)
+    sheet = input_sheet.build(pt.seido_with_positions())
+    for field, value in values.items():
+        sheet, _s = input_sheet.write_value(sheet, field, value, SCREEN)
+    env.put(kt.SHEET, sheet)
+
+
+def model_places(report: dict) -> list:
+    return [f["場所"] for f in report["財務モデルとの食い違い"]]
+
+
+def test_form3_and_input_sheet_numbers_from_the_model_match(env: kt.Env) -> None:
+    numbers = pt.numbers()
+    place_forms(env, model_cells(numbers), sheet_values(numbers))
+    _code, report = env.count()
+    assert report["財務モデルとの食い違い"] == [] and report["食い違い"] == []
+
+
+def test_shifted_form3_number_is_found(env: kt.Env) -> None:
+    numbers = pt.numbers()
+    cells = model_cells(numbers)
+    for c in cells:
+        if c["セル"] == "G14":
+            c["値"] += 1_000_000  # 1年目の売上を財務モデルからずらす
+    place_forms(env, cells, sheet_values(numbers))
+    code, report = env.count()
+    assert code == 3 and model_places(report) == [f"その3.xlsx／{B4}!G14"]
+
+
+def test_shifted_input_sheet_number_is_found(env: kt.Env) -> None:
+    numbers = pt.numbers()
+    values = sheet_values(numbers)
+    values["売上高（3年目計画）"] += 500_000
+    place_forms(env, model_cells(numbers), values)
+    code, report = env.count()
+    assert code == 3 and model_places(report) == [f"{SCREEN}／売上高（3年目計画）"]
+
+
+def test_example_value_left_in_the_form_is_found(env: kt.Env) -> None:
+    """様式に初めから入っている例の値（最終年の年平均成長率 7.48 など）を書き直し忘れても見つかる。"""
+    numbers = pt.numbers()
+    cells = [c for c in model_cells(numbers) if c["セル"] != "I19"]
+    place_forms(env, cells, sheet_values(numbers))
+    _code, report = env.count()
+    assert f"その3.xlsx／{S3}!I19" in model_places(report)
+
+
+def test_cell_with_an_evidence_row_is_compared_with_the_row(env: kt.Env) -> None:
+    numbers = pt.numbers()
+    cells = model_cells(numbers)
+    place = f"その3.xlsx／{B4}!F14"
+    rows = pt.rows() + [{"記述": "201,600千円", "種類": "数字", "書いた場所": place, "出典": "財務モデル 合算 売上 基準年度"}]
+    place_forms(env, cells, sheet_values(numbers), evidence=rows)
+    _code, report = env.count()
+    assert report["食い違い"] == [] and report["財務モデルとの食い違い"] == []
+    for c in cells:
+        if c["セル"] == "F14":
+            c["値"] = 201_700_000  # セルだけ直して、根拠対照表を直していない
+    place_forms(env, cells, sheet_values(numbers), evidence=rows)
+    code, report = env.count()
+    assert code == 3 and [f["文字"] for f in report["食い違い"]] == ["201,600千円"]
+
+
+def test_cell_in_model_follows_the_shown_digits() -> None:
+    values = [205632000.4, 5.8212, 0.041]
+    assert shogo.cell_in_model("205632000", values) and not shogo.cell_in_model("205632002", values)
+    assert shogo.cell_in_model("5.82", values) and not shogo.cell_in_model("5.84", values)
+    assert shogo.cell_in_model("4.1", shogo.model_number_values(pt.numbers()))  # 率の前提（4.1%）は百分率でも当たる

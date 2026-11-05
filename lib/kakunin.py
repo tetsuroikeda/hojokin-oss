@@ -367,27 +367,69 @@ def _read_bytes(path: Path, rel: str) -> bytes:
         raise CheckError(f"{rel} を読めませんでした（{e.strerror or e}）")
 
 
-def _texts_of(blob: bytes, rel: str, suffix: str, seido: Optional[dict]) -> Dict[str, str]:
-    """照合に使う本文（書いた場所 → 文）。Word は様式の項目と欄ごと、入力シートは「画面／欄」ごと、文字のファイルは全体。"""
+_PLAIN_NUMBER = re.compile(r"^-?[0-9]+(?:\.[0-9]+)?$")
+# 入力シートの欄のうち、財務モデルと照らす欄（制度データの「値の出どころ」がこの語を含む。T8-11）
+MODEL_SOURCES = ("財務モデル", "その3")
+
+
+def _model_fields(seido: Optional[dict]) -> set:
+    out = set()
+    if not isinstance(seido, dict):
+        return out
+    for screen, field in input_sheet.fields_of(seido):
+        if any(w in str(field.get("値の出どころ") or "") for w in MODEL_SOURCES):
+            out.add((str(screen.get("名前") or ""), str(field.get("名前") or "")))
+    return out
+
+
+def _texts_of(blob: bytes, rel: str, suffix: str, seido: Optional[dict]) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """照合に使う本文（書いた場所 → 文）と、財務モデルと照らす数のセル（書いた場所 → 数の文字）。
+
+    Word は様式の項目と欄ごと、入力シートは「画面／欄」ごと、Excel の様式（その3 など）は入力の欄のセルごと
+    （「その3.xlsx／<シート>!<セル>」）、文字のファイルは全体。数だけのセルは、入力シートなら値の出どころが財務モデルか
+    その3 の欄、Excel の様式なら入力の欄のすべてを、財務モデルと照らす（B16 の直し。T8-11）。
+    """
     out: Dict[str, str] = {}
+    cells: Dict[str, str] = {}
+    name = places.nfc(Path(rel).name)
     if suffix in WORD_SUFFIXES:
         root = _word_root(blob, rel)
         items = _item_ranges(root, seido)
         if items:
-            for name, ps in items:
-                out[name] = _non_blue_text(ps)
+            for item, ps in items:
+                out[item] = _non_blue_text(ps)
         else:
             out[rel] = _non_blue_text(_outer_paragraphs(root))
-    elif suffix in EXCEL_SUFFIXES and places.nfc(Path(rel).name) == input_sheet.FILE_NAME:
+    elif suffix in EXCEL_SUFFIXES and name == input_sheet.FILE_NAME:
         _parts, _name, grid = input_sheet.read_grid(blob)
         _head, cols = grid.header()
+        model_fields = _model_fields(seido)
         for r, screen, field, staff in grid.field_rows():
             value = grid.texts.get(f"{cols[input_sheet.HEAD_VALUE]}{r}", "").strip()
             if value and not staff and not input_sheet.is_not_applicable(value):
                 out[f"{screen}／{field}"] = value
+                if _PLAIN_NUMBER.match(value.replace(",", "")) and (screen, field) in model_fields:
+                    cells[f"{screen}／{field}"] = value
+    elif suffix in EXCEL_SUFFIXES and name != konkyo.FILE_NAME:
+        from lib import yoshiki_excel
+
+        try:
+            book = yoshiki_excel.Book(blob)
+        except ValueError:
+            return out, cells
+        for sh in book.sheets:
+            for ref in sorted(sh.inputs):
+                value = sh.grid.texts.get(ref, "").strip()
+                if not value:
+                    continue
+                place = f"{name}／{sh.name}!{ref}"
+                if _PLAIN_NUMBER.match(value):
+                    cells[place] = value
+                else:
+                    out[place] = value
     elif suffix in TEXT_SUFFIXES:
         out[rel] = blob.decode("utf-8", errors="replace")
-    return out
+    return out, cells
 
 
 def _nouns(folder: Path) -> List[str]:
@@ -609,6 +651,7 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
     notes: List[str] = []
     looked: List[str] = []
     texts: Dict[str, str] = {}
+    cells: Dict[str, str] = {}
     evidence_rel = f"{shinsa_result.application_rel(case, stage)}/{konkyo.FILE_NAME}"
     evidence_rows = None
     for rel, path in sorted(files.items()):
@@ -621,7 +664,9 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
             continue
         try:
             if rel != MODEL_FILE:
-                texts.update(_texts_of(_read_bytes(path, rel), rel, suffix, seido))
+                got_texts, got_cells = _texts_of(_read_bytes(path, rel), rel, suffix, seido)
+                texts.update(got_texts)
+                cells.update(got_cells)
             if suffix in WORD_SUFFIXES:
                 findings += word_findings(_read_bytes(path, rel), rel, seido)
             elif suffix in EXCEL_SUFFIXES:
@@ -645,8 +690,11 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
             if not row.get("出典"):
                 findings.append(Finding(UNSUPPORTED, evidence_rel, f"{n}行目", row.get("記述", "")))
     matched = {k: [] for k in shogo.KINDS}
-    if evidence_rows is not None and texts:
-        matched = shogo.check(texts, evidence_rows, _model_numbers(folder), _nouns(folder))
+    numbers = _model_numbers(folder)
+    if cells and numbers is None:
+        notes.append("財務モデルの数字の控え（記録/財務モデルの数字.json）がないので、様式と入力シートの数字は財務モデルと照らしていません")
+    if evidence_rows is not None and (texts or cells):
+        matched = shogo.check(texts, evidence_rows, numbers, _nouns(folder), cells=cells)
         for f in matched[shogo.NO_SOURCE]:
             findings.append(Finding(UNSUPPORTED, "本文", f["場所"], f"{f['文字']}（{f['理由']}）"))
     style, style_note = style_count(folder, texts)

@@ -12,6 +12,10 @@ F8「財務モデル」T8-11、DESIGN 6章・8.1。TASKS B16）。
 4. 財務モデルとの食い違い（T8-11）：根拠対照表の出典が財務モデルを指す行（「財務モデル P-07」「財務モデル 合算 売上
    5年目」「財務モデル.xlsx（労働生産性_5年目）」など）の数字を、数字の控え（記録/財務モデルの数字.json）の値と
    比べる。表に書いた桁で丸めた差を超えれば食い違い。参照の先が控えにないときも食い違いに数える。
+5. 様式（その3 などの Excel の入力の欄）と入力シート（値の出どころが財務モデル・その3 の欄）の数のセル（T8-11）：
+   そのセルを書いた場所にした根拠対照表の行があれば、行の記述の数とセルの数を比べ（違えば食い違い）、行の出典が
+   財務モデルなら 4 で控えと比べる。行がなければ、セルの数が控えの数（セルに書いた桁で丸めたもの）のどれかで
+   なければ、財務モデルとの食い違いとする（控えがないときは見ない）。
 
 標準のライブラリだけを使う。/usr/bin/python3（3.9）で動く。
 """
@@ -246,12 +250,80 @@ def _fmt(value: float, unit: str) -> str:
     return f"{value:,.4g}"
 
 
+# ---------------------------------------------------------------- 様式と入力シートの数のセル（B16 の直し。T8-11）
+
+
+def _flat_numbers(node: Any, out: List[float]) -> None:
+    if isinstance(node, bool):
+        return
+    if isinstance(node, (int, float)):
+        out.append(float(node))
+    elif isinstance(node, list):
+        for x in node:
+            _flat_numbers(x, out)
+    elif isinstance(node, dict):
+        for x in node.values():
+            _flat_numbers(x, out)
+
+
+def model_number_values(numbers: Dict[str, Any]) -> List[float]:
+    """数字の控えにある数（前提の値と、率の前提の百分率、計画の年ごとの数、指標、人数、省力化の数と作業の分）。"""
+    out: List[float] = []
+    for a in numbers.get("前提") or []:
+        if isinstance(a, dict) and isinstance(a.get("値"), (int, float)) and not isinstance(a.get("値"), bool):
+            out.append(float(a["値"]))
+            if a.get("単位") == "%":
+                out.append(float(a["値"]) * 100)
+    body = numbers.get("中身") or {}
+    for key in ("合算", "事業ごと", "指標", "人数", "省力化", "まとめ", "計画の年数"):
+        _flat_numbers(body.get(key), out)
+    _flat_numbers(numbers.get("省力化の作業"), out)
+    return out
+
+
+def _half(text: str) -> float:
+    raw = text.replace(",", "")
+    decimals = len(raw.split(".", 1)[1]) if "." in raw else 0
+    return 0.5 * (10 ** -decimals)
+
+
+def cell_in_model(value: str, values: Sequence[float]) -> bool:
+    """セルの数が、数字の控えのどれかの数を、セルに書いた桁で丸めたものか。"""
+    v, half = float(value.replace(",", "")), _half(value)
+    return any(abs(v - m) <= half + 1e-9 * max(1.0, abs(m)) for m in values)
+
+
+def cell_findings(cells: Dict[str, str], rows: Sequence[Dict[str, str]], numbers: Optional[Dict[str, Any]]
+                  ) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """（食い違い, 財務モデルとの食い違い）。セルに根拠対照表の行があれば、行の記述の数とセルの数を比べる。
+    行がなければ、セルの数が財務モデルの数字の控えにあるかを見る（控えがなければ見ない）。"""
+    mismatch, model = [], []
+    values = model_number_values(numbers) if numbers is not None else None
+    for place, value in cells.items():
+        mine = [(n, r) for n, r in enumerate(rows, 1) if r.get("書いた場所") == place]
+        v, half = float(value.replace(",", "")), _half(value)
+        if mine:
+            for n, r in mine:
+                shown = shown_number(r.get("記述", ""))
+                if shown is None or abs(shown[0] - v) > shown[1] + half + 1e-9 * max(1.0, abs(v)):
+                    mismatch.append({"場所": f"根拠対照表 {n}行目", "文字": r.get("記述", ""),
+                                     "理由": f"「{place}」の値は {value} です（様式や入力シートを直したら、根拠対照表も直す）"})
+            continue
+        if values is not None and not cell_in_model(value, values):
+            model.append({"場所": place, "文字": value,
+                          "理由": "財務モデルの数字の控えにも、根拠対照表にもない数です（数字は財務モデルの道具の出力から取る。"
+                                  "ほかの出典の数なら、書いた場所をこのセルにして根拠対照表に行を作る）"})
+    return mismatch, model
+
+
 # ---------------------------------------------------------------- まとめて照らす
 
 
 def check(texts: Dict[str, str], rows: Sequence[Dict[str, str]], numbers: Optional[Dict[str, Any]],
-          nouns: Iterable[str] = ()) -> Dict[str, List[Dict[str, str]]]:
-    """texts は（書いた場所 → 本文）。種類ごとの指摘（{"場所", "文字", "理由"}）を返す。"""
+          nouns: Iterable[str] = (), cells: Optional[Dict[str, str]] = None) -> Dict[str, List[Dict[str, str]]]:
+    """texts は（書いた場所 → 本文）、cells は（書いた場所 → 様式・入力シートの数）。種類ごとの指摘
+    （{"場所", "文字", "理由"}）を返す。"""
+    cells = cells or {}
     descriptions = [norm(r.get("記述", "")) for r in rows]
     found: Dict[str, List[Dict[str, str]]] = {k: [] for k in KINDS}
     noun_list = sorted({n for n in nouns if n and len(n) >= 2}, key=len, reverse=True)
@@ -278,6 +350,8 @@ def check(texts: Dict[str, str], rows: Sequence[Dict[str, str]], numbers: Option
         if not desc:
             continue
         place = row.get("書いた場所", "")
+        if place in cells:
+            continue  # 様式・入力シートの数のセルの行は、数で比べる（cell_findings）
         target = by_place.get(place, all_text)
         if desc not in target and norm(row.get("記述", "")) not in target:
             where = place if place in by_place else "本文の全体"
@@ -285,4 +359,7 @@ def check(texts: Dict[str, str], rows: Sequence[Dict[str, str]], numbers: Option
                                     "理由": f"「{where}」の本文にこの記述がありません（本文を直したら、根拠対照表も直す）"})
     for n, desc, reason in model_findings(rows, numbers):
         found[MODEL_MISMATCH].append({"場所": f"根拠対照表 {n}行目", "文字": desc, "理由": reason})
+    cell_mismatch, cell_model = cell_findings(cells, rows, numbers)
+    found[MISMATCH] += cell_mismatch
+    found[MODEL_MISMATCH] += cell_model
     return found
