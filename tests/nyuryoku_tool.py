@@ -57,6 +57,11 @@ SHEET_VALUES = (
 )
 # 確認・誓約・同意（宣誓を含む）の語（DESIGN 5章。コードに固定した語と同じ）
 OATH_WORDS = bg.PROHIBITED_FIELD_WORDS
+# 添付の欄（守りは、入力シートの添付の欄に書いた書類の写しだけを添付させる。B29）。模擬画面の制度データ
+# （tests/data/nyuryoku/）には書類添付の画面がないので、添付を試すテストだけ、この画面を足して使う
+ATTACH_SCREEN = {"順番": 9, "名前": "書類添付", "押してよいボタン": ["戻る", "一時保存", "次へ"],
+                 "欄": [{"名前": "履歴事項全部証明書", "種類": "添付", "値の出どころ": "原本", "担当者が入れる": False}]}
+ATTACH_VALUE = ("書類添付", "履歴事項全部証明書", f"案件/{CASE}/{STAGE}/添付する書類/履歴事項全部証明書.pdf")
 
 
 # ---- 会社のフォルダ ----
@@ -65,8 +70,14 @@ def seido() -> dict:
     return json.loads(SEIDO.read_text(encoding="utf-8"))
 
 
-def build_sheet(values=SHEET_VALUES) -> bytes:
+def seido_with_attach() -> dict:
     data = seido()
+    data["申請画面"]["画面"] = list(data["申請画面"]["画面"]) + [ATTACH_SCREEN]
+    return data
+
+
+def build_sheet(values=SHEET_VALUES, scheme: dict = None) -> bytes:
+    data = scheme or seido()
     blob = input_sheet.build(data)
     fields = {(s.get("名前"), f.get("名前")): f for s, f in input_sheet.fields_of(data)}
     for screen, field, value in values:
@@ -84,7 +95,7 @@ def make_company(root: Path, values=SHEET_VALUES, scheme: dict = None) -> Path:
     app = folder / "案件" / CASE / STAGE / "申請書"
     app.mkdir(parents=True)
     (folder / "案件" / CASE / STAGE / "添付する書類").mkdir()
-    (app / input_sheet.FILE_NAME).write_bytes(build_sheet(values))
+    (app / input_sheet.FILE_NAME).write_bytes(build_sheet(values, scheme))
     return folder
 
 

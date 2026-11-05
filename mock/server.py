@@ -388,6 +388,7 @@ th{background:#eef0f4;text-align:left}
 td input[type=text]{width:8.5rem;text-align:right}
 td textarea{width:18rem;height:3rem}
 td.calc{background:#f2f2f2;text-align:right;min-width:7rem}
+.cell-name{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .summary td:first-child{width:22rem}
 .sub{font-size:.85rem;color:#555;margin:0}
 .steps{display:flex;flex-wrap:wrap;gap:4px 14px;list-style:none;margin:8px 0;padding:6px 10px;font-size:.82rem;color:#888;background:#fff;border:1px solid #ccd;border-radius:6px}
@@ -531,6 +532,8 @@ def render_field(field: dict, values: dict, files: dict, computed: dict) -> str:
 
 
 def render_grid(g: dict, values: dict, computed: dict) -> str:
+    """表。入力欄は、見えないラベル（欄の名前）で囲む（ページを読んだときに、入れた後も欄の名前が読めるように。
+    aria-label だけだと、値を入れた後は欄の名前の代わりに値が読める。B29）。"""
     head = "".join(f"<th>{esc(label)}</th>" for _key, label, _kind in g["cols"])
     rows = []
     for row in g["rows"]:
@@ -538,18 +541,19 @@ def render_grid(g: dict, values: dict, computed: dict) -> str:
         for col, col_label, kind in g["cols"]:
             mode = row.get("cells", {}).get(col, "in")
             cid = f"{g['id']}_{row['key']}_{col}"
-            name = f"{row['label']}（{col_label}）"
+            name = screen.cell_label(g, row, col_label)
+            label = f"<span class=\"cell-name\">{esc(name)}</span>"
             if mode == "none":
                 cells.append("<td class=\"calc\">—</td>")
             elif mode == "calc":
                 cells.append(f"<td class=\"calc\" id=\"f_{cid}\">{esc(computed.get(cid, ''))}</td>")
             elif kind == "textarea":
-                cells.append(f"<td><textarea name=\"{cid}\" id=\"f_{cid}\" aria-label=\"{esc(name)}\">"
-                             f"{esc(values.get(cid, ''))}</textarea></td>")
+                cells.append(f"<td><label>{label}<textarea name=\"{cid}\" id=\"f_{cid}\">"
+                             f"{esc(values.get(cid, ''))}</textarea></label></td>")
             else:
                 numeric = " inputmode=\"numeric\"" if kind == "number" else ""
-                cells.append(f"<td><input type=\"text\" name=\"{cid}\" id=\"f_{cid}\" aria-label=\"{esc(name)}\" "
-                             f"value=\"{esc(values.get(cid, ''))}\"{numeric}></td>")
+                cells.append(f"<td><label>{label}<input type=\"text\" name=\"{cid}\" id=\"f_{cid}\" "
+                             f"value=\"{esc(values.get(cid, ''))}\"{numeric}></label></td>")
         rows.append(f"<tr><th>{esc(row['label'])}</th>{''.join(cells)}</tr>")
     return (f"<p class=\"note\">{esc(g['label'])}</p><div class=\"scroll\"><table>"
             f"<tr><th></th>{head}</tr>{''.join(rows)}</table></div>")

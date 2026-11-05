@@ -1,0 +1,72 @@
+# 模擬の申請画面（12画面版）の ❸ 要件を、欄の名前を正解に合わせた後（TASKS B29）に、内蔵ブラウザの read_page
+# （filter は all）で読んだ結果（2026-11-05）。何も入れていない。番号と形は、読んだときのまま。
+# ラジオボタン「国の他の助成制度との重複確認」は、名前に「確認」を含む（守りが4語で拒むのはチェック欄だけ。DESIGN 14章）。
+note "模擬画面（実在のシステムではありません）。架空の練習用の画面で、入れた内容はこのパソコンの中にだけ記録されます。" [ref_1]
+main [ref_2]
+ heading "❸ 要件" [ref_3]
+ generic "省力化投資補助金（一般型）第8回 応募申請の模擬画面（D11b・12画面版）" [ref_4]
+ navigation "進み具合" [ref_5]
+  list [ref_6]
+   listitem "❶ 宣誓・手引き" [ref_7]
+   listitem "❷ 基本情報" [ref_8]
+   listitem "❸ 要件" [ref_9]
+   listitem "❹ 加点項目" [ref_10]
+   listitem "❺ 事業計画名及び作成者情報" [ref_11]
+   listitem "❻ 最低賃金及び特例希望" [ref_12]
+   listitem "❼ 事業計画数値" [ref_13]
+   listitem "❽ 経費明細・資金調達内訳" [ref_14]
+   listitem "❾ 書類添付" [ref_15]
+   listitem "❿ アンケート" [ref_16]
+   listitem "⓫ メールアドレス認証" [ref_17]
+   listitem "⓬ 確認" [ref_18]
+ form [ref_19]
+  button "戻る" [ref_20] type="submit"
+  button "一時保存" [ref_21] type="submit"
+  button "次へ" [ref_22] type="submit"
+  region [ref_23]
+   heading "3-1. 小規模企業者・小規模事業者・再生事業者" [ref_24]
+   label [ref_25]
+    checkbox "on" [ref_26] type="checkbox"
+    generic "小規模企業者/小規模事業者：該当する" [ref_27]
+   label [ref_28]
+    checkbox "on" [ref_29] type="checkbox"
+    generic "再生事業者：該当する" [ref_30]
+   heading "3-2. みなし同一法人でないことの確認" [ref_31]
+   label [ref_32]
+    checkbox "on" [ref_33] type="checkbox"
+    generic "みなし同一法人でないことの確認：みなし同一法人による申請でないことを宣誓する" [ref_34]
+   heading "3-3. みなし大企業でないことの確認" [ref_35]
+   label [ref_36]
+    checkbox "on" [ref_37] type="checkbox"
+    generic "みなし大企業でないことの確認：みなし大企業による申請でないことを宣誓する" [ref_38]
+   heading "3-4. 風俗営業等に関する確認" [ref_39]
+   label [ref_40]
+    checkbox "on" [ref_41] type="checkbox"
+    generic "風俗営業等に関する確認：風俗営業等の事業でないことを宣誓する" [ref_42]
+   heading "3-5. 「両立支援のひろば」に関する確認" [ref_43]
+   generic "従業員21人以上のときの欄です。" [ref_44]
+   label [ref_45]
+    generic "「両立支援のひろば」における申請者自身の企業データ詳細ページURL" [ref_46]
+    textbox [ref_47] type="text"
+   label [ref_48]
+    checkbox "on" [ref_49] type="checkbox"
+    generic "両立支援のひろば：交付申請時までに行動計画を公表することを宣誓する" [ref_50]
+   heading "3-6. 国の他の助成制度との重複確認" [ref_51]
+   generic "過去5年に国の他の助成制度の交付を受けたか、今申請しているかを答えます。" [ref_52]
+   generic "国の他の助成制度との重複確認" [ref_53]
+   label [ref_54]
+    radio "はい" [ref_55] type="radio"
+    generic "国の他の助成制度との重複確認：はい" [ref_56]
+   label [ref_57]
+    radio "いいえ" [ref_58] type="radio"
+    generic "国の他の助成制度との重複確認：いいえ" [ref_59]
+  button "戻る" [ref_60] type="submit"
+  button "一時保存" [ref_61] type="submit"
+  button "次へ" [ref_62] type="submit"
+
+Viewport: 1024x768
+
+Tab Context:
+- Executed on tabId: seed
+- Available tabs:
+  • tabId seed: "【模擬画面】❸ 要件（省力化・一般型）" ("http://127.0.0.1:8791/shinsei/3")

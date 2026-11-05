@@ -30,7 +30,7 @@ import hook_runner as hr
 import pytest
 
 from lib import browser_guard as bg
-from lib import page_tree
+from lib import input_sheet, page_tree
 
 RECORDS = Path(__file__).resolve().parent / "browser_records"
 BUILTIN = "mcp__Claude_Browser__"
@@ -62,6 +62,9 @@ SCHEME = {
                     # 制度データ（AI の下書き）がツールの欄と誤っても、4つの語を含む欄は入れない
                     {"名前": "宣誓事項1", "種類": "チェック", "担当者が入れる": False},
                     {"名前": "申請の内容に相違ないことを誓約します", "種類": "チェック", "担当者が入れる": False},
+                    # 添付の欄（入力シートの値に書いた書類の写しだけを添付する。B29）
+                    {"名前": "見積書", "種類": "添付", "担当者が入れる": False},
+                    {"名前": "賃金台帳", "種類": "添付", "担当者が入れる": False},
                 ],
                 # 制度データ（AI の下書き）に「提出」があっても、コードに固定した語が優先する
                 "押してよいボタン": ["一時保存", "次へ", "戻る", "計算", "提出する", "提出", "送信する"],
@@ -73,6 +76,21 @@ SCHEME = {
 
 # ---- 準備 ----
 
+CASE = "2026_省力化（一般型）第8回"
+
+
+def write_sheet(stage_dir: Path, values: dict, scheme: dict = None) -> Path:
+    """段階のフォルダの申請書/入力シート.xlsx を、制度データから作って値を書く（values は 欄 → 値）。"""
+    scheme = scheme or SCHEME
+    blob = input_sheet.build(scheme)
+    for (screen, field) in [(s, f) for s, f in input_sheet.fields_of(scheme) if f["名前"] in values]:
+        blob, _ = input_sheet.write_value(blob, field["名前"], values[field["名前"]], screen["名前"])
+    path = stage_dir / "申請書" / input_sheet.FILE_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(blob)
+    return path
+
+
 @pytest.fixture
 def folder(tmp_path) -> Path:
     company = tmp_path / "試しの会社"
@@ -80,9 +98,11 @@ def folder(tmp_path) -> Path:
     scheme_dir = company / "記録" / "制度データ"
     scheme_dir.mkdir(parents=True)
     (scheme_dir / "省力化_第8回.json").write_text(json.dumps(SCHEME, ensure_ascii=False), encoding="utf-8")
-    attach = company / "案件" / "2026_省力化（一般型）第8回" / "1_申請" / "添付する書類"
+    attach = company / "案件" / CASE / "1_申請" / "添付する書類"
     attach.mkdir(parents=True)
     (attach / "見積書の写し.pdf").write_bytes(b"%PDF-1.4 test")
+    # 入力シートの添付の欄に、添付する写しの場所を書く（守りは、ここに書いた書類の写しだけを添付させる）
+    write_sheet(attach.parent, {"見積書": f"案件/{CASE}/1_申請/添付する書類/見積書の写し.pdf"})
     (company / "見積書の写し.txt").write_text("会社のフォルダの直下（添付する書類ではない）", encoding="utf-8")
     (company / "原本").mkdir()
     (company / "原本" / "見積書.pdf").write_bytes(b"%PDF-1.4 original")
@@ -667,6 +687,8 @@ def test_upload_only_copies_in_attach_folder(folder, tmp_path) -> None:
     yearly = folder / "案件" / "2026_省力化（一般型）第8回" / "4_効果報告" / "1年目" / "添付する書類" / "賃金台帳の写し.pdf"
     yearly.parent.mkdir(parents=True)
     yearly.write_bytes(b"x")
+    # 入力シートは、1年目の下の申請書にある（なければ段階の申請書を見る）
+    write_sheet(yearly.parent.parent, {"賃金台帳": "賃金台帳の写し.pdf"})
     passed(pre(folder, CHROME + "file_upload", {"paths": [str(yearly)], "ref": "ref_694", "tabId": 5}))
     case = folder / "案件" / "2026_省力化（一般型）第8回"
     odd = [case / "添付する書類" / "a.pdf",                                  # 段階がない
@@ -699,6 +721,134 @@ def test_upload_only_copies_in_attach_folder(folder, tmp_path) -> None:
         assert "添付" in reason, paths
     # 添付の欄でない部品には使わない
     denied(pre(folder, CHROME + "file_upload", {"paths": [str(copy)], "ref": "ref_58", "tabId": 5}))
+
+
+def test_upload_only_copies_named_in_the_input_sheet(folder) -> None:
+    """添付するのは、入力シートの添付の欄の値に当たる写しだけ（DESIGN 5章・14章、TASKS B29）。
+
+    当たるのは、値が写しの場所か名前、拡張子を除いた名前が同じ（原本を PDF にした写し）、書類の台帳の元の原本、のどれか。
+    """
+    permit(folder)
+    post(folder, CHROME + "read_page", {"tabId": 5}, [{"type": "text", "text": read_record("mock_shinsei.txt")}])
+    stage = folder / "案件" / CASE / "1_申請"
+    attach = stage / "添付する書類"
+
+    def upload(path: Path):
+        return pre(folder, CHROME + "file_upload", {"paths": [str(path)], "ref": "ref_694", "tabId": 5})
+
+    other = attach / "登記の写し.pdf"
+    other.write_bytes(b"%PDF-1.4 other")
+    assert "入力シートの添付の欄" in denied(upload(other))
+    # 原本の場所を書いた値：拡張子だけ違う写し（JPEG の原本を PDF にした写し）は当たる
+    photo = attach / "2026-10-23_納税証明書（その2）.pdf"
+    photo.write_bytes(b"%PDF-1.4 tax")
+    write_sheet(stage, {"見積書": "原本/決算・税/2026-10-23_納税証明書（その2）.jpg"})
+    passed(upload(photo))
+    assert "入力シートの添付の欄" in denied(upload(attach / "見積書の写し.pdf"))
+    # 書類の台帳で、写しの元の原本の場所を書いた値（名前を変えた写し）
+    ledger = {"写し": [{"場所": f"案件/{CASE}/1_申請/添付する書類/登記の写し.pdf",
+                       "元の原本": [{"場所": "原本/登記・名簿/2026-10-22_履歴事項全部証明書.pdf"}]}]}
+    (folder / "記録" / "書類の台帳.json").write_text(json.dumps(ledger, ensure_ascii=False), encoding="utf-8")
+    write_sheet(stage, {"見積書": "原本/登記・名簿/2026-10-22_履歴事項全部証明書.pdf"})
+    passed(upload(other))
+    # 「該当なし」と空の値は、何にも当たらない
+    write_sheet(stage, {"見積書": "該当なし"})
+    assert "入力シートの添付の欄" in denied(upload(other))
+    # 担当者が入れる欄とされた添付の値は使わない
+    scheme = json.loads(json.dumps(SCHEME))
+    for field in scheme["申請画面"]["画面"][0]["欄"]:
+        if field["名前"] == "見積書":
+            field["担当者が入れる"] = True
+    blob = input_sheet.build(scheme)
+    (stage / "申請書" / input_sheet.FILE_NAME).write_bytes(blob)
+    assert "入力シート" in denied(upload(other))
+    # 入力シートがない・読めないときは添付しない
+    (stage / "申請書" / input_sheet.FILE_NAME).write_bytes(b"x")
+    assert "読めない" in denied(upload(other))
+    (stage / "申請書" / input_sheet.FILE_NAME).unlink()
+    assert "入力シート" in denied(upload(other))
+
+
+# ---- 選ぶ欄の4つの語（DESIGN 14章「画面入力の守りの細部」、TASKS B29） ----
+
+WORD_SCHEME = {
+    "申請画面": {
+        "流れ": {"値": "試し", "出典": [], "根拠の文": "", "状態": "確認済み"},
+        "画面": [{
+            "順番": 1, "名前": "確認事項入力",
+            "欄": [
+                {"名前": "決算期の確認", "種類": "ラジオ", "担当者が入れる": False},
+                {"名前": "業種の確認", "種類": "選択", "担当者が入れる": False},
+                {"名前": "申請内容の確認", "種類": "ラジオ", "担当者が入れる": True},
+                {"名前": "加点の確認", "種類": "チェック", "担当者が入れる": False},
+            ],
+            "押してよいボタン": ["次へ"],
+        }],
+    }
+}
+WORD_PAGE = (
+    'form [ref_1]\n'
+    ' label [ref_2]\n  radio "はい" [ref_3] type="radio"\n  generic "決算期の確認：はい" [ref_4]\n'
+    ' label [ref_5]\n  radio "はい" [ref_6] type="radio"\n  generic "申請内容の確認：はい" [ref_7]\n'
+    ' label [ref_8]\n  checkbox "on" [ref_9] type="checkbox"\n  generic "加点の確認：該当する" [ref_10]\n'
+    ' label [ref_11]\n  generic "業種の確認" [ref_12]\n  combobox "--選択してください--" [ref_13]\n'
+    ' label [ref_14]\n  radio "はい" [ref_15] type="radio"\n  generic "誓約の有無：はい" [ref_16]\n'
+    '\nTab Context:\n- Executed on tabId: tab-1\n'
+)
+
+
+@pytest.fixture
+def word_folder(tmp_path) -> Path:
+    company = tmp_path / "語の会社"
+    (company / ".hojokin").mkdir(parents=True)
+    (company / "記録" / "制度データ").mkdir(parents=True)
+    (company / "記録" / "制度データ" / "持続化_第20回.json").write_text(json.dumps(WORD_SCHEME, ensure_ascii=False),
+                                                               encoding="utf-8")
+    write_sheet(company / "案件" / "2026_持続化（通常枠）第20回" / "1_申請", {}, WORD_SCHEME)
+    permit(company)
+    return company
+
+
+@pytest.mark.parametrize("prefix", [BUILTIN, CHROME])
+def test_choice_fields_with_the_four_words(word_folder, prefix) -> None:
+    """4つの語で拒むのはチェック欄だけ。ラジオボタンと選択欄は、入力シートでツールの欄とされ、制度データの欄の名前に
+    当たれば、4つの語を含んでいても通す（持続化の「決算期の確認」など）。"""
+    folder = word_folder
+    tab = {"tabId": "tab-1"} if prefix == CHROME else {}
+    read = {"tabId": "tab-1", "filter": "all"} if prefix == CHROME else {"filter": "all"}
+
+    def fill(ref, value=True):
+        return pre(folder, prefix + "form_input", {"ref": ref, "value": value, **tab})
+
+    post(folder, prefix + "read_page", read, WORD_PAGE)
+    passed(fill("ref_3"))                       # ラジオボタン「決算期の確認：はい」
+    passed(fill("ref_13", "食料品製造業"))        # 選択欄「業種の確認」
+    for ref in ("ref_3", "ref_4"):              # 欄・ラベルの中の文字のクリック
+        post(folder, prefix + "read_page", read, WORD_PAGE)
+        passed(pre(folder, prefix + "computer", click(ref, **tab)))
+    post(folder, prefix + "read_page", read, WORD_PAGE)
+    # チェック欄は、制度データでツールの欄とされていても、4つの語を含めば拒む
+    reason = denied(fill("ref_9"))
+    assert "「確認」" in reason and "担当者" in reason
+    # 担当者が入れるラジオボタンと、制度データにないラジオボタンは拒む
+    assert "ツールが入れる欄とされていません" in denied(fill("ref_6"))
+    assert "ツールが入れる欄とされていません" in denied(fill("ref_15"))
+
+
+def test_choice_with_words_needs_the_input_sheet(word_folder) -> None:
+    """4つの語を含むラジオボタン・選択欄は、入力シートでもツールの欄とされているときだけ通す。"""
+    folder = word_folder
+    stage = folder / "案件" / "2026_持続化（通常枠）第20回" / "1_申請"
+    # 入力シートを作った後に制度データが変わり、入力シートでは担当者が入れる欄とされている
+    person = json.loads(json.dumps(WORD_SCHEME))
+    person["申請画面"]["画面"][0]["欄"][0]["担当者が入れる"] = True
+    write_sheet(stage, {}, person)
+    post(folder, BUILTIN + "read_page", {"filter": "all"}, WORD_PAGE)
+    assert "入力シート" in denied(pre(folder, BUILTIN + "form_input", {"ref": "ref_3", "value": True}))
+    passed(pre(folder, BUILTIN + "form_input", {"ref": "ref_13", "value": "食料品製造業"}))
+    # 入力シートがないときも、4つの語を含む選ぶ欄には入れない（含まない欄は、今までどおり制度データで見る）
+    (stage / "申請書" / input_sheet.FILE_NAME).unlink()
+    assert "入力シート" in denied(pre(folder, BUILTIN + "form_input", {"ref": "ref_13", "value": "食料品製造業"}))
 
 
 def test_file_fields_are_not_clicked_or_typed(folder) -> None:
@@ -810,6 +960,15 @@ def test_through_run_sh(folder, tmp_path) -> None:
     assert "computer use" in denied(out)
     (out,) = run("PreToolUse", {"tool_name": CHROME + "javascript_tool", "tool_input": {"text": "1"}})
     denied(out)
+    # 添付：入力シートの添付の欄の写しは通り、ほかの写しは拒む（守りが lib/input_sheet.py を /usr/bin/python3 で読む。B29）
+    run("PostToolUse", {"tool_name": CHROME + "read_page", "tool_input": {"tabId": 5}, "tool_response": page})
+    copy = folder / "案件" / CASE / "1_申請" / "添付する書類" / "見積書の写し.pdf"
+    upload = {"paths": [str(copy)], "ref": "ref_694", "tabId": 5}
+    assert run("PreToolUse", {"tool_name": CHROME + "file_upload", "tool_input": upload}) == [None]
+    other = copy.with_name("ほかの写し.pdf")
+    other.write_bytes(b"%PDF-1.4 other")
+    (out,) = run("PreToolUse", {"tool_name": CHROME + "file_upload", "tool_input": {**upload, "paths": [str(other)]}})
+    assert "入力シートの添付の欄" in denied(out)
     # 許可と控えは .hojokin/一時/ の下だけに書き、プラグインのフォルダには書かない
     state = folder / ".hojokin" / "一時" / "画面入力" / SESSION
     assert sorted(p.name for p in state.iterdir()) == ["控え.json", "許可.json"]
