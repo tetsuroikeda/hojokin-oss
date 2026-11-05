@@ -866,6 +866,9 @@ def review(folder: Path, number: Optional[str] = None) -> dict:
         "指摘": items or [],
         "重さごとの数": severity_counts(items or []),
         "審査項目": result.get("審査項目") if isinstance(result, dict) else None,
+        "加点項目": result.get("加点項目") if isinstance(result, dict) else None,
+        "社長の答えが要ること": (result.get("社長の答えが要ること") or []) if isinstance(result, dict) else [],
+        "そろい具合": saved.get("そろい具合"),
         "まとめ": result.get("まとめ") if isinstance(result, dict) else None,
     })
     return status
@@ -883,6 +886,20 @@ def review_text(status: dict) -> str:
         where = f"（{item['場所']}）" if item.get("場所") else ""
         fix = f" → 直し方の案：{item['直し方の案']}" if item.get("直し方の案") else ""
         lines.append(f"- [{sev}]{where} {item.get('内容', '')}{fix}")
+        if item.get("社長に聞くこと"):
+            lines.append(f"    社長に聞くこと：{item['社長に聞くこと']}")
+    for item in status.get("社長の答えが要ること") or []:
+        if isinstance(item, dict) and item.get("社長に聞くこと"):
+            lines.append(f"- 社長の答えが要ること（{item.get('場所', '')}）：{item['社長に聞くこと']}")
+    full = status.get("そろい具合")
+    if isinstance(full, dict) and "文体の基準C" in full:
+        lines.append(f"審査役の結果のそろい具合：文体の基準 C {full['文体の基準C']}、審査項目と加点項目 "
+                     f"{full['審査項目と加点項目']}、4つの段 {full['4つの段']}（切れ目 {full['切れ目']}件）、"
+                     f"目安のない項目の分量 {full['分量']}（足りない・長すぎる {full['足りない・長すぎる']}件）")
+        if not full.get("そろった"):
+            gaps = full.get("判定と理由のない観点", []) + full.get("点数と理由のない項目", []) + full.get("分量の判定のない項目", [])
+            lines.append("そろっていない所：" + "、".join(str(g) for g in gaps[:20]) +
+                         "。足りない所を審査役に伝えて、呼び直してください（呼んだ回数に数えます）")
     for p in status["問題"]:
         lines.append(f"問題：{p}")
     if status.get("まとめ"):
