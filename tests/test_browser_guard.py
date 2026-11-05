@@ -960,6 +960,15 @@ def test_through_run_sh(folder, tmp_path) -> None:
     assert "computer use" in denied(out)
     (out,) = run("PreToolUse", {"tool_name": CHROME + "javascript_tool", "tool_input": {"text": "1"}})
     denied(out)
+    # 添付：入力シートの添付の欄の写しは通り、ほかの写しは拒む（守りが lib/input_sheet.py を /usr/bin/python3 で読む。B29）
+    run("PostToolUse", {"tool_name": CHROME + "read_page", "tool_input": {"tabId": 5}, "tool_response": page})
+    copy = folder / "案件" / CASE / "1_申請" / "添付する書類" / "見積書の写し.pdf"
+    upload = {"paths": [str(copy)], "ref": "ref_694", "tabId": 5}
+    assert run("PreToolUse", {"tool_name": CHROME + "file_upload", "tool_input": upload}) == [None]
+    other = copy.with_name("ほかの写し.pdf")
+    other.write_bytes(b"%PDF-1.4 other")
+    (out,) = run("PreToolUse", {"tool_name": CHROME + "file_upload", "tool_input": {**upload, "paths": [str(other)]}})
+    assert "入力シートの添付の欄" in denied(out)
     # 許可と控えは .hojokin/一時/ の下だけに書き、プラグインのフォルダには書かない
     state = folder / ".hojokin" / "一時" / "画面入力" / SESSION
     assert sorted(p.name for p in state.iterdir()) == ["控え.json", "許可.json"]
