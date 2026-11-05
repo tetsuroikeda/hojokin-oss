@@ -1,8 +1,8 @@
 """T6-1 開いたときの表示（SPEC F6、DESIGN 4.6・4.7 の3と5・4.2。TASKS M3）。
 
-合格ライン（SPEC T6-1）：今日の日付と案件の状態を固定して作ると、期限切れが一番上に分かれ、続いて期待する作業が
-締切順に並ぶ。近い締切には、設定した日数の内のものだけが入る。
-M3 で確かめるのは、近い締切がはじめの値（30日）の部分。日数を変える設定と期限の台帳は K1 で足す。
+合格ライン（SPEC T6-1）：今日の日付と案件の状態を固定し、近い締切の日数をはじめの値と、変えた値の2通りで作ると、
+期限切れが一番上に分かれ、続いて期待する作業が締切順に並ぶ。近い締切には、設定した日数の内のものだけが入る。
+はじめの値（30日）は M3、変えた値（`.hojokin/設定.json` の「近い締切の日数」。60日と10日）は K1 で確かめる。
 
 材料は、このファイルの中の架空の制度データ3つ（tests の外の場所も、公式資料も使わない）。今日は 2027-03-01（月）に
 差し替え、3つの案件を次の状態に固定する。
@@ -270,6 +270,63 @@ def test_session_start_lists_overdue_first_then_tasks_by_deadline(company) -> No
     assert "近い締切は30日以内" in text
 
 
+def set_near_days(folder: Path, days) -> None:
+    """近い締切の日数を `.hojokin/設定.json` に置く（社長が会話で変えたときに、junbi の道具が書くのと同じ欄）。"""
+    path = folder / ".hojokin" / "設定.json"
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    data["近い締切の日数"] = days
+    _write_json(path, data)
+
+
+# 近い締切の日数を変えたときに期待する、近い締切と、それより先の並び（それぞれ締切順）
+CHANGED = {
+    60: ([(CASE_A, "交付申請の期限"), (CASE_C, "事業の実施の期限"), (CASE_B, "申請の期限"), (CASE_A, "実績報告の期限"),
+          (CASE_B, "見積書等の提出の期限")],
+         [(CASE_C, "実績報告の期限")]),
+    10: ([(CASE_A, "交付申請の期限"), (CASE_C, "事業の実施の期限")],
+         [(CASE_B, "申請の期限"), (CASE_A, "実績報告の期限"), (CASE_B, "見積書等の提出の期限"), (CASE_C, "実績報告の期限")]),
+}
+
+
+@pytest.mark.parametrize("days", sorted(CHANGED))
+def test_session_start_uses_the_changed_near_days(company, days) -> None:
+    """近い締切の日数を変えると（設定に残った値）、近い締切には、その日数の内のものだけが入る。ほかの分け方は変わらない。"""
+    set_near_days(company.folder, days)
+    text = vt.start_context(company.start_raw("startup"))
+    sec = sections(text)
+    head = f"### 近い締切（{days}日以内）"
+    order = [k for k in sec if k.startswith("### ")]
+    assert order[:4] == [HEADS[deadlines.OVERDUE], HEADS[deadlines.TODAY], head, HEADS[deadlines.LATE]], order
+    near, later = CHANGED[days]
+    assert items(sec[head]) == near
+    assert items(sec[HEADS[deadlines.OVERDUE]]) == EXPECTED[deadlines.OVERDUE]
+    assert items(sec[HEADS[deadlines.TODAY]]) == EXPECTED[deadlines.TODAY]
+    numbers = [int(m) for m in re.findall(r"あと([0-9]+)日", "\n".join(sec[head]))]
+    assert numbers and all(0 < n <= days for n in numbers), numbers
+    assert f"近い締切は{days}日以内" in text
+    assert f"{days}日より先の期限が{len(later)}件" in text
+    # 画面も同じ日数で分ける
+    rows = page_sections((company.folder / PAGE).read_text(encoding="utf-8"))
+    assert rows[f"近い締切（{days}日以内）"] == near
+    assert rows[f"{days}日より先の期限"] == later
+    # 組み立ての道具も、渡されなければ設定の日数を使う
+    ov = deadlines.build(company.folder)
+    assert ov.near_days == days
+    assert [(t.case, t.what) for t in ov.groups[deadlines.NEAR]] == near
+    assert [(t.case, t.what) for t in ov.later] == later
+
+
+@pytest.mark.parametrize("bad", ["30日", 0, True, 400])
+def test_unreadable_near_days_is_told(tmp_path, bad) -> None:
+    """近い締切の日数が読めない形なら、黙ってはじめの値に戻さず、組み立てられなかったわけを伝える（決まりの文は渡す）。"""
+    folder = plain_folder(tmp_path)
+    make_cases(folder)
+    set_near_days(folder, bad)
+    text = status_view.session_start(folder, None)["hookSpecificOutput"]["additionalContext"]
+    assert "期限と作業を組み立てられませんでした" in text and "近い締切の日数" in text
+    assert common_rules.TEXT.rstrip() in text
+
+
 def test_session_start_passes_common_rules_within_limits(company) -> None:
     """どの段階にも共通の決まりの短い文（1,200字まで）を添え、渡す情報は全体で10,000字以内。"""
     text = vt.start_context(company.start_raw("startup"))
@@ -315,7 +372,7 @@ def page_sections(page: str) -> dict:
         rows = []
         for row in re.findall(r"<tr[^>]*>(.*?)</tr>", body):
             cells = re.findall(r"<td>(.*?)</td>", row)
-            if len(cells) == 7:
+            if len(cells) == 9 and title != "済んだもの":
                 rows.append((cells[2], cells[3]))
             elif len(cells) == 4 and title == "日付がまだ出せない期限":
                 rows.append((cells[0], cells[1]))
