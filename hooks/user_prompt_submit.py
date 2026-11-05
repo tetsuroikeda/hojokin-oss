@@ -17,4 +17,9 @@ from lib import browser_guard
 def handle(data: dict, folder: Path) -> Optional[dict]:
     browser_guard.user_prompt_submit(data, folder)
     version_hooks.user_prompt_submit(data, folder)
+    try:  # 発言にある外の場所を、取り込みのために控える（B10。lib/torikomi.py）。落ちても、ほかの処理は止めない
+        from lib import torikomi
+        torikomi.remember(data, folder)
+    except Exception:
+        pass
     return None

@@ -84,3 +84,41 @@ python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/shorui/scripts/seiri.py" list --folder 
 ```
 
 - 読めない値は空にし、「状態」を「要確認」にして、メモに理由を書く。推測で埋めない。
+
+## 外の書類の取り込み
+
+- 社長が会社のフォルダの外（デスクトップ、ダウンロードなど）の書類を使いたいときは、場所を伝えてもらう（ファイルをこの画面に引いて入れるか、場所を書くか、「デスクトップに置いた」のように言ってもらう）。社長が送ったときに、発言にある外の場所が控えられる。
+- 取り込みの道具は、社長の直前の発言にあった場所だけを、番号で受け付ける。コマンドに外の場所を書かない。外の場所を Read で開かない。
+
+```bash
+# 社長が伝えた外の場所を、番号つきで出す（フォルダなら、すぐ下のファイルの名前も）
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/shorui/scripts/torikomi.py" list --folder "${CLAUDE_PROJECT_DIR}"
+
+# その場所の書類を 入れ口/取り込み/<今日>/ に写す（元のファイルは変えない）。フォルダの中の1つだけなら --name
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/shorui/scripts/torikomi.py" import --folder "${CLAUDE_PROJECT_DIR}" --number <番号> --name "<ファイルの名前>"
+```
+
+- 取り込んだら、ほかの書類と同じく、上の流れで整理する。
+- 「場所がありません」と出たら、社長に場所を伝え直してもらう。伝えていない場所から取り込もうとしない。
+
+## 写しを作る（案件で使う書類）
+
+目的は、案件ごとに、制度データの「提出するファイルの決まり」と書類の「形式」に合った写しが、段階の `添付する書類/` にそろい、どの原本から作ったかを後からたどれること。原本は変えない。
+
+```bash
+# 原本から写しを作る（2つ以上の原本を1つにつなぐときは --original を2回以上）。--document は制度データの書類の名前
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/shorui/scripts/utsushi.py" make --folder "${CLAUDE_PROJECT_DIR}" --original "<原本の場所>" --case "<案件>" --stage "1_申請" --document "<書類の名前>"
+
+# 古い原本から作った写し（同じ種類の新しい原本が入ったもの）を、案件ごとに出す
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/shorui/scripts/utsushi.py" stale --folder "${CLAUDE_PROJECT_DIR}"
+
+# 写しを、新しくなった原本で作り直す（同じ場所・同じ名前。古い原本は消さない）
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/shorui/scripts/utsushi.py" remake --folder "${CLAUDE_PROJECT_DIR}" --copy "<写しの場所>"
+
+# 写しの一覧
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/shorui/scripts/utsushi.py" list --folder "${CLAUDE_PROJECT_DIR}"
+```
+
+- 写しは、道具だけが作る。Bash の `cp` や、その場のコードで作らない。PDF にする・つなぐ・容量を照らすのは道具が行う。
+- 出力の「注意」（容量の上限を超える、名前の決まりがある など）は、社長に伝える。
+- 原本を整理した（`organize`）出力に「新しくなった原本」があれば、古い原本から作った写しがある案件を社長に知らせ、`remake` で作り直す。古い原本は消さない（提出版と照らし合わせるため）。作り直したら、どの案件のどの写しを作り直したかを一覧で知らせる。
