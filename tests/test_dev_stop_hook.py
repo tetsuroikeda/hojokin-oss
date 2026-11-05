@@ -132,6 +132,19 @@ def test_wait_for_lock_skips_when_the_same_fingerprint_passed(tmp_path: Path) ->
     assert hook.wait_for_lock(lock, "fp-new", passed, wait=0.2, poll=0.05) == "run"
 
 
-def test_fast_tests_use_at_most_six_workers() -> None:
+def test_fast_tests_use_a_bounded_number_of_workers() -> None:
     label, cmd = hook.CHECKS[1]
-    assert cmd[cmd.index("-n") + 1] == "6"
+    assert cmd[cmd.index("-n") + 1] == "{workers}"
+    assert 2 <= hook.workers() <= hook.MAX_WORKERS == 8
+
+
+def test_timeout_is_told_but_does_not_block(tmp_path: Path, monkeypatch) -> None:
+    def slow(cmd, root, timeout):
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr(hook, "run_command", slow)
+    failures, missing = hook.run_checks(tmp_path)
+    assert failures == [] and len(missing) == len(hook.CHECKS)
+    state, output = hook.decide({"blocks": 1, "passed": "old"}, "fp", failures, missing)
+    assert "decision" not in output and "確かめられませんでした" in output["systemMessage"]
+    assert state == {"blocks": 1, "passed": "old"}  # 通ったことにはしない
