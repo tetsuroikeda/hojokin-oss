@@ -26,6 +26,12 @@ SPEC：整理と処理の前後で、原本と公式資料を比べる。
   両方で流す。版のファイルの形では、道具が置く前に中身を `記録/版/_預け/` に預け、戻す元はそれと版のファイルから
   sha256 で探す。時間のかかるテストは、版のファイルの形の側を slow にする（同じ応答の中で書き換えたものを戻す
   テストは、どちらの形も速いテストに残す）。
+- すべての道具と処理（TASKS Z1）：保存した状態「書いた後」（原本11件・公式資料9件・制度データ・計画書。evals/_lib/fukugen.py）を、
+  製品の道具（概要と流れ・財務モデル・様式への書き込み・根拠対照表）で作った後に、原本と公式資料が置いたときのバイト列のままか。
+  続けて、skills/*/scripts/ のすべての道具の、すべての小さな命令（tests/test_T0_13.py の TOOL_CALLS。表にない道具があれば
+  test_T0_13 が落ちる）を1つずつ動かし、そのたびに原本と公式資料を比べる（応答の終わりの戻しより前に比べるので、
+  道具が書き換えたものを hook が戻して見えなくなることはない）。最後に、hooks.json のすべての場面と matcher の入力
+  （test_T0_13 の all_inputs）で hook を動かし、もう一度比べる。
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ from urllib.parse import urlsplit
 import company_tool as ct
 import hook_runner as hr
 import pytest
+import test_T0_13 as t13
 import version_tool as vt
 from test_seiri_min import DOCS, LEDGER, TODAY, blob_id, ok_json, organize, put, sha256
 from test_seiri_min import refused as seiri_refused
@@ -902,3 +909,155 @@ def test_documents_outside_inbox_are_not_touched_by_hooks(world) -> None:
     assert (c.folder / "入れ口/見積2.pdf").read_bytes() == data
     assert stat.S_IMODE((c.folder / "入れ口/見積2.pdf").stat().st_mode) == 0o644
     assert (c.folder / "社長/メモ.txt").read_text(encoding="utf-8") == "そのまま"
+
+
+# ---- すべての道具と処理（TASKS Z1） ----
+
+FUKUGEN_SH = hr.REPO_ROOT / "evals" / "_lib" / "fukugen.sh"
+SAVED_BEFORE_WRITING = hr.REPO_ROOT / "evals" / "状態" / "書く前"  # 保存した原本（evals/状態/書く前/原本/）
+# 道具に渡すファイル（記録/一時/ と 入れ口/）。中身が足りないものは、道具が断る（断っても原本と公式資料は変わらない）
+SWEEP_TEXT = "機械を入れる前の盛り付けと包装の作業の流れを、工程ごとに書きます。"
+SWEEP_EMPTY_INPUTS = ("概要と流れ.json", "読み直し.json", "読み取り.json", "根拠.json", "経費明細.json", "様式の対応.json",
+                      "その3の値.json", "入力シートの値.json", "決算の内訳.json", "実績.json", "二重受給.json",
+                      "補助金の候補.json", "書類の読み取り.json", "不備.json")
+# 差し戻しの道具は提出版を照らすので、提出版を記録した後に動かす
+SWEEP_LAST = {"kaku/scripts/sashimodoshi.py"}
+# 中身のある入力で、実際に原本・公式資料を読む・写す・並べ替える処理まで進む呼び方（断らずに終わることも確かめる）
+SWEEP_MUST_WORK = {
+    ("junbi/scripts/fetch_documents.py", None), ("kaku/scripts/moji.py", None), ("kaku/scripts/yoshiki.py", "write"),
+    ("kiroku/scripts/versions.py", "show"), ("kiroku/scripts/versions.py", "submit"),
+    ("shorui/scripts/kingaku.py", "image"), ("shorui/scripts/seiri.py", "scan"), ("shorui/scripts/seiri.py", "text"),
+    ("shorui/scripts/seiri.py", "organize"), ("shorui/scripts/torikomi.py", "import"), ("shorui/scripts/utsushi.py", "make"),
+    ("kaku/scripts/sashimodoshi.py", "show"),
+}
+
+
+SWEEP_SCAN = hr.REPO_ROOT / "testdata" / "スキャン" / "材料" / "scan_20261104_0001.pdf"  # 画像の PDF の見積書（架空。D7）
+
+
+def seiri_sweep(env, folder: Path, *args: str) -> subprocess.CompletedProcess:
+    """書類を整理する道具を、Claude が Bash で動かすのと同じ形で動かす。"""
+    argv = t13.tool_argv(env.plugin, "shorui/scripts/seiri.py", args[0], args[1:], folder=folder)
+    return t13.run_tool(env, argv, env.cwd)
+
+
+def protected_hashes(folder: Path) -> dict:
+    """原本の置き場と公式資料のファイル（会社のフォルダからの場所 → (中身の sha256, 読み書きの権限)）。"""
+    found = {}
+    for top in [folder / "原本"] + sorted((folder / "案件").glob("*/公式資料")):
+        for p in sorted(top.rglob("*")):
+            if p.is_file():
+                found[p.relative_to(folder).as_posix()] = (sha256(p.read_bytes()), stat.S_IMODE(p.stat().st_mode))
+    return found
+
+
+def assert_unchanged(folder: Path, before: dict, where) -> None:
+    """前からある原本と公式資料が、1バイトも変わらず、消えてもいない（新しく足した原本はよい）。"""
+    now = protected_hashes(folder)
+    for rel, value in before.items():
+        assert now.get(rel) == value, (rel, where)
+
+
+def sweep_fetch_list(folder: Path, site) -> None:
+    """公式資料を取る道具に渡す一覧（手元の公式サイトの写しを指す。置いてあるものと同じ中身）。"""
+    bundled = json.loads(FETCH_LIST.read_text(encoding="utf-8"))
+    docs = []
+    for doc in bundled["資料"]:
+        if doc["id"] in OFFICIAL_IDS:
+            path = urlsplit(doc["URL"]).path
+            site.put(path, (DOWNLOADS / Path(path).name).read_bytes())
+            docs.append(dict(doc, URL=site.local(doc["URL"])))
+    data = {"制度": bundled["制度"], "資料": docs}
+    (folder / "記録" / "一時" / "取る資料.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+@pytest.mark.slow
+def test_T0_7_every_tool_and_hook_leaves_originals_unchanged(tmp_path, downloads_files) -> None:
+    env = t13.tool_env(tmp_path)
+    folder = tmp_path / "会社"
+    folder.mkdir()
+    r = subprocess.run(["/bin/bash", str(FUKUGEN_SH), "書いた後", str(folder)], capture_output=True, timeout=1200,
+                       env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(env.home), "TMPDIR": str(env.tmp)})
+    assert r.returncode == 0 and b"fukugen: ok" in r.stdout, r.stderr.decode("utf-8")
+    before = protected_hashes(folder)
+    official = {sha256(p.read_bytes()) for p in downloads_files}
+
+    # 1. 書いた後の状態を作った製品の道具（gaiyou_word・zaimu_model build・yoshiki map・write・cells・kakunin konkyo）の後も、
+    #    原本は保存したもの、公式資料は downloads/ のものと同じバイト列で、読み取り専用のまま
+    assert len([rel for rel in before if rel.startswith("原本/")]) == 11
+    assert len([rel for rel in before if "/公式資料/" in rel]) == 9
+    for rel, (digest, mode) in before.items():
+        if rel.startswith("原本/"):
+            assert digest == sha256((SAVED_BEFORE_WRITING / rel).read_bytes()), rel
+        else:
+            assert digest in official, rel
+        assert mode == 0o444, rel
+
+    # 2. 道具に渡すファイルを置く。画像の PDF の見積書（スキャン）を、整理の道具で原本にする（金額の読み取りの画像を作るため）。
+    #    社長が外の場所を伝えた発言（取り込みの道具が読む控え）も、hook で残す
+    (folder / "入れ口").mkdir(exist_ok=True)
+    (folder / "入れ口" / "scan_20261104_0001.pdf").write_bytes(SWEEP_SCAN.read_bytes())
+    r = seiri_sweep(env, folder, "organize", "--path", "入れ口/scan_20261104_0001.pdf", "--category", "見積・契約・請求",
+                    "--kind", "見積書", "--date", "2026-11-04", "--partner", "スキャン")
+    assert r.returncode == 0, r.stdout.decode("utf-8")
+    assert_unchanged(folder, before, "スキャンを整理したとき")
+    before = protected_hashes(folder)
+    assert before[t13.SCAN] == (sha256(SWEEP_SCAN.read_bytes()), 0o444)
+    temp = folder / "記録" / "一時"
+    temp.mkdir(parents=True, exist_ok=True)
+    for name in SWEEP_EMPTY_INPUTS:
+        (temp / name).write_text("{}", encoding="utf-8")
+    (temp / "書く文.txt").write_text(SWEEP_TEXT, encoding="utf-8")
+    (folder / "入れ口" / "見積2.pdf").write_bytes(b"%PDF-1.4\n% sweep: estimate 2\n%%EOF\n")
+    (folder / "入れ口" / "メモ.txt").write_text("書類ではないメモ", encoding="utf-8")
+    outside = tmp_path / "社長のデスクトップ"
+    outside.mkdir()
+    (outside / "見積書.pdf").write_bytes(b"%PDF-1.4\n% sweep: imported estimate\n%%EOF\n")
+    hook_plugin = hr.copy_plugin(tmp_path / "hook-plugin")
+    data_dir = tmp_path / "plugin-data"
+    data_dir.mkdir()
+
+    def hook(event: str, payload: dict) -> list:
+        """hooks.json のコマンドで、その場面の hook を動かす（落ちないこと＝終了コード0も確かめる）。"""
+        outs = []
+        for command in hr.hook_commands(event, hr.match_name(payload)):
+            outs.append(hr.run(command, payload, plugin=hook_plugin, folder=folder, path=env.path, home=env.home,
+                               data=data_dir, timeout=120))
+            assert outs[-1].returncode == 0, (event, outs[-1])
+        return outs
+
+    base = {"session_id": "sweep", "transcript_path": str(env.home / "t.jsonl"), "cwd": str(folder)}
+    hook("UserPromptSubmit", {**base, "hook_event_name": "UserPromptSubmit",
+                              "prompt": f"{outside} の見積書.pdf を取り込んで、全部の道具で確かめて"})
+    assert_unchanged(folder, before, "社長が送ったとき")
+
+    # 3. すべての道具の、すべての小さな命令を1つずつ動かし、そのたびに比べる（応答の終わりの戻しより前）
+    site = Site()
+    try:
+        sweep_fetch_list(folder, site)
+        calls = [c for c in t13.TOOL_CALLS if c[0] not in SWEEP_LAST] + [c for c in t13.TOOL_CALLS if c[0] in SWEEP_LAST]
+        worked, refused = set(), {}
+        for script, sub, args in calls:
+            r = t13.run_tool(env, t13.tool_argv(env.plugin, script, sub, args, folder=folder), env.cwd, timeout=600)
+            out = (r.stdout + r.stderr).decode("utf-8", "replace")
+            assert_unchanged(folder, before, (script, sub, args, r.returncode, out[:400]))
+            if r.returncode == 0:
+                worked.add((script, sub))
+            else:
+                refused[(script, sub)] = out[:300]
+        missing = SWEEP_MUST_WORK - worked
+        assert not missing, {k: refused.get(k) for k in sorted(missing, key=str)}
+    finally:
+        site.close()
+
+    # 4. hooks.json のすべての場面と matcher の入力で hook を動かし、もう一度比べる（最後は応答の終わりと開いたとき）
+    for event, payload in t13.all_inputs(folder):
+        hook(event, payload)
+        assert_unchanged(folder, before, (event, payload.get("tool_name"), payload.get("source")))
+    hook("Stop", {**base, "hook_event_name": "Stop", "stop_hook_active": False})
+    hook("SessionStart", {**base, "hook_event_name": "SessionStart", "source": "startup"})
+    after = protected_hashes(folder)
+    assert_unchanged(folder, before, "応答の終わりと開いたとき")
+    # 整理と取り込みで足した原本は、読み取り専用で原本の置き場にある
+    added = set(after) - set(before)
+    assert added and all(rel.startswith("原本/") and after[rel][1] == 0o444 for rel in added), sorted(added)
