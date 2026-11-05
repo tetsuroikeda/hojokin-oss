@@ -372,7 +372,7 @@ def refresh_page(folder: Path) -> str:
     try:
         ov = deadlines.build(folder)
         if status_view.page_wanted(folder, ov):
-            return status_view.write_page(folder, status_view.render_page(ov, deadlines.nfc(Path(folder).name))) or ""
+            return status_view.write_all(folder, ov) or ""
     except Exception as error:
         return f"{status_view.PAGE_NAME} を作れませんでした（{type(error).__name__}: {error}）"
     return ""

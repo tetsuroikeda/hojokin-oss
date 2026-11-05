@@ -403,7 +403,7 @@ def switch(folder: Path, case: str, stage: Optional[str] = None, events: Optiona
     out.status = _case_of(ov, case)
     if not show_only and status_view.page_wanted(folder, ov):
         try:
-            out.page_problem = status_view.write_page(folder, status_view.render_page(ov, nfc(folder.name))) or ""
+            out.page_problem = status_view.write_all(folder, ov) or ""
         except Exception as error:  # 画面が作れなくても、切り替えは済んでいる
             out.page_problem = f"{status_view.PAGE_NAME} を作れませんでした（{type(error).__name__}: {error}）"
 
