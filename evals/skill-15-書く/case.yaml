@@ -1,0 +1,9 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・13.2）。
+# 採択後のケースの土台「採択後」（保存した状態「書く前」から、省力化は交付申請を出した形。evals/_lib/saitakugo.sh）で、
+# 出した書類が直すよう戻されたと伝える（「差し戻し」の言葉を使わない）。正しい skill：kaku（差し戻しへの対応）。
+# junbi（採択後の手続き）・kiroku（提出した）と取り違えないかを見る。
+schema_version: "1.1"
+name: skill-15-書く
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh

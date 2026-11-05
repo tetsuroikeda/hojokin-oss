@@ -1,0 +1,8 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・13.2）。
+# 保存した状態「書く前」（会社の記録に従業員の数がある形）で、従業員の数が変わったことだけを伝える（「覚えて」「記録」の
+# 言葉を使わない）。正しい skill：kiroku（覚えていることを直す）。
+schema_version: "1.1"
+name: skill-19-記録
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh

@@ -1,0 +1,8 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・13.2）。
+# 保存した状態「制度データの前」（公式資料はあるが、制度データ・段階のフォルダ・概要と流れはまだない）で、
+# 申し込む補助金を決めたと伝え、段取りを頼む。正しい skill：junbi（準備）。
+schema_version: "1.1"
+name: skill-04-準備
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh
