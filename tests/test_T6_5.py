@@ -221,6 +221,21 @@ def test_period_switch_after_new_certificate_and_without_closing_month(tmp_path)
     assert "決算の月が会社の記録にないため、決算日をまたぐときの期の入れ替わり（納税証明書（その2））は確かめていません" in notes
 
 
+def test_own_financial_statements_are_compared_by_the_end_of_their_period(tmp_path) -> None:
+    """自社の決算書の原本の日付は事業年度の始めの日（shorui の決まり）。その期の終わりが直近の決算日なら、取り直しを促さない。"""
+    folder = make_folder(tmp_path, "2027-04-05", "2027-06-14")
+    data = seido("2027-06-14", PERIOD_RULE)
+    data["書類"] = [{"名前": "決算書", "区分": "必須", "発行元": "自社", "手続き": ["申請"], "期数": _sv(1), "内容": _sv("直近1期分")}]
+    _write_json(folder / "記録" / "制度データ" / "試し補助_第9回.json", data)
+    add_original(folder, TAX_MARCH, "決算書", "2026-04-01", "決算・税")  # 第19期（2026-04-01〜2027-03-31）
+    assert "決算書（2026年4月1日" not in case_notes(deadlines.build(folder))
+    old = make_folder(tmp_path / "前の期", "2027-04-05", "2027-06-14")
+    _write_json(old / "記録" / "制度データ" / "試し補助_第9回.json", data)
+    add_original(old, TAX_MARCH, "決算書", "2025-04-01", "決算・税")  # 第18期（〜2026-03-31）
+    notes = case_notes(deadlines.build(old))
+    assert "今ある原本の 決算書（2025年4月1日（火）の日付） は決算日より前に取ったもの" in notes
+
+
 def test_submission_before_tax_filing_keeps_the_march_certificate_usable(tmp_path) -> None:
     """応募申請日が申告の前（2027-05-14）でも、決算日を過ぎたことは知らせる（申告をしたかで直近の期が変わるため）。"""
     example = {e["応募申請日"]: e for e in ANSWER["納税証明書（その2）"]["例"]}["2027-05-14"]

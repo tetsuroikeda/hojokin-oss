@@ -994,8 +994,16 @@ def _period_notes(data: Dict, open_stages: List[Tuple[Dict, StageRow]], original
         passed, stale, newer = [], [], []
         for doc in docs:
             found = _latest_original(originals, doc["名前"])
-            if found is not None and found.day > closed:
-                newer.append(f"{doc['名前']}（{dates.format_date(found.day)}の日付）")
+            covered = found.day if found is not None else None
+            own = doc.get("発行元") == "自社"
+            if covered is not None and own:
+                # 自社の決算書の日付は事業年度の始めの日（shorui の決まり）。その期の終わりの日で比べ、
+                # 決算日までの期のものなら、直近の期がそろっているとみなす
+                end = add_period(covered, {"数": 1, "単位": "年"})
+                covered = end - timedelta(days=1) if end is not None else covered
+            if covered is not None and (covered >= closed if own else covered > closed):
+                if not own:  # 証明書は、決算日の後に取っても、申告の前なら前の期のまま
+                    newer.append(f"{doc['名前']}（{dates.format_date(found.day)}の日付）")
                 continue
             if found is not None:
                 stale.append(f"{doc['名前']}（{dates.format_date(found.day)}の日付）")
@@ -1077,7 +1085,10 @@ def _request_tasks(status: CaseStatus, data: Dict, plan: "Plan", open_stages: Li
         due, what_due = request_due(data, plan, open_stages, doc)
         lead, lead_source = request_lead(req, doc, facts)
         name = req.doc
-        to = req.to or (str(doc.get("出す人") or "") if isinstance(doc, dict) else "")
+        to = req.to  # 依頼先（台帳の値、なければ制度データの依頼先。「出す人」は申請する人の区分なので使わない）
+        if not to and isinstance(doc, dict):
+            node = doc.get("依頼先")
+            to = str(node.get("値") or "") if isinstance(node, dict) else ""
         order = next((row.order for stage, row in open_stages
                       if isinstance(doc, dict) and stage.get("id") in (doc.get("手続き") or [])), 0)
         task = Task(case=status.name, order=order, stage=what_due, what=f"{name}を頼む" + (f"（{to}へ）" if to else ""),
