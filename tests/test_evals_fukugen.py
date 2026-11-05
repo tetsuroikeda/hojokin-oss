@@ -161,6 +161,27 @@ def test_written_state_adds_plan_details_to_records() -> None:
     assert fields["従業員数（2023年度）"] == fields["従業員数（2024年度）"] == "15人"
 
 
+@pytest.mark.parametrize("variant", ["1_正しい計画書", "2_食い違いを混ぜた計画書", "3_社長の答えが要る計画書"])
+def test_written_state_every_fact_has_evidence(variant: str) -> None:
+    """「書いた後」とその変種（--plan）で、本文と表の欄の数字・日付・会社の名前が、根拠対照表のどれかの行の記述にある。
+
+    T9-2（2_）・T9-7（3_）・T8-8・T13-9 は、kakunin.py count が根拠のない記述0件で通ってから審査役を呼ぶ。
+    2_ の混ぜた食い違いは、表の出典を正しい計画書と同じにしてあるので、ここでも通る（審査役が聞き取りと照らす）。
+    """
+    sys.path.insert(0, str(REPO_ROOT))
+    from lib import shogo
+
+    recipe = json.loads((STATES / "書いた後.json").read_text(encoding="utf-8"))
+    base = REPO_ROOT / "testdata" / "計画書" / "材料" / variant
+    plan = json.loads((base / "本文.json").read_text(encoding="utf-8"))
+    rows = json.loads((base / "根拠対照表.json").read_text(encoding="utf-8"))["行"]
+    rows += recipe["計画書"]["足す根拠"] + recipe["表の欄"]["足す根拠"]
+    descriptions = [shogo.norm(r["記述"]) for r in rows]
+    texts = [it["本文"] for it in plan["項目"]] + [f["文"] for f in recipe["表の欄"]["欄"]]
+    missing = sorted({tok for t in texts for _kind, tok in shogo.facts(t) if not shogo.covered(tok, descriptions)})
+    assert missing == [], f"{variant}：根拠対照表にない記述 {missing}"
+
+
 @pytest.mark.slow
 def test_written_state_restores_plan_details(tmp_path: Path) -> None:
     """「書いた後」を戻すと、L 節の事実が会社の記録と聞き取りの記録に入り、計画書のコードの確かめが通る。"""
