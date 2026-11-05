@@ -14,8 +14,9 @@
    E-02 の内訳の和が F-01 の第18期。
 5. 賃上げの計画が立たない：D-08 に、賃上げの率（%）や金額の約束がない。
 6. 情報を一部抜いた：替えた行がすべて「（空け）」。
-7. T0-10：見る語（大家・家主・予備）が、デモの会社の回答表・変種・testdata/ のほかの文字のファイルにない。
-   downloads/ があれば、省力化 第8回の公募要領と応募申請の手引きの文字にも「予備」がない（なければ、その確かめは飛ばす）。
+7. T0-10：見る語（大家・家主・テレビ・取材）が、デモの会社の回答表・変種・testdata/ のほかの文字のファイルにない。
+   調べる資料が、省力化 第8回の取る資料の一覧（skills/junbi/取る資料/省力化_一般型_第8回.json）の資料9つをすべて含む。
+   downloads/ があれば、その9つのどのページの文字にも、制度のことの見る語（テレビ・取材）がない（なければ、その確かめは飛ばす）。
 
 合わないものがあれば、終了コード1で終わる。
 
@@ -131,20 +132,41 @@ def main() -> int:
         for w in words:
             if w in text:
                 problems.append(f"T0-10：「{w}」が {path.relative_to(REPO).as_posix()} にある（回答表にも記録にもない事柄にならない）")
-    docs = [REPO / p for p in mv.T0_10["制度のこと"]["調べる資料"]]
+    # 調べる資料が、取る資料の一覧の資料をすべて含む（URL の最後の名前で照らす。スケジュールのページは site_html/ の写し）
+    seido = mv.T0_10["制度のこと"]
+    listed = json.loads((REPO / seido["取る資料の一覧"]).read_text(encoding="utf-8"))["資料"]
+    names = {Path(p).name for p in seido["調べる資料"]}
+    for d in listed:
+        url = d["URL"].rstrip("/")
+        want = "ippan_schedule.html" if url.endswith("/schedule") else url.rsplit("/", 1)[-1]
+        if want not in names:
+            problems.append(f"T0-10：取る資料の一覧の「{d['id']}」（{want}）が、調べる資料にない")
+    if len(seido["調べる資料"]) != len(listed):
+        problems.append(f"T0-10：調べる資料の数 {len(seido['調べる資料'])} が、取る資料の一覧の数 {len(listed)} と違う")
+    docs = [REPO / p for p in seido["調べる資料"]]
     if all(p.is_file() for p in docs):
-        sys.path.insert(0, str(REPO))
-        from lib import doc_text  # 同梱の pypdf で文字にする
+        import tempfile
+        import unicodedata
 
-        for p in docs:
-            pages = doc_text.pdf_pages(p)
-            for w in mv.T0_10["制度のこと"]["見る語"]:
-                hits = [i + 1 for i, t in enumerate(pages) if w in t]
-                if hits:
-                    problems.append(f"T0-10：「{w}」が {p.name} の PDF の {hits} ページ目にある（公募要領にない事柄にならない）")
-        print(f"T0-10：{'・'.join(p.name for p in docs)} の文字に「{'」「'.join(mv.T0_10['制度のこと']['見る語'])}」がないことを確かめた")
+        sys.path.insert(0, str(REPO))
+        from lib import doc_text  # PDF・Word・Excel・HTML を文字にする（同梱の pypdf と標準のライブラリ）
+
+        def norm(t: str) -> str:
+            return re.sub(r"\s+", "", unicodedata.normalize("NFKC", t))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for k, p in enumerate(docs):
+                out = Path(tmp) / str(k)
+                index = doc_text.write_text(p, out, {"id": p.stem, "名前": p.stem, "公募回": "-", "ハッシュ": ""})
+                pages = [norm(doc_text.read_page(out, info)) for info in index["ページ"]]
+                for w in seido["見る語"]:
+                    hits = [i + 1 for i, t in enumerate(pages) if norm(w) in t]
+                    if hits:
+                        problems.append(f"T0-10：「{w}」が {p.name} の {hits} ページ目（PDF のページか、シート・本文の順）にある（資料にない事柄にならない）")
+        print(f"T0-10：取る資料の一覧の資料{len(docs)}つ（{'・'.join(p.name for p in docs)}）のどのページにも"
+              f"「{'」「'.join(seido['見る語'])}」がないかを確かめた")
     else:
-        print("T0-10：downloads/ に省力化 第8回の資料がないので、公募要領の文字の確かめは飛ばした")
+        print("T0-10：downloads/ に省力化 第8回の資料がそろっていないので、資料の文字の確かめは飛ばした")
 
     # 違いを出す（行の終わりの確かめに使う）
     print(f"デモの会社の回答表：{len(demo_rows)}行")
