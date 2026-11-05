@@ -468,6 +468,13 @@ def evidence_target(folder: Path, case: str, stage: str) -> Tuple[str, Path]:
 def write_evidence(folder: Path, case: str, stage: str, data: Any, replace: bool = False) -> dict:
     """根拠対照表に行を足す（replace なら置き換える）。"""
     new = konkyo.normalize_rows(data)
+    # 会社の記録から書いた行の出典は、記録の項目（id と名前）にそろえる。記録にない id は断る（T13-4）
+    from lib import company_record
+
+    try:
+        new, from_record = company_record.evidence_rows(folder, new)
+    except company_record.RecordError as e:
+        raise konkyo.EvidenceError(str(e)) from e
     rel, target = evidence_target(folder, case, stage)
     existing = None
     if target.is_file():
@@ -479,7 +486,7 @@ def write_evidence(folder: Path, case: str, stage: str, data: Any, replace: bool
 
     write_replacing(target, blob)
     return {"場所": rel, "行": len(rows), "足した行": len(new), "出典のない行": len(konkyo.unsupported(rows)),
-            "作った": existing is None}
+            "作った": existing is None, "記録から書いた行": from_record}
 
 
 # ---------------------------------------------------------------- 審査役に渡すもの

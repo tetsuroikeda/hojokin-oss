@@ -188,7 +188,12 @@ def main(argv) -> int:
             return _confirm(folder, args, record)
         if args.command == "update-fact":
             return _update(folder, args, record)
-        print(record.listing(folder))
+        try:
+            from lib import record_changes  # 変更の履歴（版の履歴から作る。dulwich を読み込む）
+            found = record_changes.changes(folder)
+        except Exception:  # 版の履歴を読めなくても、一覧は出す
+            found = {}
+        print(record.listing(folder, found))
         return 0
     except (record.RecordError, Refused, ValueError) as e:  # ValueError は今日の日付の差し替えの書き方など
         print(f"しませんでした：{e}。記録は変えていません。")
