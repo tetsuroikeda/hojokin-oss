@@ -426,6 +426,159 @@ def zaimu_numbers_file() -> str:
     return "記録/財務モデルの数字.json"  # lib/zaimu.py の NUMBERS_FILE と同じ
 
 
+# ---------------------------------------------------------------- 文字数（T8-9 の上限と目安。TASKS B19）
+
+# 目安の範囲（仮）：目安の文字数の半分から、2割増しまで（「30字程度」なら15〜36字）。SPEC は範囲を決めていない
+TARGET_LOW, TARGET_HIGH = 0.5, 1.2
+LENGTH = "文字数"
+
+
+def char_count(text: str) -> int:
+    """数える文字数（改行と、行の頭と終わりの空白は数えない）。"""
+    return sum(len(line.strip()) for line in (text or "").splitlines())
+
+
+def _limits(seido: Optional[dict]) -> Dict[str, Tuple[str, int]]:
+    out: Dict[str, Tuple[str, int]] = {}
+    for form in _forms(seido):
+        for entry in form.get("項目") or []:
+            value = ((entry.get("分量の上限") or {}).get("値") or {}) if isinstance(entry, dict) else {}
+            kind, n = value.get("種類"), value.get("文字数")
+            if kind in ("上限", "目安") and isinstance(n, int) and not isinstance(n, bool) and n > 0:
+                out[str(entry.get("名前"))] = (kind, n)
+    return out
+
+
+def length_findings(texts: Dict[str, str], seido: Optional[dict]) -> List[Dict[str, Any]]:
+    """様式の項目の文字数が、上限を超える・目安の範囲（仮）から外れるもの。目安も上限もない項目は審査役が見る。"""
+    out = []
+    for name, (kind, n) in _limits(seido).items():
+        if name not in texts:
+            continue
+        got = char_count(texts[name])
+        if kind == "上限" and got > n:
+            out.append({"場所": name, "文字数": got, "決まり": f"上限 {n}字", "理由": f"上限の{n}字を{got - n}字超えています"})
+        elif kind == "目安" and not (n * TARGET_LOW <= got <= n * TARGET_HIGH):
+            low, high = int(n * TARGET_LOW), int(n * TARGET_HIGH)
+            out.append({"場所": name, "文字数": got, "決まり": f"目安 {n}字（{low}〜{high}字）",
+                        "理由": f"目安の{n}字程度から外れています（{got}字）"})
+    return out
+
+
+# ---------------------------------------------------------------- 書く → 確かめる → 直すの回数（DESIGN 8章。TASKS B19）
+
+ROUNDS_FILE = ".hojokin/一時/確かめの回数.json"
+MAX_REVIEWS = 3  # 社長に返すまでに審査役を呼ぶ回数（仮）
+MAX_CODE_FIXES = 5  # コードの確かめを直して確かめ直す回数（仮）
+
+
+def _rounds(folder: Path) -> Dict[str, Any]:
+    path = places.actual(folder, ROUNDS_FILE)
+    state: Dict[str, Any] = {}
+    if path is not None and path.is_file():
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            state = {}
+    # 社長の答えをもらった後は数え直す（質問の記録の、いちばん新しい答えの時刻が、数え始めより後なら）
+    latest = _latest_answer(folder)
+    if latest and latest > str(state.get("数え始め") or ""):
+        state = {"数え始め": latest}
+    return state
+
+
+def _save_rounds(folder: Path, state: Dict[str, Any]) -> None:
+    try:
+        places.no_link_on_the_way(folder, ROUNDS_FILE)
+        target = places.actual(folder, ROUNDS_FILE, partial=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(state, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    except (places.PlaceError, OSError):
+        pass
+
+
+def _latest_answer(folder: Path) -> str:
+    path = places.actual(folder, QUESTION_LOG)
+    if path is None or not path.is_file():
+        return ""
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8")).get("質問") or []
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return max((str(e.get("答えた時刻") or "") for e in entries if isinstance(e, dict) and e.get("答え")), default="")
+
+
+def _stamp(folder: Path) -> str:
+    from lib import dates
+
+    return dates.now(folder).isoformat(timespec="seconds")
+
+
+def after_check(folder: Path, passed: bool) -> Dict[str, Any]:
+    """コードの確かめの後に、通らなかった回数を数える（通ったら0に戻す）。社長に返す理由があれば入れて返す。"""
+    state = _rounds(folder)
+    state.setdefault("数え始め", _stamp(folder))
+    state["コードの確かめの回数"] = 0 if passed else int(state.get("コードの確かめの回数") or 0) + 1
+    _save_rounds(folder, state)
+    return state
+
+
+def stop_reasons(state: Dict[str, Any]) -> List[str]:
+    """社長に返す理由（審査役を呼ばずに返す）。"""
+    out = []
+    if state.get("社長の答えが要る"):
+        out.append("審査役の指摘に、社長の答えや判断が要るものがあります。審査役を呼び直さずに、すぐ社長に返してください")
+    if state.get("同じ指摘が続いた"):
+        out.append("同じ指摘が2回続きました（直しても良くなっていません）。社長に返してください")
+    if int(state.get("審査役を呼んだ回数") or 0) >= MAX_REVIEWS:
+        out.append(f"社長に返すまでに審査役を{MAX_REVIEWS}回呼んでも、要修正が残っています。社長に返してください")
+    if int(state.get("コードの確かめの回数") or 0) > MAX_CODE_FIXES:
+        out.append(f"コードの確かめを直して確かめ直す繰り返しが{MAX_CODE_FIXES}回を超えました。社長に返してください")
+    return out
+
+
+def returning_text(reasons: Sequence[str]) -> str:
+    lines = ["社長に返します（書く → 確かめる → 直すの繰り返しを、ここで止めます）："]
+    lines += [f"- {r}" for r in reasons]
+    lines.append("社長には、直したこと、残った指摘と直し方の案、質問（3つまで、理由を添えて）を示してください。"
+                 "社長の答えをもらって直した後は、回数を数え直します。")
+    return "\n".join(lines)
+
+
+def _finding_key(item: dict) -> str:
+    return f"{item.get('場所', '')}｜{item.get('観点', '')}"
+
+
+def after_review(folder: Path, status: dict) -> Dict[str, Any]:
+    """審査役の結果を読んだ後に、同じ指摘が続いたか・社長の答えが要るかを残す（同じ結果は1回だけ数える）。"""
+    state = _rounds(folder)
+    if not status.get("届いた") or state.get("読んだ結果") == status.get("確かめの番号"):
+        return state
+    items = status.get("指摘") or []
+    keys = sorted({_finding_key(i) for i in items if (i.get("重さ") or "要修正") == "要修正"})
+    prev = state.get("前の要修正")
+    state["同じ指摘が続いた"] = bool(keys) and isinstance(prev, list) and bool(set(keys) & set(prev)) and keys == sorted(prev)
+    asks = [i for i in items if str(i.get("社長に聞くこと") or "").strip()] + list(status.get("社長の答えが要ること") or [])
+    state["社長の答えが要る"] = bool(asks)
+    state["前の要修正"] = keys
+    state["読んだ結果"] = status.get("確かめの番号")
+    _save_rounds(folder, state)
+    return state
+
+
+def before_review(folder: Path) -> List[str]:
+    """審査役を呼ぶ前に、社長に返す理由がないか。"""
+    return stop_reasons(_rounds(folder))
+
+
+def review_called(folder: Path, number: str) -> None:
+    state = _rounds(folder)
+    state.setdefault("数え始め", _stamp(folder))
+    state["審査役を呼んだ回数"] = int(state.get("審査役を呼んだ回数") or 0) + 1
+    state["最後の確かめの番号"] = number
+    _save_rounds(folder, state)
+
+
 def style_count(folder: Path, texts: Dict[str, str]) -> Tuple[Optional[dict], str]:
     """文体の A・B と会社の避けたい言い方の数え上げ（lib/buntai.py。TASKS B17）。基準のファイルがなければ (None, 理由)。"""
     from lib import buntai
@@ -499,6 +652,7 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
     style, style_note = style_count(folder, texts)
     if style_note:
         notes.append(style_note)
+    lengths = length_findings(texts, seido)
     if seido is None:
         notes.append("制度データがないので、様式の項目ごとの空欄（まだ書いていない項目）は数えていません")
     else:
@@ -511,7 +665,8 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
     from lib import buntai
 
     style_failing = buntai.failing(style) if style else 0
-    passed = not problems and not any(by_kind.values()) and not any(extra.values()) and not style_failing
+    passed = not problems and not any(by_kind.values()) and not any(extra.values()) and not style_failing \
+        and not lengths
     return {
         "案件": case,
         "段階": stage,
@@ -523,6 +678,7 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
         "本文の出典": extra[shogo.CITATION],
         "財務モデルとの食い違い": extra[shogo.MODEL_MISMATCH],
         "文体": style,
+        LENGTH: lengths,
         "根拠対照表の行": len(evidence_rows) if evidence_rows is not None else None,
         "問題": problems,
         "注意": notes,
@@ -548,6 +704,8 @@ def report_text(report: dict) -> str:
         if items:
             lines.append(f"{titles[k]}：")
             lines += [f"- {f['場所']}：{f['文字']}（{f['理由']}）" for f in items]
+    for f in report.get(LENGTH) or []:
+        lines.append(f"- 文字数：{f['場所']} {f['文字数']}字（{f['決まり']}。{f['理由']}）")
     style = report.get("文体")
     if style:
         lines.append(f"文体：要修正 {len(style['要修正'])}件、避ける言い回し {len(style['避ける言い回し'])}件、"
@@ -944,6 +1102,13 @@ def complete(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict
                 reasons.append("審査役が確かめた後に、申請書が変わっています。今の版をもう一度確かめてください")
             if status["重さごとの数"][MUST_FIX]:
                 reasons.append(f"審査役の要修正の指摘が {status['重さごとの数'][MUST_FIX]}件 残っています")
+            full = status.get("そろい具合")
+            if isinstance(full, dict) and "4つの段" in full:
+                # 筋立ての切れ目と、目安のない項目の「足りない」「長すぎる」は、要修正として残す（T8-8・T8-9）
+                if full.get("4つの段") != "4/4" or full.get("切れ目"):
+                    reasons.append(f"審査役の筋立ての判定で、4つの段 {full.get('4つの段')}、切れ目 {full.get('切れ目')}件です")
+                if full.get("足りない・長すぎる"):
+                    reasons.append(f"審査役の分量の判定で、足りない・長すぎる項目が {full['足りない・長すぎる']}件あります")
     if reasons:
         return {"完成": False, "理由": reasons, "コードの確かめ": report, "審査役の結果": status}
     if any(e.get("確かめの番号") == status["確かめの番号"] for e in _completion_entries(folder)):
@@ -956,6 +1121,7 @@ def complete(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict
         "ファイルのハッシュ": hashes,
         "審査役の結果": status["結果の場所"],
         "重さごとの数": status["重さごとの数"],
+        "審査役の結果のそろい具合": status.get("そろい具合"),
         "コードの確かめ": {k: len(report[k]) for k in (PROVISIONAL, BLANK, UNSUPPORTED)},
         "完成にした時刻": _now_text(folder),
     }

@@ -94,10 +94,15 @@ def _target(folder, args, kk, need_seido=True):
 def do_count(folder, args, kk) -> int:
     case, stage, seido = _target(folder, args, kk)
     report = kk.check(folder, case, stage, seido)
+    state = kk.after_check(folder, report["通った"])
+    reasons = kk.stop_reasons(state)
     if args.json:
+        report = dict(report, 社長に返す理由=reasons)
         print(json.dumps(report, ensure_ascii=False, indent=1))
     else:
         print(kk.report_text(report))
+        if reasons:
+            print(kk.returning_text(reasons))
     return OK if report["通った"] else NOT_PASSED
 
 
@@ -121,13 +126,23 @@ def do_konkyo(folder, args, kk) -> int:
 
 def do_prepare(folder, args, kk) -> int:
     case, stage, seido = _target(folder, args, kk)
+    reasons = kk.before_review(folder)
+    if reasons:
+        print("審査役に渡すものはまとめていません（審査役は呼ばないでください）。")
+        print(kk.returning_text(reasons))
+        return NOT_PASSED
     try:
         done = kk.prepare(folder, case, stage, seido, PLUGIN_ROOT)
     except kk.NotPassed as e:
+        state = kk.after_check(folder, False)
         print("審査役に渡すものはまとめていません（コードの確かめが通らないため。審査役は呼ばないでください）。")
         print(kk.report_text(e.report))
+        if kk.stop_reasons(state):
+            print(kk.returning_text(kk.stop_reasons(state)))
         return NOT_PASSED
+    kk.after_check(folder, True)
     number = done["確かめの番号"]
+    kk.review_called(folder, number)
     print(f"審査役に渡すものを {done['フォルダ']}/ にまとめました。確かめの番号：{number}")
     print(f"- 渡したもの：{'、'.join(done['渡したもの'])}")
     for name, why in done["渡していないもの"].items():
@@ -140,10 +155,19 @@ def do_prepare(folder, args, kk) -> int:
 
 def do_result(folder, args, kk) -> int:
     status = kk.review(folder, args.number)
+    state = kk.after_review(folder, status)
+    reasons = kk.stop_reasons(state) if status["届いた"] and status.get("重さごとの数", {}).get("要修正", 0) + \
+        len(status.get("社長の答えが要ること") or []) + sum(1 for i in status.get("指摘") or [] if i.get("社長に聞くこと")) else []
     if args.json:
-        print(json.dumps(status, ensure_ascii=False, indent=1))
+        print(json.dumps(dict(status, 社長に返す理由=reasons), ensure_ascii=False, indent=1))
     else:
         print(kk.review_text(status))
+        if reasons:
+            print(kk.returning_text(reasons))
+        elif status["届いた"] and not status.get("重さごとの数", {}).get("要修正", 0):
+            print("要修正は0件です。finish で完成の記録を残してください。")
+        elif status["届いた"]:
+            print(f"要修正の指摘を直し、count からやり直してください（審査役は、社長に返すまでに{kk.MAX_REVIEWS}回まで）。")
     return OK if status["届いた"] else NOT_PASSED
 
 

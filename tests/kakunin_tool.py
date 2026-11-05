@@ -203,6 +203,9 @@ def report_json(number: str, findings: Sequence[dict] = (), fence: bool = True, 
     """審査役が返す形の報告（json の囲み付き）。"""
     data = {"確かめの番号": number, "指摘": list(findings),
             "審査項目": [{"名前": "事業の実現可能性（試し）", "点数": 4, "理由": "工程と体制が具体的", "弱い所": "なし"}],
+            # 4つの段と切れ目（B19。完成の記録は、4つの段がそろい切れ目がないときだけ残る）
+            "筋立て": {"段": {"現状と目標": ["1-1 現状分析"], "課題": ["1-2 経営課題"], "解決策": ["1-2 経営課題"],
+                           "効果": ["6. 補足事項"]}, "切れ目": []},
             "まとめ": "試しの報告"}
     data.update(extra)
     text = json.dumps(data, ensure_ascii=False, indent=1)
