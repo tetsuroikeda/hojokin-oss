@@ -851,7 +851,9 @@ def next_number(folder: Path) -> str:
 
 
 def _non_blue_text(ps) -> str:
-    return "\n".join(yw.text_of(p) for p in ps if yw.blue_state(p) != "全部" and yw.text_of(p).strip())
+    # 図と写真の段落は「［図：題］」として渡す（審査役が、図があることと何の図かを読めるように。TASKS B33）
+    return "\n".join(yw.text_of(p) if yw.text_of(p).strip() else yw.figure_text(p) for p in ps
+                     if yw.blue_state(p) != "全部" and (yw.text_of(p).strip() or yw.figure_text(p)))
 
 
 def _word_sections(blob: bytes, rel: str, seido: Optional[dict]) -> List[str]:

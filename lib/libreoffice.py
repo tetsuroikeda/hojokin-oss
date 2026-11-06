@@ -16,7 +16,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Dict, Iterable, List, Optional
 
 PLACES = (
     "/Applications/LibreOffice.app/Contents/MacOS/soffice",
@@ -99,6 +99,32 @@ def convert_to_pdf(src: Path, work: Path, soffice: str, timeout: int = TIMEOUT) 
     """
     suffix = src.suffix.lower() or ".docx"
     return _convert(src, work, soffice, "doc" + suffix, "pdf", "doc.pdf", timeout, "PDF")
+
+
+def convert_files(srcs: List[Path], outbox: Path, profile: Path, soffice: str, target: str,
+                  timeout: int = TIMEOUT) -> Dict[Path, Path]:
+    """srcs（呼ぶ側が一時の場所に置いた写し）を、1回の起動でまとめて target（png など）にする。
+    返すのは、元の場所 → できたファイルの場所。1つでもできなければ LibreOfficeError（図表。lib/zuhyo.py）。"""
+    outbox.mkdir(parents=True, exist_ok=True)
+    write_profile(profile)
+    cmd = [soffice, f"-env:UserInstallation={profile.resolve().as_uri()}", "--headless", "--norestore", "--nologo",
+           "--nodefault", "--nolockcheck", "--convert-to", target, "--outdir", str(outbox)] + [str(s) for s in srcs]
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        raise LibreOfficeError(f"LibreOffice が {timeout} 秒たっても終わりませんでした")
+    except OSError as e:
+        raise LibreOfficeError(f"LibreOffice を動かせませんでした（{e}）")
+    out = {s: outbox / (s.stem + "." + target) for s in srcs}
+    missing = [s.name for s, o in out.items() if not o.is_file()]
+    if r.returncode != 0 or missing:
+        detail = (r.stdout + r.stderr).decode("utf-8", "replace").strip()[-500:]
+        raise LibreOfficeError(f"LibreOffice で {target} にできませんでした（終了コード {r.returncode}、"
+                               f"できなかったもの：{'、'.join(missing) or 'なし'}）{detail}")
+    return out
 
 
 def _convert(src: Path, work: Path, soffice: str, copy_name: str, target: str, out_name: str, timeout: int,
