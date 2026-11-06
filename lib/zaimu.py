@@ -917,7 +917,7 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
     row += 1
     ind_at = {}
     ind_labels = (
-        ("付加価値額", "付加価値額（営業利益＋人件費＋減価償却費）", "会社が新しく生み出した価値。営業利益＋人件費＋減価償却費"),
+        ("付加価値額", "付加価値額（営業利益＋人件費＋減価償却費）", "会社が新しく生み出した価値。営業利益＋人件費＋減価償却費（それぞれ円未満を四捨五入。別紙4 に書く値）"),
         ("付加価値額の伸び", "付加価値額の年平均成長率（％）", "基準年度から毎年平均で何％伸びたか。小数第2位で切り捨て（別紙4 と同じ）"),
         ("労働生産性", "労働生産性（付加価値額÷労働者数）", "働く人1人当たりの付加価値額。小数第2位で切り捨て（別紙4 と同じ）"),
         ("労働生産性の伸び", "労働生産性の年平均成長率（％）", "小数第2位で切り捨て（別紙4 と同じ）"),
@@ -933,10 +933,12 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
     ind: Dict[str, List[Any]] = {k: [None] * (n + 1) for k in ind_at}
     va_r, pr_r, pp_r = ind_at["付加価値額"], ind_at["労働生産性"], ind_at["1人当たり給与"]
     for y, col in enumerate(year_cols):
-        va = py[("合算", "営業利益")][y] + py[("合算", "人件費")][y] + py[("合算", "減価償却費")][y]
+        # 別紙4 には営業利益・人件費・減価償却費を円単位（円未満を四捨五入）で書き、様式はその和で付加価値額を出す。
+        # 和を丸めると1円ずれる（11/6 の流し直しで、本文 76,321,831円・別紙4 76,321,832円。B37）
+        va = sum(youken.round_half_up(py[("合算", k)][y], 0) for k in ("営業利益", "人件費", "減価償却費"))
         ind["付加価値額"][y] = va
-        pl.formula(f"{col}{va_r}", f"={col}{at[('合算', '営業利益')]}+{col}{at[('合算', '人件費')]}"
-                                   f"+{col}{at[('合算', '減価償却費')]}", va, FMT_YEN)
+        pl.formula(f"{col}{va_r}", f"=ROUND({col}{at[('合算', '営業利益')]},0)+ROUND({col}{at[('合算', '人件費')]},0)"
+                                   f"+ROUND({col}{at[('合算', '減価償却費')]},0)", va, FMT_YEN)
         w_ref = f"{col}{people_at['労働者数']}"
         p = youken.productivity(va, people["労働者数"][y])
         ind["労働生産性"][y] = p
