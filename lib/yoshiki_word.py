@@ -402,7 +402,9 @@ def _until_table(children: List[Node], start: int) -> int:
 
 
 def _heading_near_cell(cell: Node, heading: str) -> bool:
-    """見出しが、同じ行のほかのセルにあるか、そのセルの表のすぐ前の文字のある段落か。"""
+    """見出しが、同じ行のほかのセルにあるか、同じ列の1行目のセル（列の見出し）にあるか、
+    そのセルの表のすぐ前の文字のある段落か。列の見出しは、役割分担の表（役職／氏名／担当内容…）のように、
+    見出しの行の下の行に書く表のため（11/7 のリハーサル）。"""
     key = norm(heading)
     row = cell.parent
     if row is not None:
@@ -412,6 +414,12 @@ def _heading_near_cell(cell: Node, heading: str) -> bool:
     table = row.parent if row is not None else None
     if table is None or table.parent is None:
         return False
+    rows = table.findall(W, "tr")
+    if rows and row is not rows[0]:
+        cells, top = row.findall(W, "tc"), rows[0].findall(W, "tc")
+        k = cells.index(cell)
+        if len(top) == len(cells) and k < len(top) and any(norm(text_of(p)) == key for p in top[k].findall(W, "p")):
+            return True
     siblings = table.parent.children
     for node in reversed(siblings[:siblings.index(table)]):
         if node.is_(W, "p") and text_of(node).strip():
