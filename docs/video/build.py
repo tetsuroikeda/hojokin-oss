@@ -91,13 +91,15 @@ def make_timeline(lines: dict, durs: dict):
 
 def check_quotes(material: dict) -> None:
     # 素材.json の引用が、実際の対話の記録にそのままあるかを確かめる
-    for key in ("pm", "shorui"):
+    for key in ("pm", "shorui", "learn"):
         src = (HERE / material[key]["source"]).read_text(encoding="utf-8")
         flat = re.sub(r"\s+", "", src.replace("**", ""))
         if key == "pm":
             quotes = material[key]["lines"]
-        else:
+        elif key == "shorui":
             quotes = [f[-1] for f in material[key]["fubi"]] + [material[key]["summary"]]
+        else:
+            quotes = [s[1] for s in material[key]["second"]]
         for q in quotes:
             if re.sub(r"\s+", "", q.replace("**", "")) not in flat:
                 sys.exit(f"引用が対話の記録にありません（{key}）：{q}")
@@ -182,7 +184,11 @@ def main() -> None:
     OUT.mkdir(exist_ok=True)
     ASSETS.mkdir(parents=True, exist_ok=True)
     render_assets(company)
-    durs = make_voices(lines)
+    # --keep-voice：out/voice/ の声（録り直した人の声など）をそのまま使い、長さだけ測る
+    if "--keep-voice" in sys.argv:
+        durs = {s["id"]: duration(VOICE / f"{s['id']}.aiff") for s in lines["scenes"]}
+    else:
+        durs = make_voices(lines)
     timeline, captions, total = make_timeline(lines, durs)
     write_data(timeline, captions, total, material, company_data(company))
     print(f"全体 {total:.1f} 秒")

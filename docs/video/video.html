@@ -518,7 +518,9 @@ function headStrike(scene, l, at) {
   const rules = $('lm-rules');
   const rEls = D.learn.rules.map((r, i) => { const e = mk('div', 'rule', r, rules); e.style.position = 'relative'; e.style.left = e.style.right = 'auto'; e.style.margin = '0 40px 16px'; return e; });
   const l2 = $('learn-2');
-  const l2items = D.learn.second.map(([kind, t]) => { const e = mk('div', 'card', `<div style="font-size:20px;color:${kind === 'ok' ? 'var(--green)' : 'var(--gold)'};font-weight:800;margin-bottom:8px">${kind === 'ok' ? '記録にあることは、聞かずに使う' : '変わりうる情報だけ、確かめる'}</div>${t}`, l2); e.style.cssText += 'position:relative;margin-bottom:18px;font-size:24px;line-height:1.5;'; return e; });
+  // 引用（開いたときに Claude へ渡す決まりの文）と、その説明
+  const l2items = D.learn.second.map(([kind, quote, note]) => { const e = mk('div', 'card', `<div style="font-size:20px;color:${kind === 'ok' ? 'var(--green)' : 'var(--gold)'};font-weight:800;margin-bottom:8px">${kind === 'ok' ? '聞かずに使う' : '変わりうる情報だけ、確かめる'}</div><div style="font-size:24px;line-height:1.5">${quote}</div><div style="font-size:20px;color:var(--mute);margin-top:8px">${note}</div>`, l2); e.style.cssText += 'position:relative;margin-bottom:18px;'; return e; });
+  mk('div', null, '<span style="font-size:18px;color:var(--mute)">開いたときに Claude へ渡す決まり（実際の出力）</span>', l2).style.marginTop = '-6px';
   scenes.learn = (l, d) => {
     const h = $('s-learn').querySelector('.head'); show(h, eOut(prog(l, 0, .5)), -20);
     qEls.forEach((e, i) => show(e, eOut(prog(l, 0.4 + i * 0.25, 0.7 + i * 0.25)), 20));
