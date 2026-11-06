@@ -77,10 +77,30 @@ def parse(argv):
     p.add_argument("--json", action="store_true", help="JSON で出す")
     p = sub.add_parser("finish", help="完成の条件を確かめ、満たせば完成の記録に残す")
     common(p)
+    p = sub.add_parser("chiken", help="作者の知見（構成の型・審査の観点）を出す")
+    p.add_argument("--folder", help="会社のフォルダ（${CLAUDE_PROJECT_DIR}）。なければ今いるフォルダ")
     args = parser.parse_args(argv)
     if args.command is None:
-        raise Refused("count・konkyo・prepare・result・finish のどれかを付けてください")
+        raise Refused("count・konkyo・prepare・result・finish・chiken のどれかを付けてください")
     return args
+
+
+# 書く前に読む作者の知見（DESIGN 4.7・5章：プラグインの中のファイルは Read で読まず、道具が中身を出して渡す）
+KNOWLEDGE_FILES = ("構成の型.json", "審査の観点.json")
+
+
+def do_chiken(folder, args, kk) -> int:
+    for name in KNOWLEDGE_FILES:
+        path = PLUGIN_ROOT / "knowledge" / name
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print(f"しませんでした：作者の知見（knowledge/{name}）を読めませんでした（{e}）。プラグインを入れ直してください。")
+            return BROKEN
+        print(f"# {name[:-5]}（knowledge/{name}）")
+        print(json.dumps(data, ensure_ascii=False, indent=1))
+        print()
+    return OK
 
 
 def _target(folder, args, kk, need_seido=True):
@@ -216,7 +236,7 @@ def main(argv) -> int:
               "プラグインを入れ直してから、もう一度試してください。")
         return BROKEN
     handlers = {"count": do_count, "konkyo": do_konkyo, "prepare": do_prepare, "result": do_result,
-                "finish": do_finish}
+                "finish": do_finish, "chiken": do_chiken}
     try:
         return handlers[args.command](folder, args, kk)
     except Refused as e:
