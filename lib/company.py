@@ -39,6 +39,56 @@ def company_folder(folder: Optional[Union[str, Path]] = None) -> Optional[Path]:
     return path if is_company_folder(path) else None
 
 
+# hooks が会社のフォルダで動いた合図（`.hojokin/一時/hookの合図.json`）。hooks/main.py が、開いたとき・社長が送ったとき・
+# 応答の終わりに書き、確かめの道具（skills/kaku/scripts/kakunin.py）が読む。Claude を会社のフォルダの親などで開くと、
+# hooks は何もしない（目印のないフォルダ）ため、道具に --folder で会社のフォルダを渡して進めても、質問の記録・審査役の
+# 結果・版の記録が残らない（11/6 のリハーサル）。道具がこの合図の有無と古さで、そのことに気づけるようにする。
+HOOK_SIGNAL = "hookの合図.json"
+HOOK_SIGNAL_HOURS = 24  # これより古い合図は「最近 hooks が動いていない」とみなす
+
+
+def write_hook_signal(folder: Path, event: str) -> None:
+    """合図を書く。書けなくても hook は止めない（例外を外に出さない）。別名（シンボリックリンク）は通らない。"""
+    try:
+        from datetime import datetime, timezone
+
+        if places.first_link(folder, f"{MARKER_DIR}/{TEMP_DIR}/{HOOK_SIGNAL}") is not None:
+            return
+        target = Path(folder) / MARKER_DIR / TEMP_DIR / HOOK_SIGNAL
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # 会社のフォルダの外の場所（開いたフォルダの絶対の場所など）は書かない（会社のフォルダを写しても外を指さないように。T13-12）
+        data = {"時刻": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"), "場面": event}
+        tmp = target.with_name(target.name + ".書きかけ")
+        tmp.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(str(tmp), str(target))
+    except Exception:
+        pass
+
+
+def hook_signal_problem(folder: Path) -> str:
+    """hooks が最近この会社のフォルダで動いていないとき、その説明（動いていれば空）。時刻は実際の時計で比べる。"""
+    from datetime import datetime, timezone
+
+    path = Path(folder) / MARKER_DIR / TEMP_DIR / HOOK_SIGNAL
+    howto = ("このままでは、審査役の結果（記録/審査役の結果/）・質問の記録（記録/質問の記録.json）・版の記録が残りません。"
+             "Claude を会社のフォルダ（このフォルダ）で開き直してから続けてください（親のフォルダで開き、道具に --folder で"
+             "会社のフォルダを渡しても、hooks は動きません）")
+    try:
+        if places.first_link(folder, f"{MARKER_DIR}/{TEMP_DIR}/{HOOK_SIGNAL}") is not None:
+            return f"hooks の合図（{MARKER_DIR}/{TEMP_DIR}/{HOOK_SIGNAL}）が別名になっていて、読みません。" + howto
+        data = json.loads(path.read_text(encoding="utf-8"))
+        when = datetime.fromisoformat(str(data["時刻"]))
+    except FileNotFoundError:
+        return "hojokin の hooks が、この会社のフォルダで一度も動いていません（Claude を会社のフォルダで開いていない疑い）。" + howto
+    except (OSError, ValueError, KeyError, TypeError):
+        return f"hooks の合図（{MARKER_DIR}/{TEMP_DIR}/{HOOK_SIGNAL}）が読めません。" + howto
+    hours = (datetime.now(timezone.utc) - when).total_seconds() / 3600
+    if hours > HOOK_SIGNAL_HOURS:
+        return (f"hojokin の hooks が、この会社のフォルダで{int(hours)}時間動いていません（最後は {data['時刻']}。"
+                "Claude を会社のフォルダで開いていない疑い）。" + howto)
+    return ""
+
+
 def settings_path(folder: Path) -> Path:
     return folder / MARKER_DIR / SETTINGS_FILE
 
