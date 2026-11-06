@@ -1156,7 +1156,51 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
         "人数": people,
         "指標": ind,
     }
+    summary["投資の効果の見え方"] = investment_effect(py, shoryoku_summary, n)
     return Book([pa, pl, mo], names, summary)
+
+
+# 投資の効果の見え方の知らせの目安（審査員が「投資しても利益が増えない」と読むおそれがある形）
+LOW_MARGIN = 0.02           # 最終年の営業利益率がこれより低い
+LABOR_VALUE_SHARE = 0.5     # 営業利益の増加が、浮く時間の人件費相当額のこの割合より小さい
+
+
+def investment_effect(py: Dict, shoryoku: Optional[Dict[str, Any]], n: int) -> Dict[str, Any]:
+    """投資の効果が損益にどう見えるか（SPEC F8「設備投資の効果を財務計画の損益に表す」。11/6 のリハーサルの後）。
+
+    数字は計画の合算から道具が出す。知らせは、審査員が「設備投資の効果が少ない」と読むおそれがある形を示すもので、
+    完成を止めない（Claude が財務モデルの式と計画書の筋を見直す手がかりにする）。"""
+    profit = [float(v) for v in py[("合算", "営業利益")]]
+    sales = [float(v) for v in py[("合算", "売上")]]
+    dep = [float(v) for v in py[("合算", "減価償却費")]]
+    margin = [p / s if s else None for p, s in zip(profit, sales)]
+    gain = profit[n] - profit[0]
+    dep_gain = dep[n] - dep[0]
+    out: Dict[str, Any] = {
+        "営業利益": profit, "営業利益率": margin,
+        "営業利益の増加（基準年度から最終年）": gain,
+        "減価償却費の増加（基準年度から最終年）": dep_gain,
+        "知らせ": [],
+    }
+    notes = out["知らせ"]
+    labor_value = None
+    if shoryoku:
+        try:
+            labor_value = float(shoryoku["削減工数"]) * float(shoryoku["人件費単価"]) * float(shoryoku["年間稼働日数"])
+        except (KeyError, TypeError, ValueError):
+            labor_value = None
+    out["省力化で浮く時間の人件費相当額（1年あたり）"] = labor_value
+    if labor_value and gain < labor_value * LABOR_VALUE_SHARE:
+        notes.append(f"省力化で浮く時間の人件費相当額（1年あたり {labor_value:,.0f}円）に比べ、営業利益の増加（{gain:,.0f}円）が"
+                     "小さいです。浮いた人手と時間の行き先（増産の数量、残業・外注・派遣の削減、採用の抑制、新しい商品や販路）を、"
+                     "財務モデルの式に入れているかを見直してください。入っていないと、審査員には設備投資の効果が少なく見えます")
+    if dep_gain > 0 and gain < dep_gain:
+        notes.append(f"営業利益の増加（{gain:,.0f}円）が、新しい設備の減価償却費の増加（{dep_gain:,.0f}円）より小さく、"
+                     "投資をしても利益が増えないように見えます")
+    if margin[n] is not None and margin[n] < LOW_MARGIN:
+        notes.append(f"最終年の営業利益率が {margin[n] * 100:.1f}% です。賃上げを続けながら黒字を確かに出せることが"
+                     "伝わるよう、効果の組み立て（売上・原価・人件費のどこに効くか）を見直してください")
+    return out
 
 
 def _low_case(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool) -> Optional[Dict[str, Any]]:

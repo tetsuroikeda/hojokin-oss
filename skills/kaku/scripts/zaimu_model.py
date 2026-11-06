@@ -252,6 +252,20 @@ def report_text(result: dict) -> str:
             lines.append("  根拠か出典のない数：" + "、".join(sh["根拠か出典のない数"]))
         if sh["仮の数"]:
             lines.append("  仮の数（後で確かめる）：" + "、".join(sh["仮の数"]))
+    eff = s.get("投資の効果の見え方")
+    if eff:
+        lines.append("")
+        lines.append("投資の効果の見え方（審査員が設備投資の効果をどう読むか。数字は計画の合算から道具が出したもの）")
+        years = "、".join(("基準" if i == 0 else f"{i}年目") + f" {p:,.0f}円" + (f"（{m * 100:.1f}%）" if m is not None else "")
+                          for i, (p, m) in enumerate(zip(eff["営業利益"], eff["営業利益率"])))
+        lines.append(f"- 営業利益（営業利益率）：{years}")
+        lines.append(f"- 営業利益の増加（基準年度から最終年）：{eff['営業利益の増加（基準年度から最終年）']:,.0f}円")
+        lines.append(f"- 減価償却費の増加：{eff['減価償却費の増加（基準年度から最終年）']:,.0f}円")
+        if eff.get("省力化で浮く時間の人件費相当額（1年あたり）"):
+            lines.append(f"- 省力化で浮く時間の人件費相当額（1年あたり）：{eff['省力化で浮く時間の人件費相当額（1年あたり）']:,.0f}円")
+        if eff["知らせ"]:
+            lines.append("  効果の見え方の知らせ（財務モデルの式と、計画書の効果の筋を見直す。社長にも伝える）")
+            lines += [f"  - {note}" for note in eff["知らせ"]]
     lines.append("")
     lines.append("まとめ")
     for label, value in s["まとめ"].items():

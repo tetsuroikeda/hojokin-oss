@@ -242,7 +242,8 @@ class Env:
         self.root = tmp_path
         self.plugin = tmp_path / "plugin"
         ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
-        for sub in ("lib", "skills", "hooks", "schema"):  # schema：会社の記録を読むとき（文体の避けたい言い方。B17）
+        # schema：会社の記録を読むとき（文体の避けたい言い方。B17）。knowledge：審査役に渡す構成と効果の物差し（B37）
+        for sub in ("lib", "skills", "hooks", "schema", "knowledge"):
             shutil.copytree(REPO_ROOT / sub, self.plugin / sub, ignore=ignore)
         (self.plugin / "docs").mkdir()
         shutil.copy2(REPO_ROOT / "docs" / "style-criteria.md", self.plugin / "docs" / "style-criteria.md")

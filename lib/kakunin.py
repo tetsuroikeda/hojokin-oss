@@ -73,8 +73,10 @@ QUESTIONS_FILE = "聞き取りの記録.json"
 RECORD_FILE = "会社の記録の抜き出し.json"
 MODEL_TEXT_FILE = "財務モデルの前提.md"
 STYLE_FILE = "文体の基準C.md"
+YARDSTICK_FILE = "構成と効果の物差し.md"
 CHECK_FILE = "コードの確かめの結果.json"
-PACKAGE_FILES = (PLAN_FILE, SEIDO_FILE, EVIDENCE_FILE, QUESTIONS_FILE, RECORD_FILE, MODEL_TEXT_FILE, STYLE_FILE, CHECK_FILE)
+PACKAGE_FILES = (PLAN_FILE, SEIDO_FILE, EVIDENCE_FILE, QUESTIONS_FILE, RECORD_FILE, MODEL_TEXT_FILE, STYLE_FILE,
+                 YARDSTICK_FILE, CHECK_FILE)
 STYLE_CRITERIA = Path("docs") / "style-criteria.md"
 
 SEVERITIES = ("要修正", "要確認", "助言")
@@ -950,6 +952,34 @@ def _company_extract(folder: Path) -> Tuple[Optional[dict], str]:
     return {"書き方の決まり": rules, "申請と採否（過去に受けた指摘）": results}, ""
 
 
+def yardstick_text(folder: Path, plugin_root: Path) -> Tuple[Optional[str], str]:
+    """審査役に渡す「構成と効果の物差し」。作者の知見の構成の型（段ごとに入れる事実の種類・つなぎ・図表を置く所）と
+    審査の観点、財務モデルの「投資の効果の見え方」。浅い計画書と、設備投資の効果が少なく見える計画書を、審査役が
+    見つけられるようにする（11/6 のリハーサルで、短く浅い計画書が完成になったため。前は知見を審査役に渡さなかった）。"""
+    parts = ["# 構成と効果の物差し（作者の知見と、財務モデルの投資の効果の見え方）", ""]
+    knowledge = Path(plugin_root) / "knowledge"
+    for name in ("構成の型.json", "審査の観点.json"):
+        try:
+            data = json.loads((knowledge / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            return None, f"作者の知見（knowledge/{name}）を読めませんでした（{e}）"
+        parts += [f"## {name[:-5]}", "", "```json", json.dumps(data, ensure_ascii=False, indent=1), "```", ""]
+    path = places.actual(folder, zaimu_numbers_file())
+    effect = None
+    if path is not None and path.is_file() and places.is_inside(folder, path):
+        try:
+            effect = (json.loads(path.read_text(encoding="utf-8")).get("中身") or {}).get("投資の効果の見え方")
+        except (OSError, ValueError, AttributeError):
+            effect = None
+    parts.append("## 投資の効果の見え方（財務モデルの数字の控えから）")
+    parts.append("")
+    if effect:
+        parts += ["```json", json.dumps(effect, ensure_ascii=False, indent=1), "```"]
+    else:
+        parts.append("財務モデルの数字の控えに、投資の効果の見え方がまだありません（財務モデルを作り直すと出ます）。")
+    return "\n".join(parts) + "\n", ""
+
+
 def style_c_text(plugin_root: Path) -> Tuple[Optional[str], str]:
     path = Path(plugin_root) / STYLE_CRITERIA
     try:
@@ -1317,6 +1347,11 @@ def prepare(folder: Path, case: str, stage: str, seido: Optional[dict], plugin_r
         given[STYLE_FILE] = "# 文体の基準の C（docs/style-criteria.md から写したもの）\n\n" + style
     else:
         missing[STYLE_FILE] = why
+    yardstick, why = yardstick_text(folder, plugin_root)
+    if yardstick is not None:
+        given[YARDSTICK_FILE] = yardstick
+    else:
+        missing[YARDSTICK_FILE] = why
     given[CHECK_FILE] = _json_text(report)
     for name, text in given.items():
         _write_text(folder, f"{PACKAGE_DIR}/{name}", text)
