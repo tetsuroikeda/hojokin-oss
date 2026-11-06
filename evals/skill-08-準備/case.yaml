@@ -1,0 +1,8 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・13.2）。
+# 採択後のケースの土台「申請の後」（保存した状態「書く前」に、2つの案件の申請の提出版を足した形。evals/_lib/saitakugo.sh）で、
+# 「採択」の言葉を使わずに、受かったと伝えて次の手続きを聞く。正しい skill：junbi（採択後の次の手続きへの切り替え）。
+schema_version: "1.1"
+name: skill-08-準備
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh

@@ -103,6 +103,7 @@ def parse(argv):
     p.add_argument("--form", help="制度データの様式の名前（項目の名前が2つの様式にあるとき）")
     p.add_argument("--text", help="書く文（省くか - なら標準入力）。改行で段落を分ける")
     p.add_argument("--input", help="書く文のファイル（会社のフォルダの中の .txt。記録/一時/書く文.txt など）")
+    p.add_argument("--figures", help="図表の指定の JSON（会社のフォルダの中。工程表の行など。記録/一時/図表.json など）")
     p = sub.add_parser("pdf", help="その1・2.docx を PDF にした写しを、添付する書類に作る（元は変えない）")
     common(p, stage=True, seido=False, source=False)
     p.add_argument("--soffice", help="LibreOffice（soffice）の場所。省くと決まった場所と Spotlight で探す")
@@ -459,6 +460,18 @@ def do_write(folder: Path, args, yw) -> int:
             raise Refused(f"書く文のファイル（{args.input}）を読めませんでした（{e}）")
     else:
         text = read_text_arg(args.text)
+    # 図を置く行（【図：前後比較】など）の図を作る（数字は財務モデルの控えから。TASKS B33）
+    from lib import zuhyo
+
+    spec = None
+    if args.figures:
+        spec, _ = read_json(folder, args.figures, "図表の指定の JSON")
+        if not isinstance(spec, dict):
+            raise Refused("図表の指定の JSON は { } の形にしてください（{\"工程表\": {\"題\": …, \"行\": [ … ]}}）")
+    try:
+        figures = zuhyo.build(folder, text, spec)
+    except zuhyo.FigureError as e:
+        raise Refused(f"図を作れなかったので、何も書いていません：{e}")
     target = application_file(folder, case, stage, WORD_FILE)
     first = not os.path.lexists(str(target))
     if first:
@@ -466,7 +479,7 @@ def do_write(folder: Path, args, yw) -> int:
     else:
         before = target.read_bytes()
     try:
-        new_blob, summary = yw.write_item(before, position, text, label, mapped_positions(form))
+        new_blob, summary = yw.write_item(before, position, text, label, mapped_positions(form), figures)
     except yw.OutsideChange as e:
         print(f"保存しませんでした：{WORD_FILE} に書くと、書いてよい範囲の外が変わります（{len(e.differences)}か所）。"
               "前のファイルのままです。道具か様式の想定が違うので、作者に知らせてください。")
@@ -483,6 +496,8 @@ def do_write(folder: Path, args, yw) -> int:
     print(f"{rel} に、{made}「{summary['項目']}」を書きました（段落 {summary['段落']}、{summary['文字数']}字）。")
     if summary["消した説明の青字の段落"]:
         print(f"- 様式の説明の青字（{summary['消した説明の青字の段落']}段落）は、様式の求めに合わせて消しました。")
+    for title, width in zip(summary.get("図") or [], summary.get("図の幅（cm）") or []):
+        print(f"- 図「{title}」を入れました（幅 {width}cm。セルの幅に収めています）。")
     print("- 直前の版と比べ、書いてよい範囲の外は変わっていません。")
     return OK
 
@@ -622,6 +637,21 @@ def sheet_value(field, value):
     return str(value)
 
 
+def print_supporter_notes(blob: bytes) -> None:
+    """入力シートの支援者の欄に入れた案内（SPEC 2.3。「案内」の列）を出す。Claude はこれを社長に伝える（T10-4）。"""
+    from lib import input_sheet
+
+    try:
+        notes = input_sheet.notes_of(blob)
+    except ValueError:
+        return
+    if not notes:
+        return
+    screen, field, note = notes[0]
+    print(f"- 支援者の欄（{screen}の「{field}」など{len(notes)}欄）には、入力シートの「案内」の列に「{note}」と"
+          "入れてあります。社長に、この案内を伝えてください（SPEC 2.3）。")
+
+
 def do_sheet(folder: Path, args, yw) -> int:
     from lib import input_sheet
 
@@ -657,6 +687,7 @@ def do_sheet(folder: Path, args, yw) -> int:
     if summary.get("注意"):
         print(f"- 注意：{summary['注意']}。")
     print("- 直前の版と比べ、書いてよい範囲の外は変わっていません。")
+    print_supporter_notes(new_blob)
     return OK
 
 
@@ -731,6 +762,7 @@ def do_sheet_many(folder: Path, args, yw, case: str, stage: str, seido) -> int:
     for n in notes:
         print(f"- 注意：{n}。")
     print("- 直前の版と比べ、書いてよい範囲の外は変わっていません。")
+    print_supporter_notes(blob)
     return OK
 
 

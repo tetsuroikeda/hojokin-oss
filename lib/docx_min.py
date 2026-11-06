@@ -68,9 +68,14 @@ def _text_run(text: str, bold: bool = False, style: Optional[str] = None) -> str
 class Document:
     """見出し・段落・表を順に足し、最後に save() で書く。"""
 
-    def __init__(self) -> None:
+    def __init__(self, margin_tb: int = 1418, margin_lr: int = 1134, tight: bool = False) -> None:
+        """margin_tb は上下の、margin_lr は左右の余白（twip。567 で 10mm）。短くまとめる文書は狭くする。
+        tight は、本文の行間と見出しの前後の空きを詰める。"""
         self._body: List[str] = []
         self._links: List[str] = []
+        self._margin_tb = margin_tb
+        self._margin_lr = margin_lr
+        self._tight = tight
 
     def _link(self, text: str, url: str) -> str:
         self._links.append(url)
@@ -102,9 +107,10 @@ class Document:
         self._body.append(self._paragraph_xml(content, bold=bold))
 
     def table(self, rows: Sequence[Sequence[Union[Run, Sequence[Run]]]], header: bool = True,
-              widths: Optional[Sequence[int]] = None) -> None:
+              widths: Optional[Sequence[int]] = None, compact: bool = False) -> None:
         """rows の各セルは、文字か、(文字, リンク先) か、それらの並び（1つの段落。文字の改行は行の区切り）。
-        widths は列の幅（twip）。"""
+        widths は列の幅（twip）。compact は、表の文字を少し小さく、行の間を詰める（短くまとめる文書の表）。"""
+        style = "TableText" if compact else None
         grid = ""
         if widths:
             grid = "<w:tblGrid>" + "".join(f'<w:gridCol w:w="{w}"/>' for w in widths) + "</w:tblGrid>"
@@ -115,10 +121,12 @@ class Document:
             cells = []
             for c, cell in enumerate(row):
                 width = f'<w:tcPr><w:tcW w:w="{widths[c]}" w:type="dxa"/></w:tcPr>' if widths else ""
-                para = self._paragraph_xml(cell, bold=header and r == 0)
+                para = self._paragraph_xml(cell, style, bold=header and r == 0)
                 cells.append(f"<w:tc>{width}{para}</w:tc>")
-            # 行をページの境目で分けない。見出しの行は、ページが変わっても繰り返す
-            row_props = "<w:trPr><w:cantSplit/>" + ("<w:tblHeader/>" if header and r == 0 else "") + "</w:trPr>"
+            # 行をページの境目で分けない（compact の表は分けてよい。見出しの「次と離さない」と重なって、
+            # ページの下に大きな空きができるため）。見出しの行は、ページが変わっても繰り返す
+            keep = "" if compact and not (header and r == 0) else "<w:cantSplit/>"
+            row_props = "<w:trPr>" + keep + ("<w:tblHeader/>" if header and r == 0 else "") + "</w:trPr>"
             out.append("<w:tr>" + row_props + "".join(cells) + "</w:tr>")
         out.append("</w:tbl>")
         self._body.append("".join(out))
@@ -129,7 +137,9 @@ class Document:
 
     def _document_xml(self) -> str:
         sect = ('<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
-                '<w:pgMar w:top="1418" w:right="1134" w:bottom="1418" w:left="1134" w:header="851" w:footer="992" w:gutter="0"/>'
+                f'<w:pgMar w:top="{self._margin_tb}" w:right="{self._margin_lr}" w:bottom="{self._margin_tb}" '
+                f'w:left="{self._margin_lr}" '
+                'w:header="851" w:footer="992" w:gutter="0"/>'
                 "</w:sectPr>")
         return (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
@@ -153,7 +163,7 @@ class Document:
             ("_rels/.rels", ROOT_RELS),
             ("word/document.xml", self._document_xml()),
             ("word/_rels/document.xml.rels", self._document_rels()),
-            ("word/styles.xml", STYLES),
+            ("word/styles.xml", _styles(self._tight)),
         ]
         encoded = []
         for name, text in parts:
@@ -219,19 +229,25 @@ def _style(style_id: str, name: str, size: int, bold: bool = False, based: str =
     )
 
 
-STYLES = (
+def _styles(tight: bool = False) -> str:
+    """書式の部品。tight は、本文の行間と見出しの前後の空きを詰める（短くまとめる文書）。"""
+    line, h1, h2 = (276, (200, 80), (160, 60)) if tight else (300, (320, 120), (240, 80))
+    return (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
     f'<w:styles xmlns:w="{W_NS}">'
     "<w:docDefaults><w:rPrDefault><w:rPr>"
     f'<w:rFonts w:ascii="{FONT}" w:eastAsia="{FONT}" w:hAnsi="{FONT}" w:cs="{FONT}"/>'
     '<w:sz w:val="21"/><w:lang w:val="ja-JP" w:eastAsia="ja-JP"/>'
     "</w:rPr></w:rPrDefault>"
-    '<w:pPrDefault><w:pPr><w:spacing w:after="60" w:line="300" w:lineRule="auto"/></w:pPr></w:pPrDefault>'
+    f'<w:pPrDefault><w:pPr><w:spacing w:after="60" w:line="{line}" w:lineRule="auto"/></w:pPr></w:pPrDefault>'
     "</w:docDefaults>"
     '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>'
     + _style("Title", "Title", 36, bold=True, space_after=200)
-    + _style("Heading1", "heading 1", 28, bold=True, space_before=320, space_after=120)
-    + _style("Heading2", "heading 2", 24, bold=True, space_before=240, space_after=80)
+    + _style("Heading1", "heading 1", 28, bold=True, space_before=h1[0], space_after=h1[1])
+    + _style("Heading2", "heading 2", 24, bold=True, space_before=h2[0], space_after=h2[1])
+    # 表の文字（compact の表）。見出しと違い、次の段落とつなげない
+    + '<w:style w:type="paragraph" w:styleId="TableText"><w:name w:val="Table Text"/><w:basedOn w:val="Normal"/>'
+    '<w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="18"/></w:rPr></w:style>'
     + '<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/>'
     '<w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style>'
     '<w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/>'
@@ -247,4 +263,7 @@ STYLES = (
     '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="808080"/>'
     "</w:tblBorders></w:tblPr></w:style>"
     "</w:styles>"
-)
+    )
+
+
+STYLES = _styles()

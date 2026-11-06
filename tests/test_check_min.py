@@ -95,7 +95,11 @@ def test_prepare_writes_the_package_and_note(env: kt.Env) -> None:
     package = env.folder / kt.PACKAGE
     names = {p.name for p in package.iterdir()}
     assert {"控え.json", "計画書の本文.md", "制度データの抜き出し.json", "根拠対照表.md", "文体の基準C.md",
-            "コードの確かめの結果.json", "財務モデルの前提.md"} <= names
+            "コードの確かめの結果.json", "財務モデルの前提.md", "構成と効果の物差し.md"} <= names
+    # 構成と効果の物差し：作者の知見（構成の型・審査の観点）と、財務モデルの投資の効果の見え方（B37）
+    yardstick = (package / "構成と効果の物差し.md").read_text(encoding="utf-8")
+    assert "## 構成の型" in yardstick and "入れる事実の種類" in yardstick and "## 審査の観点" in yardstick
+    assert "## 投資の効果の見え方" in yardstick
     plan = (package / "計画書の本文.md").read_text(encoding="utf-8")
     for name, body in kt.GOOD_BODIES.items():
         assert f"### {name}" in plan and body[0] in plan

@@ -1,0 +1,8 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・13.2）。
+# 保存した状態「書く前」で、機械を入れた後のもうけの見込みを数字にしてほしいと頼む（「財務モデル」「計画」の言葉を使わない）。
+# 正しい skill：kaku（財務モデル）。
+schema_version: "1.1"
+name: skill-13-書く
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh

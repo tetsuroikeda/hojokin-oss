@@ -6,12 +6,17 @@
   画面ごとのボタン（nav・screen_buttons）は、マニュアルの画面の絵に合わせる。
 どちらも同じ欄の定義を使い、同じ記録に残す。
 
-- 項目名はマニュアルの画面と同じにする（入力シートと照らすため）。
+- ツールが入れる欄（❷〜❾）の名前は、制度データの正解（testdata/正解/省力化_第8回.json の申請画面の欄。
+  電子申請マニュアルの画面の絵から作った欄）と同じにする（入力シートと照らすため。DESIGN 14章、TASKS B29）。
+  チェック欄は「：」より前を正解の欄の名前と同じにし、「：」より後に自分の言葉の短い説明を置く
+  （正解の名前がそのまま文になっている欄は、説明を付けない）。❶ の宣誓と ❿ のアンケートは直していない。
   宣誓の文・説明・注意書きは写さず、自分の言葉で短く書く。
 - 文字数の上限は読み取れていないので付けない（DESIGN 14章）。
-- チェック欄・ラジオボタン・選択欄は、囲むラベルで名前を付ける（DESIGN 5章）。
-  担当者が入れる欄（who="person"）の名前には「確認」「誓約」「同意」「宣誓」のどれかを入れ、
-  ツールが入れる欄（who="tool"）の名前には、この4語を入れない。
+- チェック欄・ラジオボタン・選択欄は、囲むラベルで名前を付ける（DESIGN 5章）。表の中の欄も、見えない
+  ラベルで名前を付ける（ページを読んだときに、欄の名前が読めるように）。
+  担当者が入れるチェック欄（who="person"）の名前には「確認」「誓約」「同意」「宣誓」のどれかを入れ、
+  ツールが入れるチェック欄（who="tool"）の名前には、この4語を入れない。ラジオボタンと選択欄は、正解の名前に
+  4語が入っていれば、ツールの欄でも入れる（TOOL_FIELDS_WITH_WORDS。守りは、4語で拒むのをチェック欄に限る）。
 - 守り（hook）が押してよいボタンを決めるのは、制度データの画面の定義で、この定義ではない。
 
 `python3 mock/screen.py` で、12画面版の画面ごとの欄とボタンの一覧を Markdown の表で出す。
@@ -30,6 +35,8 @@ MANUAL = "電子申請マニュアル（応募申請）第8回（downloads/shory
 
 # 担当者が入れる欄の名前に入れる語（DESIGN 5章の守りが見分けに使う）
 PERSON_WORDS = ("確認", "誓約", "同意", "宣誓")
+# ツールが入れる欄のうち、正解の名前に4語が入っている選ぶ欄（ラジオボタン・選択欄）
+TOOL_FIELDS_WITH_WORDS = {"other_subsidy"}
 
 PREFECTURES = [
     "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
@@ -131,9 +138,9 @@ PLAN_ROWS = [
     {"key": "productivity_target", "label": "労働生産性の目標値", "cells": CALC_NO_BASE},
 ]
 SALARY_ROWS = [
-    {"key": "salary_total", "label": "⑤全月分の給与等の支給を受けた従業員の給与支給総額"},
-    {"key": "salary_count", "label": "⑥全月分の給与等の支給を受けた従業員数"},
-    {"key": "salary_per", "label": "従業員1人当たり給与支給総額（⑤÷⑥）", "cells": ALL_CALC},
+    {"key": "salary_total", "label": "①全月分の給与等の支給を受けた従業員の給与支給総額"},
+    {"key": "salary_count", "label": "②全月分の給与等の支給を受けた従業員数"},
+    {"key": "salary_per", "label": "従業員1人当たり給与支給総額（①÷②）", "cells": ALL_CALC},
     {"key": "salary_growth", "label": "従業員1人当たり給与支給総額の年平均成長率（％）", "cells": CALC_NO_BASE},
     {"key": "salary_target", "label": "（参考）従業員1人当たり給与支給総額の目標値", "cells": CALC_NO_BASE},
 ]
@@ -141,7 +148,7 @@ SALARY_ROWS = [
 # ❽ 経費明細表
 EXPENSE_COLS = [("a", "（A）事業に要する経費（税込みの額）", "number"),
                 ("b", "（B）補助対象経費（税抜きの額）", "number"),
-                ("c", "（C）積算基礎（（B）の内訳）", "textarea")]
+                ("c", "（C）積算基礎（B）の内訳", "textarea")]
 EXPENSE_ROWS = [
     {"key": "machine", "label": "機械装置・システム構築費"},
     {"key": "transport", "label": "運搬費"},
@@ -157,21 +164,30 @@ FUND_ALL_ROWS = [
     {"key": "own", "label": "自己資金", "cells": {"source": "none"}},
     {"key": "subsidy", "label": "補助金申請額（D）", "cells": {"amount": "calc", "source": "none"}},
     {"key": "loan", "label": "借入金"},
-    {"key": "lease", "label": "その他（ファイナンス・リース）"},
+    {"key": "lease", "label": "その他 ファイナンス・リース"},
     {"key": "total", "label": "合計額", "cells": {"amount": "calc", "source": "none"}},
 ]
 FUND_D_ROWS = [
     {"key": "own", "label": "自己資金", "cells": {"source": "none"}},
     {"key": "loan", "label": "借入金"},
-    {"key": "lease", "label": "その他（ファイナンス・リース）"},
+    {"key": "lease", "label": "その他 ファイナンス・リース"},
     {"key": "total", "label": "合計額", "cells": {"amount": "calc", "source": "none"}},
 ]
 
 
-def grid(id: str, label: str, page: int, rows: list, cols: list) -> dict:
-    """表の欄。cols は (列の鍵, 列の名前) か (列の鍵, 列の名前, 種類)。"""
+def grid(id: str, label: str, page: int, rows: list, cols: list, prefix: bool = False) -> dict:
+    """表の欄。cols は (列の鍵, 列の名前) か (列の鍵, 列の名前, 種類)。
+
+    prefix が真なら、表の中の欄の名前の頭に表の名前を付ける（❽ の資金調達の2つの表。正解の欄の名前がこの形）。
+    """
     cols = [c if len(c) == 3 else (c[0], c[1], "number") for c in cols]
-    return f(id, label, "grid", page, rows=rows, cols=cols)
+    return f(id, label, "grid", page, rows=rows, cols=cols, prefix=prefix)
+
+
+def cell_label(g: dict, row: dict, col_label: str) -> str:
+    """表の中の欄の名前（記録の名前と、画面の見えないラベルの両方に使う）。"""
+    head = f"{g['label']} " if g.get("prefix") else ""
+    return f"{head}{row['label']}（{col_label}）"
 
 
 def grid_cells(g: dict) -> list:
@@ -181,7 +197,7 @@ def grid_cells(g: dict) -> list:
         for col, col_label, kind in g["cols"]:
             if row.get("cells", {}).get(col, "in") != "in":
                 continue
-            cells.append(f(f"{g['id']}_{row['key']}_{col}", f"{row['label']}（{col_label}）", kind, g["page"],
+            cells.append(f(f"{g['id']}_{row['key']}_{col}", cell_label(g, row, col_label), kind, g["page"],
                            grid=g["id"], table=g["label"]))
     return cells
 
@@ -220,13 +236,13 @@ SECTIONS = [
                 f("biz_form", "事業形態", "display", 8, who="display", value="法人"),
                 f("org_type", "組織形態", "select", 8, required=True, options=ORG_TYPES),
                 f("corp_number", "法人番号", "text", 8),
-                f("biz_name", "事業者名（法人名／屋号・商号）", "text", 8, required=True),
+                f("biz_name", "事業者名（法人名/屋号・商号）", "text", 8, required=True),
                 f("biz_name_kana", "事業者名（カナ）", "text", 8, required=True),
                 f("rep_title", "法人代表者役職", "text", 8, required=True),
                 f("rep_last", "代表者氏名（姓）", "text", 8, required=True),
                 f("rep_first", "代表者氏名（名）", "text", 8, required=True),
-                f("rep_last_kana", "代表者氏名カナ（セイ）", "text", 8, required=True),
-                f("rep_first_kana", "代表者氏名カナ（メイ）", "text", 8, required=True),
+                f("rep_last_kana", "代表者氏名（カナ）（セイ）", "text", 8, required=True),
+                f("rep_first_kana", "代表者氏名（カナ）（メイ）", "text", 8, required=True),
                 f("rep_tel", "代表電話番号", "text", 8, required=True),
                 f("biz_url", "事業者HPのURL", "text", 8),
                 f("employees", "従業員数", "number", 8, required=True, unit="人"),
@@ -243,8 +259,8 @@ SECTIONS = [
                 f("staff_title", "担当者の役職", "text", 9),
                 f("staff_last", "担当者氏名（姓）", "text", 9, required=True),
                 f("staff_first", "担当者氏名（名）", "text", 9, required=True),
-                f("staff_last_kana", "担当者氏名カナ（セイ）", "text", 9, required=True),
-                f("staff_first_kana", "担当者氏名カナ（メイ）", "text", 9, required=True),
+                f("staff_last_kana", "担当者氏名（カナ）（セイ）", "text", 9, required=True),
+                f("staff_first_kana", "担当者氏名（カナ）（メイ）", "text", 9, required=True),
                 f("staff_email", "担当者メールアドレス", "text", 9, required=True),
                 f("staff_tel", "担当者電話番号", "text", 9, required=True),
             ], note="担当者メールアドレスを入れたら「認証コード発行」を押します（⓫で使います）。"),
@@ -255,7 +271,7 @@ SECTIONS = [
         "no": "❸", "key": "s3", "title": "要件", "pages": "10–11", "nav": NAV_FULL,
         "groups": [
             group("3-1. 小規模企業者・小規模事業者・再生事業者", 10, [
-                f("small_business", "小規模企業者・小規模事業者：該当する", "checkbox", 10),
+                f("small_business", "小規模企業者/小規模事業者：該当する", "checkbox", 10),
                 f("revival", "再生事業者：該当する", "checkbox", 10),
             ]),
             group("3-2. みなし同一法人でないことの確認", 10, [
@@ -268,11 +284,11 @@ SECTIONS = [
                 f("not_adult", "風俗営業等に関する確認：風俗営業等の事業でないことを宣誓する", "checkbox", 10, who="person", required=True),
             ]),
             group("3-5. 「両立支援のひろば」に関する確認", 10, [
-                f("ryoritsu_url", "「両立支援のひろば」の企業データ詳細ページのURL", "text", 10),
+                f("ryoritsu_url", "「両立支援のひろば」における申請者自身の企業データ詳細ページURL", "text", 10),
                 f("ryoritsu_oath", "両立支援のひろば：交付申請時までに行動計画を公表することを宣誓する", "checkbox", 10, who="person"),
             ], note="従業員21人以上のときの欄です。"),
             group("3-6. 国の他の助成制度との重複確認", 11, [
-                f("other_subsidy", "国の他の助成制度との重複", "radio", 11, required=True, options=["はい", "いいえ"]),
+                f("other_subsidy", "国の他の助成制度との重複確認", "radio", 11, required=True, options=["はい", "いいえ"]),
             ], note="過去5年に国の他の助成制度の交付を受けたか、今申請しているかを答えます。"),
         ],
     },
@@ -280,25 +296,26 @@ SECTIONS = [
         "no": "❹", "key": "s4", "title": "加点項目", "pages": "12–13", "nav": NAV_FULL,
         "groups": [
             group("①事業承継又はM&Aを実施した事業者", 12, [
-                kasan("kasan_succession", "事業承継又はM&A加点", "過去3年以内に事業承継やM&Aで経営資源を引き継いだ", 12)]),
+                kasan("kasan_succession", "①事業承継又はM&Aを実施した事業者（申請者）",
+                      "過去3年以内に事業承継やM&Aで経営資源を引き継いだ", 12)]),
             group("②事業継続力強化計画／連携事業継続力強化計画に対する加点", 12, [
-                kasan("kasan_bcp", "事業継続力強化計画加点", "有効な期間の認定を受けている", 12),
+                kasan("kasan_bcp", "②事業継続力強化計画／連携事業継続力強化計画に対する加点", "有効な期間の認定を受けている", 12),
                 f("bcp_number", "受付番号（半角10桁）", "text", 12),
-                *ym("bcp_start", "実施期間開始期", 12),
+                *ym("bcp_start", "実施期間始期", 12),
                 *ym("bcp_end", "実施期間終期", 12),
             ], note="紙で認定を受けた場合、受付番号は「紙申請」と入れます。"),
             group("③成長加速マッチングサービスに登録している事業者に対する加点", 12, [
-                kasan("kasan_matching", "成長加速マッチングサービス加点", "挑戦課題を登録している", 12)]),
+                kasan("kasan_matching", "③成長加速マッチングサービスに登録している事業者に対する加点", "挑戦課題を登録している", 12)]),
             group("④地域別最低賃金引き上げに係る加点", 12, [
-                kasan("kasan_regional_wage", "地域別最低賃金引き上げ加点", "加点の要件を満たす", 12)]),
+                kasan("kasan_regional_wage", "④地域別最低賃金引き上げに係る加点", "加点の要件を満たす", 12)]),
             group("⑤事業場内最低賃金引き上げに係る加点", 12, [
-                kasan("kasan_inhouse_wage", "事業場内最低賃金引き上げ加点", "加点の要件を満たす", 12)]),
-            group("⑥えるぼし加点", 12, [kasan("kasan_eruboshi", "えるぼし加点", "えるぼし認定を受けている", 12)]),
-            group("⑦くるみん加点", 13, [kasan("kasan_kurumin", "くるみん加点", "くるみん認定を受けている", 13)]),
-            group("⑧省力化ナビ加点", 13, [kasan("kasan_navi", "省力化ナビ加点", "省力化ナビで解決策のPDFを取得している", 13)]),
-            group("⑨健康経営優良法人加点", 13, [kasan("kasan_health", "健康経営優良法人加点", "健康経営優良法人に認定されている", 13)]),
+                kasan("kasan_inhouse_wage", "⑤事業場内最低賃金引き上げに係る加点", "加点の要件を満たす", 12)]),
+            group("⑥えるぼし加点", 12, [kasan("kasan_eruboshi", "⑥えるぼし加点", "えるぼし認定を受けている", 12)]),
+            group("⑦くるみん加点", 13, [kasan("kasan_kurumin", "⑦くるみん加点", "くるみん認定を受けている", 13)]),
+            group("⑧省力化ナビ加点", 13, [kasan("kasan_navi", "⑧省力化ナビ加点", "省力化ナビで解決策のPDFを取得している", 13)]),
+            group("⑨健康経営優良法人加点", 13, [kasan("kasan_health", "⑨健康経営優良法人加点", "健康経営優良法人に認定されている", 13)]),
             group("⑩生産性向上支援センター利用加点", 13, [
-                kasan("kasan_center", "生産性向上支援センター利用加点", "支援を受けて取組計画書を作った", 13)]),
+                kasan("kasan_center", "⑩生産性向上支援センター利用加点", "支援を受けて取組計画書を作った", 13)]),
         ],
     },
     {
@@ -312,22 +329,22 @@ SECTIONS = [
                 f("plan_summary", "事業計画の概要（１００字程度）", "textarea", 14, required=True),
                 f("plan_equipment", "導入予定の機械装置・システムの名称", "textarea", 14, required=True,
                   placeholder="メーカー名：型式：名称："),
-                f("no_equipment", "機器装置の導入を含まない", "checkbox", 14),
-                f("uses_genai", "生成AIの導入を含む", "checkbox", 14),
-                f("catalog_product", "カタログ注文型のカテゴリに当たる製品を導入する", "checkbox", 14),
+                f("no_equipment", "当申請では、事業計画に機械装置の導入を含みません", "checkbox", 14),
+                f("uses_genai", "当申請では、事業計画に生成AIの導入を含みます", "checkbox", 14),
+                f("catalog_product", "カタログ注文型のカテゴリに該当する製品を導入する", "checkbox", 14),
             ]),
             group("5-3. 補助事業の主たる実施場所", 14, [
                 *address("site", 14, office=True, page2=15),
-                f("multi_sites", "事業実施場所が2か所以上ある", "checkbox", 15),
+                f("multi_sites", "２つ以上事業実施場所がある", "checkbox", 15),
             ]),
             group("5-4. イノベーション製品応援プログラムへの参加", 15, [
-                f("innovation", "イノベーション製品応援プログラムへの参加：参加する", "checkbox", 15)]),
+                f("innovation", "イノベーション製品応援プログラムへ参加する", "checkbox", 15)]),
             group("5-5. アトツギ甲子園への出場", 15, [
-                f("atotsugi", "アトツギ甲子園への出場：ピッチ大会に出場したことがある", "checkbox", 15)]),
+                f("atotsugi", "アトツギ甲子園のピッチ大会に出場したことがある", "checkbox", 15)]),
             group("5-6. 関税影響事業者の申告", 15, [
-                f("tariff", "関税影響事業者の申告：関税影響事業者である", "checkbox", 15)]),
+                f("tariff", "関税影響事業者である", "checkbox", 15)]),
             group("5-7. 事業計画書作成支援者情報", 15, [
-                f("no_supporter", "支援者なし", "checkbox", 15),
+                f("no_supporter", "事業計画書作成に支援者は関与していない", "checkbox", 15),
                 f("supporter_org", "支援機関名", "text", 15),
                 f("supporter_fee", "支援報酬（予定）額", "number", 15, unit="円"),
                 f("supporter_months", "契約期間", "number", 15, unit="ヶ月"),
@@ -336,7 +353,7 @@ SECTIONS = [
                 f("supporter_tel", "支援者連絡先電話番号", "text", 15),
                 f("supporter_email", "支援者メールアドレス", "text", 15),
                 f("supporter_id", "認定経営革新等支援機関ID", "text", 15),
-            ], note="支援者がいないときは「支援者なし」にチェックします。支援を受けたときは各欄を入れます。"),
+            ], note="支援者がいないときは、支援者が関与していない欄にチェックします。支援を受けたときは各欄を入れます。"),
             group("5-8. 直近決算期の決算月", 15, [
                 f("fiscal_month", "直近決算期の決算月", "select", 15, required=True, options=MONTHS, unit="月")]),
         ],
@@ -345,9 +362,9 @@ SECTIONS = [
         "no": "❻", "key": "s6", "title": "最低賃金及び特例希望", "pages": "16", "nav": NAV_FULL,
         "groups": [
             group("6-1. 大幅賃上げに係る補助上限額引き上げの特例", 16, [
-                f("special_raise", "大幅賃上げに係る補助上限額引き上げの特例：希望する", "checkbox", 16)]),
+                f("special_raise", "【大幅賃上げに係る補助上限額引き上げの特例】を希望する", "checkbox", 16)]),
             group("6-2. 最低賃金引き上げに係る補助率引き上げの特例", 16, [
-                f("special_min_wage", "最低賃金引き上げに係る補助率引き上げの特例：希望する", "checkbox", 16)]),
+                f("special_min_wage", "【最低賃金引き上げに係る補助率引き上げの特例】を希望する", "checkbox", 16)]),
             group("6-3. 事業場内の最低賃金", 16, [
                 *ym("min_wage_month", "直近月の事業場内の最低賃金（対象年月）", 16),
                 f("min_wage", "事業場内最低賃金", "number", 16, required=True, unit="円"),
@@ -374,18 +391,19 @@ SECTIONS = [
         "buttons": [("calc_plan", "計算", 17, "7-2. 会社全体の事業計画（単位：円）")],
     },
     {
-        "no": "❽", "key": "s8", "title": "経費明細｜資金調達内訳", "pages": "18–19", "nav": NAV_FULL,
+        "no": "❽", "key": "s8", "title": "経費明細・資金調達内訳", "pages": "18–19", "nav": NAV_FULL,
         "groups": [
             group("8-1. 経費明細表", 18, [
-                f("finance_lease", "ファイナンス・リースによる共同申請", "radio", 18, required=True, options=["はい", "いいえ"]),
+                f("finance_lease", "ファイナンス・リースを利用してリース会社と共同申請を実施しますか", "radio", 18, required=True,
+                  options=["はい", "いいえ"]),
                 grid("expense", "経費明細表", 18, EXPENSE_ROWS, EXPENSE_COLS),
             ], note="（A）は税込み、（B）は税抜きで入れます。入れたら「計算」を押します。"),
             group("8-2. 補助金申請額", 19, [
                 f("subsidy_amount", "補助金申請額（D）", "display", 19, who="display", calc=True, unit="円"),
             ], note="模擬では（B）の合計に補助率（小規模か最低賃金の特例なら2/3、ほかは1/2）を掛けた額を出します。上限額は見ません。"),
             group("8-3. 資金調達内訳", 19, [
-                grid("fund_all", "事業全体に要する経費調達一覧", 19, FUND_ALL_ROWS, FUND_COLS),
-                grid("fund_d", "補助金申請額（D）の経費内訳", 19, FUND_D_ROWS, FUND_COLS),
+                grid("fund_all", "事業全体に要する経費調達一覧", 19, FUND_ALL_ROWS, FUND_COLS, prefix=True),
+                grid("fund_d", "補助金申請額の経費内訳", 19, FUND_D_ROWS, FUND_COLS, prefix=True),
             ]),
         ],
         "buttons": [("calc_expense", "計算", 18, "8-1. 経費明細表")],
@@ -405,38 +423,39 @@ SECTIONS = [
             ]),
             group("従業員数の確認書類", 21, [
                 f("doc_overview", "法人事業概況説明書", "file", 21, required=True, accept=PDF),
-                f("doc_workers", "労働者名簿", "file", 21, accept=EXCEL),
+                f("doc_workers", "【指定様式】労働者名簿", "file", 21, accept=EXCEL),
             ]),
-            group("役員名簿", 21, [f("doc_officers", "役員名簿", "file", 21, required=True, accept=EXCEL)]),
-            group("株主名簿", 21, [f("doc_shareholders", "株主・出資者名簿", "file", 21, required=True, accept=EXCEL)]),
+            group("役員名簿", 21, [f("doc_officers", "【指定様式】役員名簿", "file", 21, required=True, accept=EXCEL)]),
+            group("株主名簿", 21, [
+                f("doc_shareholders", "【指定様式】株主・出資者名簿", "file", 21, required=True, accept=EXCEL)]),
             group("事業計画に係る書類", 21, [
-                f("doc_plan12", "事業計画書（その1・その2）", "file", 21, required=True, accept=PDF),
-                f("doc_plan3", "事業計画書（その3）", "file", 21, required=True, accept=EXCEL),
+                f("doc_plan12", "事業計画書（その１・その２）", "file", 21, required=True, accept=PDF),
+                f("doc_plan3", "【指定様式】事業計画書（その３）", "file", 21, required=True, accept=EXCEL),
             ]),
             group("機械装置・システム構築費の積算根拠資料", 21, [
-                f("doc_estimate_1", "機械装置・システム構築費の積算根拠資料（その1）", "file", 21, required=True, accept=PDF_IMAGE),
-                f("doc_estimate_2", "機械装置・システム構築費の積算根拠資料（その2）", "file", 21, accept=PDF_IMAGE),
-                f("doc_estimate_3", "機械装置・システム構築費の積算根拠資料（その3）", "file", 21, accept=PDF_IMAGE),
+                f("doc_estimate_1", "機械装置・システム構築費の積算根拠資料（その１）", "file", 21, required=True, accept=PDF_IMAGE),
+                f("doc_estimate_2", "機械装置・システム構築費の積算根拠資料（その２）", "file", 21, accept=PDF_IMAGE),
+                f("doc_estimate_3", "機械装置・システム構築費の積算根拠資料（その３）", "file", 21, accept=PDF_IMAGE),
             ]),
             group("該当する場合だけ添付する書類", 22, [
-                f("doc_sites", "事業実施場所リスト", "file", 22, accept=EXCEL),
-                f("doc_innovation", "イノベーション製品応援プログラムの書類", "file", 22, accept=PDF),
-                f("doc_inhouse_wage", "事業場内最低賃金引き上げに係る要件確認書", "file", 22, accept=EXCEL),
-                f("doc_regional_wage", "地域別最低賃金引き上げに係る要件確認書", "file", 22, accept=EXCEL),
-                f("doc_other_subsidy", "他の助成制度の利用実績確認書", "file", 22, accept=EXCEL),
+                f("doc_sites", "【指定様式】事業実施場所リスト", "file", 22, accept=EXCEL),
+                f("doc_innovation", "【指定様式】イノベーション製品応援プログラム製造事業者申請書", "file", 22, accept=PDF),
+                f("doc_inhouse_wage", "【指定様式】事業場内最低賃金引き上げに係る要件確認書", "file", 22, accept=EXCEL),
+                f("doc_regional_wage", "【指定様式】地域別最低賃金引き上げに係る要件確認書", "file", 22, accept=EXCEL),
+                f("doc_other_subsidy", "【指定様式】他の助成制度の利用実績確認書", "file", 22, accept=EXCEL),
             ], note="模擬では、ここまでの入力にかかわらず、すべての欄を出しています。"),
             group("事業承継又はM&Aを実施した事業者に対する加点を受ける場合", 23, [
-                f("succession_type", "事業承継の形態", "radio", 23,
+                f("succession_type", "事業承継又はM&Aを実施した事業者（申請者）", "radio", 23,
                   options=["法人から法人（代表者変更）", "法人から法人（株式譲渡）"]),
-                f("doc_succession", "事業承継の書類（履歴事項全部証明書）", "file", 23, accept=PDF),
+                f("doc_succession", "①履歴事項全部証明書", "file", 23, accept=PDF),
             ]),
             group("生産性向上支援センター利用加点を受ける場合", 23, [
-                f("doc_center", "生産性向上取組計画書（支援申込書と合わせて1つのPDF）", "file", 23, accept=PDF),
-            ]),
+                f("doc_center", "生産性向上取組計画書", "file", 23, accept=PDF),
+            ], note="支援申込書と合わせて1つの PDF にします。"),
             group("導入予定の機器装置等の資料（任意）", 23, [
-                f("doc_catalog_1", "導入予定の機器装置についてのカタログや説明資料1", "file", 23, accept=PDF_IMAGE),
-                f("doc_catalog_2", "導入予定の機器装置についてのカタログや説明資料2", "file", 23, accept=PDF_IMAGE),
-                f("doc_catalog_3", "導入予定の機器装置についてのカタログや説明資料3", "file", 23, accept=PDF_IMAGE),
+                f("doc_catalog_1", "導入予定の機械装置についてのカタログや説明資料1", "file", 23, accept=PDF_IMAGE),
+                f("doc_catalog_2", "導入予定の機械装置についてのカタログや説明資料2", "file", 23, accept=PDF_IMAGE),
+                f("doc_catalog_3", "導入予定の機械装置についてのカタログや説明資料3", "file", 23, accept=PDF_IMAGE),
             ]),
             group("その他資料（任意）", 24, [
                 f("doc_other_1", "その他資料1", "file", 24, accept=ANY_DOC),

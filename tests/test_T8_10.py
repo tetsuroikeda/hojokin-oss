@@ -103,6 +103,58 @@ def test_without_quantity_the_low_case_is_not_judged() -> None:
     assert plan.cells["A8"].value == zaimu.LOW_LABEL and plan.cells["B8"].value == zaimu.NO_QUANTITY
 
 
+def test_investment_effect_matches_the_totals() -> None:
+    """投資の効果の見え方は、計画の合算から出す（営業利益、営業利益率、増加、浮く時間の人件費相当額）。"""
+    s = book_of(demo()).summary
+    eff = s["投資の効果の見え方"]
+    profit, sales, dep = s["合算"]["営業利益"], s["合算"]["売上"], s["合算"]["減価償却費"]
+    assert eff["営業利益"] == pytest.approx(profit)
+    assert eff["営業利益率"] == pytest.approx([p / v for p, v in zip(profit, sales)])
+    assert eff["営業利益の増加（基準年度から最終年）"] == pytest.approx(profit[5] - profit[0])
+    assert eff["減価償却費の増加（基準年度から最終年）"] == pytest.approx(dep[5] - dep[0])
+    sh = s["省力化"]
+    assert eff["省力化で浮く時間の人件費相当額（1年あたり）"] == pytest.approx(
+        sh["削減工数"] * sh["人件費単価"] * sh["年間稼働日数"])
+
+
+def _effect_spec(sales_growth: float, effect: bool) -> dict:
+    """リハーサルと同じ形：売上は伸び率だけ、人件費は賃上げだけ、新しい設備の減価償却費が乗る。
+    effect が真なら、省力化で浮いた時間で増産し（数量）、計量の自動化で原材料費の割合が下がる。"""
+    spec = demo()
+    spec.pop("新事業", None)
+    spec["前提"] = [a for a in spec["前提"] if not a["名前"].startswith(("数量_", "単価_"))][:6]
+    names = {a["名前"] for a in spec["前提"]}
+    assert "賃上げ率" in names
+    add = [
+        {"名前": "売上の伸び率", "値": sales_growth, "単位": "%", "説明": "試し", "根拠": "試し", "出典": "試し"},
+        {"名前": "新設備の取得額", "値": 22500000, "単位": "円", "説明": "試し", "根拠": "試し", "出典": "試し"},
+        {"名前": "新設備の耐用年数", "値": 10, "単位": "年", "説明": "試し", "根拠": "試し", "出典": "試し"},
+        {"名前": "増産の割合", "値": 0.08 if effect else 0.0, "単位": "%", "説明": "試し", "根拠": "試し", "出典": "試し"},
+        {"名前": "原材料のロスの減り", "値": 0.03 if effect else 0.0, "単位": "%", "説明": "試し", "根拠": "試し", "出典": "試し"},
+    ]
+    spec["前提"] = [a for a in spec["前提"] if a["名前"] not in {x["名前"] for x in add}] + add
+    spec["既存事業"] = {
+        "売上": "基準_売上*(1+売上の伸び率+増産の割合)^年",
+        "原材料費": "基準_原材料費*(1+売上の伸び率+増産の割合)^年*(1-原材料のロスの減り)",
+        "給与支給総額": "基準_給与支給総額*(1+賃上げ率)^年",
+        "その他の人件費": "基準_その他の人件費*(1+賃上げ率)^年",
+        "減価償却費": "基準_減価償却費+新設備の取得額/新設備の耐用年数",
+    }
+    return spec
+
+
+def test_investment_effect_warns_when_the_effect_is_not_in_the_profit() -> None:
+    """浮いた時間の行き先が損益に入っていない計画では知らせが出て、増産と原価の効果を入れると出ない（11/6 のリハーサル）。"""
+    weak = book_of(_effect_spec(0.0, effect=False)).summary["投資の効果の見え方"]
+    notes = "\n".join(weak["知らせ"])
+    assert "浮いた人手と時間の行き先" in notes
+    assert "減価償却費の増加" in notes
+    assert weak["営業利益の増加（基準年度から最終年）"] < weak["減価償却費の増加（基準年度から最終年）"]
+    strong = book_of(_effect_spec(0.0, effect=True)).summary["投資の効果の見え方"]
+    assert strong["知らせ"] == [], strong["知らせ"]
+    assert strong["営業利益の増加（基準年度から最終年）"] > weak["営業利益の増加（基準年度から最終年）"]
+
+
 def test_shoryoku_index_same_as_form() -> None:
     """別紙1：組になった作業（検品 180分 → 120分）は、減った60分だけを削減に数える。"""
     sh = book_of(demo()).summary["省力化"]

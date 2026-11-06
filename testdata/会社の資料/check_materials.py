@@ -44,9 +44,11 @@ PAST_NOTICE = "2025_ものづくり補助金_採択結果の通知.pdf"
 PAST_MEMO = "2025_ものづくり補助金_不採択の後の相談のメモ.docx"
 
 # 議事録にしかない事実（T8-7 で、計画書と根拠対照表に出てくるかを見る材料）
+# 盛り付けから検品までの工程ごとの内訳（盛り付け約18時間など）は、組11（材料を厚くする）で回答表 L-01 にも足した
+# （不採択の後の相談の指摘1「工程ごとに測って比べる」に、社長が答えられるようにするため）。議事録にしかない事実からは外し、
+# 回答表 L-01 と議事録の内訳が同じかを check_minutes で確かめる。
 MINUTES_ONLY = [
     ("きざみ食とペースト食の盛り付けは、普通食の約2倍の時間（1食あたり約30秒と約15秒）", r"約30秒"),
-    ("盛り付けから検品までの延べ約38時間の工程ごとの内訳（盛り付け約18時間など）", r"盛り付け約18時間"),
     ("古いシール機が、この半年で4回止まった", r"4回止まった"),
     ("2025年度のクレーム7件のうち5件は、5時から6時に作ったもの", r"7件のうち5件"),
 ]
@@ -68,7 +70,7 @@ def report(ok: bool, text: str) -> None:
 def load_answers() -> dict[str, str]:
     answers = {}
     for line in ANSWER_SHEET.read_text(encoding="utf-8").splitlines():
-        m = re.match(r"\|\s*([A-K]-\d{2})\s*\|[^|]*\|\s*([^|]*?)\s*\|\s*$", line)
+        m = re.match(r"\|\s*([A-L]-\d{2})\s*\|[^|]*\|\s*([^|]*?)\s*\|\s*$", line)
         if m:
             answers[m[1]] = m[2]
     return answers
@@ -281,6 +283,11 @@ def check_minutes() -> None:
     total = int(find("G-03", r"延べ約(\d+)時間")[1])
     report(len(parts) == 5 and sum(parts) == total, f"G-03 工程ごとの時間の和 {'＋'.join(map(str, parts))}＝{sum(parts)}時間 ／ 回答表 延べ約{total}時間")
     report(f"平均で約{total}時間" in text, f"G-03 測った延べ時間 約{total}時間")
+    # 工程ごとの内訳 ＝ 回答表 L-01（組11 で足した。議事録と同じ数で、合計が G-03）
+    minutes_parts = dict(re.findall(r"(盛り付け|計量|包装|ラベル貼り|検品)(?:（シール）)?約(\d+)時間", text))
+    sheet_parts = dict(re.findall(r"(盛り付け|計量|包装|ラベル貼り|検品)約(\d+)時間", ANSWERS["L-01"]))
+    report(len(sheet_parts) == 5 and sheet_parts == minutes_parts and "2026年8月" in ANSWERS["L-01"] and "2週間" in ANSWERS["L-01"],
+           f"L-01 工程ごとの内訳と測った時期が議事録と同じ（回答表 {sheet_parts} ／ 議事録 {minutes_parts}）")
     # クレームの内訳 ＝ G-04
     claims = int(find("G-04", r"クレームが(\d+)件")[1])
     weigh = int(re.search(r"計量のミス(\d+)件", text)[1])

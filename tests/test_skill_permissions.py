@@ -29,6 +29,8 @@ ROOT = "${CLAUDE_PLUGIN_ROOT}"
 
 # ほかの skill の道具を本文で使う skill と、その道具（M12b：kaku は、社長の答えを kiroku の record.py で会社の記録に残す）
 SHARED_SCRIPTS = {"kaku": ["skills/kiroku/scripts/record.py"]}
+# ほかの場所を読む skill と、その場所（11/6 の後：kaku は、書くときに作者の知見 knowledge/ の構成の型と審査の観点を読む）
+SHARED_READS = {"kaku": ["knowledge"]}
 
 
 def expected_rules(skill: str) -> list:
@@ -43,6 +45,7 @@ def expected_rules(skill: str) -> list:
             f"Bash(python3 -B {ROOT}/{script}*)",
             f"Read(/{ROOT}/{script.rsplit('/', 1)[0]}/**)",
         ]
+    rules += [f"Read(/{ROOT}/{place}/**)" for place in SHARED_READS.get(skill, [])]
     return rules
 
 

@@ -28,12 +28,18 @@
 色（w:color）と変更履歴の印を除いたものにする（実験 E2：印の書式をそのまま写すと、補足事項の行で書いた文字が青になった）。
 新しい段落には、Word の段落の番号（w14:paraId など）を付けない（同じ番号が2つあると、Word が修復を求めることがある）。
 
+図表と写真（TASKS B33。図は lib/zuhyo.py が作る）：書く文の「図を置く行」（【図：前後比較】など）は、その図の段落にする。
+図の幅は、書いてよい範囲のセルの幅（とページの本文の幅）に収め、高さは縦横の比を保つ（T8-3「余白からはみ出さない」）。
+画像は word/media/hojokin_zu_<中身のハッシュ>.png に置き、関係（rIdHojokinZu…）と種類の登録を足す。書き直して使われなく
+なった、この道具の画像と関係は片付ける。範囲の外の比較では、この道具の画像・関係と、png・jpeg の種類の登録だけを差に数えない。
+
 /usr/bin/python3（3.9）で動く。標準のライブラリだけを使う。
 """
 
 from __future__ import annotations
 
 import difflib
+import hashlib
 import io
 import re
 import unicodedata
@@ -71,6 +77,23 @@ MAX_DIFFS = 20
 
 # 表の欄を持つ項目（「（1）事業者情報」の商号又は名称など）の欄の名前の区切り（TASKS B14a）
 FIELD_SEP = "：欄："
+
+# 図表と写真（TASKS B33）
+RELS = "word/_rels/document.xml.rels"
+FIGURE_REL_PREFIX = "rIdHojokinZu"
+FIGURE_MEDIA_PREFIX = "word/media/hojokin_zu_"
+REL_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+NS_WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+NS_A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+NS_PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+EMU_PER_TWIP = 635
+CELL_MARGIN = 108          # セルの左右の余白の既定（twip）
+MAX_FIGURE_EMU = 5760000   # 図の幅の上限 16cm
+MAX_PHOTO_EMU = 4320000    # 写真の幅と高さの上限 12cm
+FALLBACK_WIDTH = 9638      # 幅が分からないときの本文の幅（A4、左右の余白 20mm）
+_FIGURE_RELS = re.compile(rb'<Relationship\b[^>]*\bId="' + FIGURE_REL_PREFIX.encode() + rb'[0-9a-f]+"[^>]*/>')
+_IMAGE_DEFAULTS = re.compile(rb'<Default\b[^>]*\bExtension="(?:png|jpeg)"[^>]*/>', re.I)
 
 
 def field_label(item: str, field: str) -> str:
@@ -123,17 +146,28 @@ def read_parts(blob: bytes) -> Tuple[List[zipfile.ZipInfo], Dict[str, bytes]]:
     return infos, parts
 
 
-def rebuild_zip(blob: bytes, replacements: Dict[str, bytes]) -> bytes:
-    """blob の zip の部品を、同じ順・同じ設定で書き直す。replacements の部品だけ中身を替える。"""
+def rebuild_zip(blob: bytes, replacements: Dict[str, bytes], additions: Optional[Dict[str, bytes]] = None,
+                removals: Sequence[str] = ()) -> bytes:
+    """blob の zip の部品を、同じ順・同じ設定で書き直す。replacements の部品だけ中身を替える。
+    additions の部品は終わりに足し（図の画像）、removals の部品は書かない（使われなくなった図の画像）。"""
     infos, parts = read_parts(blob)
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w") as zf:
         for info in infos:
+            if info.filename in removals:
+                continue
             new = zipfile.ZipInfo(info.filename, date_time=info.date_time)
             new.compress_type = info.compress_type
             new.external_attr = info.external_attr
             new.create_system = info.create_system
             zf.writestr(new, replacements.get(info.filename, parts[info.filename]))
+        for name, data in sorted((additions or {}).items()):
+            if name in parts:
+                continue
+            new = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            new.compress_type = zipfile.ZIP_STORED  # 画像は縮まないので、そのまま入れる
+            new.external_attr = 0o644 << 16
+            zf.writestr(new, data)
     return out.getvalue()
 
 
@@ -501,8 +535,38 @@ def _run_text(w: str, line: str) -> str:
     return "".join(pieces)
 
 
-def new_paragraphs(data: bytes, rng: Range, text: str) -> bytes:
-    """範囲を置き換える段落のバイト列。"""
+class Placed:
+    """図を置く行に入れる絵の、Word の中での形（関係の番号、部品の名前、大きさ、図の番号）。"""
+
+    def __init__(self, figure, rid: str, media: str, cx: int, cy: int, docpr: int) -> None:
+        self.figure, self.rid, self.media, self.cx, self.cy, self.docpr = figure, rid, media, cx, cy, docpr
+
+
+def _figure_paragraph(w: str, placed: Placed, kept: bytes) -> bytes:
+    """図の段落。行の高さを固定した段落の書式を写すと絵が切れるので、書式は写さず、中央に置く。"""
+    title = quoteattr(placed.figure.title)
+    name = quoteattr(f"図 {placed.docpr}")
+    inline = (
+        f'<wp:inline xmlns:wp="{NS_WP}" distT="0" distB="0" distL="0" distR="0">'
+        f'<wp:extent cx="{placed.cx}" cy="{placed.cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>'
+        f'<wp:docPr id="{placed.docpr}" name={name} descr={title}/>'
+        f'<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="{NS_A}" noChangeAspect="1"/></wp:cNvGraphicFramePr>'
+        f'<a:graphic xmlns:a="{NS_A}"><a:graphicData uri="{NS_PIC}"><pic:pic xmlns:pic="{NS_PIC}">'
+        f'<pic:nvPicPr><pic:cNvPr id="{placed.docpr}" name={name} descr={title}/><pic:cNvPicPr><a:picLocks noChangeAspect="1"/>'
+        f'</pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="{NS_R}" r:embed="{placed.rid}"/>'
+        f'<a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/>'
+        f'<a:ext cx="{placed.cx}" cy="{placed.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
+        f'</pic:pic></a:graphicData></a:graphic></wp:inline>'
+    )
+    ppr = (f'<{w}:pPr><{w}:spacing {w}:before="60" {w}:after="60" {w}:line="240" {w}:lineRule="auto"/>'
+           f'<{w}:ind {w}:left="0" {w}:right="0" {w}:firstLine="0"/><{w}:jc {w}:val="center"/></{w}:pPr>')
+    return (f"<{w}:p>{ppr}".encode("utf-8") + kept
+            + f"<{w}:r><{w}:drawing>{inline}</{w}:drawing></{w}:r></{w}:p>".encode("utf-8"))
+
+
+def new_paragraphs(data: bytes, rng: Range, text: str, placed: Optional[Dict[str, Placed]] = None) -> bytes:
+    """範囲を置き換える段落のバイト列。placed の行（図を置く行）は、図の段落にする。"""
+    placed = placed or {}
     nodes = rng.nodes
     paragraphs = [n for n in nodes if n.is_(W, "p")]
     template = _template(paragraphs)
@@ -515,20 +579,149 @@ def new_paragraphs(data: bytes, rng: Range, text: str) -> bytes:
     lines = clean_text(text).split("\n")
     out = []
     for i, line in enumerate(lines):
+        if line.strip() in placed:
+            out.append(_figure_paragraph(w, placed[line.strip()], kept if i == 0 else b""))
+            continue
         body = _run_text(w, line)
         run = (f"<{w}:r>".encode("utf-8") + rpr_bytes + body.encode("utf-8") + f"</{w}:r>".encode("utf-8")) if body else b""
         out.append(f"<{w}:p>".encode("utf-8") + ppr_bytes + (kept if i == 0 else b"") + run + f"</{w}:p>".encode("utf-8"))
     return b"".join(out)
 
 
+# ---------------------------------------------------------------- 図表と写真の置き場所と大きさ
+
+
+def _twips(node: Optional[Node], name: str) -> Optional[int]:
+    if node is None:
+        return None
+    value = node.attr(W, name)
+    try:
+        return int(value) if value is not None else None
+    except ValueError:
+        return None
+
+
+def available_width(root: Node, rng: Range) -> int:
+    """図を置ける幅（twip）。セルの幅から左右の余白を引いたものと、ページの本文の幅の、小さいほう。"""
+    page = FALLBACK_WIDTH
+    body = body_of(root)
+    sect = next((c for c in reversed(body.children) if c.is_(W, "sectPr")), None)
+    if sect is not None:
+        size, margin = sect.find(W, "pgSz"), sect.find(W, "pgMar")
+        sw, left, right = _twips(size, "w"), _twips(margin, "left"), _twips(margin, "right")
+        if sw and left is not None and right is not None and sw - left - right > 0:
+            page = sw - left - right
+    cell = rng.container
+    width = page
+    if cell.is_(W, "tc"):
+        tcpr = cell.find(W, "tcPr")
+        tcw = tcpr.find(W, "tcW") if tcpr is not None else None
+        if tcw is not None and (tcw.attr(W, "type") in (None, "dxa")):
+            w = _twips(tcw, "w")
+            if w:
+                mar = tcpr.find(W, "tcMar")
+                lm = _twips(mar.find(W, "left") if mar is not None else None, "w")
+                rm = _twips(mar.find(W, "right") if mar is not None else None, "w")
+                width = min(page, w - (CELL_MARGIN if lm is None else lm) - (CELL_MARGIN if rm is None else rm))
+    return max(width, 1000)
+
+
+def _docpr_ids(data: bytes) -> List[int]:
+    return [int(m) for m in re.findall(rb'<(?:\w+:)?docPr\b[^>]*?\bid="(\d+)"', data)]
+
+
+def place_figures(data: bytes, root: Node, rng: Range, text: str, figures: Dict) -> Dict[str, Placed]:
+    """書く文の図を置く行ごとに、関係の番号・部品の名前・大きさ（EMU）・図の番号を決める。"""
+    width_emu = available_width(root, rng) * EMU_PER_TWIP
+    next_id = max(_docpr_ids(data) + [0]) + 1
+    out: Dict[str, Placed] = {}
+    for line in clean_text(text).split("\n"):
+        key = line.strip()
+        if key not in figures or key in out:
+            continue
+        fig = figures[key]
+        digest = hashlib.sha1(fig.data).hexdigest()[:12]
+        ext = "jpeg" if fig.kind == "jpeg" else "png"
+        cx = min(width_emu, MAX_PHOTO_EMU if fig.photo else MAX_FIGURE_EMU)
+        cy = int(cx * fig.height_px / max(fig.width_px, 1))
+        if fig.photo and cy > MAX_PHOTO_EMU:  # 縦長の写真は、高さで収める
+            cx, cy = int(MAX_PHOTO_EMU * fig.width_px / max(fig.height_px, 1)), MAX_PHOTO_EMU
+        out[key] = Placed(fig, FIGURE_REL_PREFIX + digest, f"{FIGURE_MEDIA_PREFIX}{digest}.{ext}", cx, cy, next_id)
+        next_id += 1
+    return out
+
+
+def figure_text(p: Node) -> str:
+    """段落の中の絵の代わりの文（「［図：題］」）。絵がなければ空（審査役に渡す本文で、図があることを示すため）。"""
+    out = []
+    for n in p.iter():
+        if n.local == "docPr" and n.uri == NS_WP:
+            descr = n.attrs.get("descr")
+            out.append(f"［図：{descr}］" if descr else "［図］")
+    return "".join(out)
+
+
+def _with_figure_parts(parts: Dict[str, bytes], new_doc: bytes, placed: Dict[str, Placed]
+                       ) -> Tuple[Dict[str, bytes], Dict[str, bytes], List[str]]:
+    """（差し替える部品、足す部品、消す部品）。使われなくなった、この道具の画像と関係は片付ける。"""
+    rels = parts.get(RELS)
+    if rels is None and placed:
+        raise FormError(f"Word の関係の部品（{RELS}）がないので、図を入れられません")
+    used = set(re.findall(rb'embed="(' + FIGURE_REL_PREFIX.encode() + rb'[0-9a-f]+)"', new_doc))
+    replace: Dict[str, bytes] = {}
+    add: Dict[str, bytes] = {}
+    remove: List[str] = []
+    if rels is not None:
+        new_rels = _FIGURE_RELS.sub(lambda m: m.group(0) if re.search(rb'Id="([^"]+)"', m.group(0)).group(1) in used
+                                    else b"", rels)
+        have = set(re.findall(rb'Id="(' + FIGURE_REL_PREFIX.encode() + rb'[0-9a-f]+)"', new_rels))
+        additions = []
+        for p in placed.values():
+            if p.rid.encode() not in have:
+                additions.append(f'<Relationship Id="{p.rid}" Type="{REL_IMAGE}" '
+                                 f'Target="{p.media[len("word/"):]}"/>'.encode("utf-8"))
+                have.add(p.rid.encode())
+                add[p.media] = p.figure.data
+        if additions:
+            m = re.search(rb"</(?:\w+:)?Relationships>\s*$", new_rels)
+            if m is None:
+                raise FormError(f"Word の関係の部品（{RELS}）の形が想定と違うので、図を入れられません")
+            new_rels = new_rels[:m.start()] + b"".join(additions) + new_rels[m.start():]
+        if new_rels != rels:
+            replace[RELS] = new_rels
+        kept_targets = {f"word/{t.decode()}" for t in re.findall(rb'Target="(media/hojokin_zu_[^"]+)"', new_rels)}
+        remove = [name for name in parts if name.startswith(FIGURE_MEDIA_PREFIX) and name not in kept_targets]
+    types = parts.get(CONTENT_TYPES)
+    if types is not None and placed:
+        new_types = types
+        for ext in sorted({p.media.rsplit(".", 1)[1] for p in placed.values()}):
+            if not re.search(rb'<Default\b[^>]*\bExtension="' + ext.encode() + rb'"', new_types, re.I):
+                m = re.search(rb"<(?:\w+:)?Types\b[^>]*>", new_types)
+                if m is None:
+                    raise FormError("Word の種類の部品の形が想定と違うので、図を入れられません")
+                default = f'<Default Extension="{ext}" ContentType="image/{ext}"/>'.encode("utf-8")
+                new_types = new_types[:m.end()] + default + new_types[m.end():]
+        if new_types != types:
+            replace[CONTENT_TYPES] = new_types
+    return replace, add, remove
+
+
+FIGURE_LINE = re.compile(r"^\s*【(図|写真)：.+】\s*$")
+
+
 def write_item(blob: bytes, position: Dict, text: str, label: str = "",
-               other_positions: Sequence[Tuple[str, Dict]] = ()) -> Tuple[bytes, Dict]:
+               other_positions: Sequence[Tuple[str, Dict]] = (), figures: Optional[Dict] = None) -> Tuple[bytes, Dict]:
     """Word のファイル blob の、position の書いてよい範囲に text を書いたファイルのバイト列と、書いたことの要約。
 
-    書いた後に直前の版（blob）と比べ、範囲の外が1か所でも変わっていれば OutsideChange（保存しない）。
+    figures は、図を置く行 → 絵（lib/zuhyo.py の Figure）。書いた後に直前の版（blob）と比べ、範囲の外が1か所でも
+    変わっていれば OutsideChange（保存しない）。
     """
     if not clean_text(text).strip():
         raise FormError("書く文が空です")
+    figures = figures or {}
+    missing = [ln.strip() for ln in clean_text(text).split("\n") if FIGURE_LINE.match(ln) and ln.strip() not in figures]
+    if missing:
+        raise FormError(f"図を置く行（{'、'.join(missing)}）の図がありません。書きません")
     _infos, parts = read_parts(blob)
     if DOC not in parts:
         raise FormError(f"Word の本文の部品（{DOC}）がありません")
@@ -539,14 +732,21 @@ def write_item(blob: bytes, position: Dict, text: str, label: str = "",
     if _field_balance(nodes) != 0:
         raise FormError(f"「{rng.label}」の書いてよい範囲に、範囲の外へまたがるフィールドがあります。書きません")
     removed_blue = sum(1 for n in nodes if n.is_(W, "p") and blue_state(n))
-    new_data = xml_spans.splice(data, nodes[0].start, nodes[-1].end, new_paragraphs(data, rng, text))
-    new_blob = rebuild_zip(blob, {DOC: new_data})
+    placed = place_figures(data, root, rng, text, figures)
+    new_data = xml_spans.splice(data, nodes[0].start, nodes[-1].end, new_paragraphs(data, rng, text, placed))
+    replace, add, remove = _with_figure_parts(parts, new_data, placed)
+    replace[DOC] = new_data
+    # 足す・消す部品（図の画像）があるときだけ渡す（図のない書き込みは、前と同じ呼び方のまま）
+    extra = {k: v for k, v in (("additions", add), ("removals", remove)) if v}
+    new_blob = rebuild_zip(blob, replace, **extra)
     positions = [(rng.label, position)] + [(lab, pos) for lab, pos in other_positions if lab != rng.label]
     differences = compare_docx(blob, new_blob, positions)
     if differences:
         raise OutsideChange(differences)
+    text_lines = [ln for ln in clean_text(text).split("\n") if ln.strip() not in placed]
     summary = {"項目": rng.label, "段落": len(clean_text(text).split("\n")), "消した説明の青字の段落": removed_blue,
-               "文字数": len(clean_text(text).replace("\n", ""))}
+               "文字数": len("".join(text_lines)), "図": [p.figure.title for p in placed.values()],
+               "図の幅（cm）": [round(p.cx / 360000, 1) for p in placed.values()]}
     return new_blob, summary
 
 
@@ -555,7 +755,7 @@ def item_text(blob: bytes, position: Dict) -> str:
     _infos, parts = read_parts(blob)
     root = xml_spans.parse(parts[DOC])
     rng = resolve(root, position)
-    return "\n".join(text_of(n) for n in rng.nodes if n.is_(W, "p"))
+    return "\n".join(text_of(n) or figure_text(n) for n in rng.nodes if n.is_(W, "p"))
 
 
 # ---------------------------------------------------------------- 比べる
@@ -706,6 +906,21 @@ def compare_document(before: bytes, after: bytes, positions: Sequence[Tuple[str,
     return out[:MAX_DIFFS]
 
 
+def _without_figures(parts: Dict[str, bytes]) -> Dict[str, bytes]:
+    """比べる前に、この道具が足す・片付ける図の部品（画像、関係、png・jpeg の種類の登録）を除く。
+    図の段落そのものは書いてよい範囲の中にあり、範囲の比べ方で覆う。"""
+    out = {}
+    for name, data in parts.items():
+        if name.startswith(FIGURE_MEDIA_PREFIX):
+            continue
+        if name == RELS:
+            data = _FIGURE_RELS.sub(b"", data)
+        elif name == CONTENT_TYPES:
+            data = _IMAGE_DEFAULTS.sub(b"", data)
+        out[name] = data
+    return out
+
+
 def compare_docx(before: bytes, after: bytes, positions: Sequence[Tuple[str, Dict]]) -> List[str]:
     """Word のファイルどうしを比べ、書いてよい範囲の外の差の一覧を返す（0件なら空）。"""
     try:
@@ -716,7 +931,7 @@ def compare_docx(before: bytes, after: bytes, positions: Sequence[Tuple[str, Dic
         _i, parts_a = read_parts(after)
     except FormError as e:
         return [f"書いた後のファイルを読めません（{e}）"]
-    out = compare_parts(parts_b, parts_a, skip=(DOC,))
+    out = compare_parts(_without_figures(parts_b), _without_figures(parts_a), skip=(DOC,))
     if DOC not in parts_b or DOC not in parts_a:
         out.append(f"本文の部品（{DOC}）がありません")
         return out

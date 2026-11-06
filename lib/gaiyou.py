@@ -23,8 +23,9 @@ Claude が渡す JSON の形
   "制度の概要": "平易な説明（文字か、文字の並び。並びは段落に分ける）",
   "流れの説明": "（任意）申請から効果報告までの流れの、平易な説明",
   "要件の判定": [                                     （任意。ない要件は「まだ確かめていません」）
-    {"要件": "<数値の要件か、数値でない要件の名前>", "判定": "満たす" / "満たさない見込み" / "確かめが要る",
+    {"要件": "<数値の要件か、数値でない要件の名前>", "判定": "満たす" / "当てはまらない" / "満たさない見込み" / "確かめが要る",
      "理由": "…", "会社の記録": ["<会社の記録の項目の id>", …]（任意）}
+    （当てはまらない：使わない特例・加点の要件や、従業員の数などで対象にならない要件。返還の表からも省く）
   ],
   "加点の判定": [                                     （任意。ない加点は「まだ確かめていません」）
     {"加点": "<加点の項目の名前>", "判定": "取れる見込み" / "今回は取れない" / "確かめが要る",
@@ -38,17 +39,25 @@ Claude が渡す JSON の形
   }
 }
 
-節と、制度データのどこから作るか（仮。TASKS M2d で決めた形）
-- 制度の概要：Claude の文、補助額（区分ごと）、審査の段階
-- 自社が満たす要件：数値の要件（基準・計算式・元の数字の決め方）と数値でない要件（内容・確かめ方・満たせないとき）
-- 義務と返還の条件：制度データにまだ「義務」の欄がない（DESIGN 9章。K1 で足す）ので、
-  数値の要件の「満たせないとき」、してはいけないこと、申請より後の手続きの段階の「注意」から作る
+節と、制度データのどこから作るか（TASKS M2d で決めた形。11/6 のリハーサルの後に短くした）
+応募の前に、細かい定めや交付申請より後の書類・注意まで読ませると、分かりにくい（作者のリハーサル。前の形は60ページを超えた）。
+そこで、応募の準備に要るところだけを、1件1行の表で10ページ以内にまとめる（SPEC F3・T3-9）。
+どの件も名前は落とさず、欄は主なもの1つ（要件は基準か内容、書類は条件・有効期限など）にしぼる。外した欄（計算式、
+元の数字の決め方、確かめ方、書類の内容・形式、採択された後の手続きの書類と注意、問い合わせ文の案）は制度データに残り、
+質問に答えるとき（F4）や、採択の後に段階を切り替えるとき（F12。stage_switch）に、資料のページを示して出す。
+出典は、同じ資料のページを1行にまとめる（「公募要領 p.15、16」）。
+- 制度の概要：Claude の文、全体の流れ（手続きの段階の名前を1行で）、補助額（区分ごとの上限・補助率）、
+  特例（特例ごとに1行。区分で違う値は1つの欄に並べ、条件は幅の広い欄に置く）、審査の段階
+- 自社が満たす要件：数値の要件は基準、数値でない要件は内容（当たると対象外のものは頭に印）と、Claude の判定
 - 補助額の見込み：選んだ区分の上限・補助率と特例、会社の記録の経費から、min(経費 × 補助率（円未満切り捨て）, 上限＋上乗せ)
-- 流れと期限：手続きの段階（順番の順。条件付きの段階には「必要なときだけ」）の始まる条件と期限の決め方、決まった期日。
-  期限の日付の計算は、期限の台帳（K1・M3）で行い、ここでは決め方を文にする
-- 加点：加点の種類の数・区分ごとの上限、項目ごとの中身。取れるかは Claude の判定（日付からの判定は B24）
-- 必要書類：書類を、使う手続きの段階ごとに（必須 → 条件付き → 任意の順）
-- あわせて、読み取れなかった項目（理由と問い合わせ文の案）、資料どうしの食い違い、出典の資料の一覧
+- 加点：加点の種類の数・区分ごとの上限（1つの段落）、項目ごとの内容。取れるかは Claude の判定（日付からの判定は B24）
+- <最初の手続きの段階>で出す書類：申請の段階で使う書類（必須 → 条件付き → 任意の順）の、条件・有効期限・期数・発行元
+  （自社でないとき）・効く審査項目。どの手続きで使うか分からない書類は、その後に別の表
+- 義務と返還の条件：制度データにまだ「義務」の欄がない（DESIGN 9章。K1 で足す）ので、
+  要件の「満たせないとき」と、してはいけないことから作る（応募の前に知っておくこと）
+- 流れと期限：手続きの段階（順番の順。条件付きの段階には「必要なときだけ」）の期限の決め方と、決まった期日。
+  期限の日付の計算は、期限の台帳（K1・M3）で行い、ここでは決め方を文にする。採択された後の書類と注意は件数だけを示す
+- あわせて、読み取れなかった項目（理由）、資料どうしの食い違い、出典の資料の一覧
 """
 
 from __future__ import annotations
@@ -78,9 +87,19 @@ MARKS = {CHECK: "【要確認】", CONFLICT: "【資料で食い違い】"}
 UNREAD_TEXT = "読み取れませんでした"
 NOT_JUDGED = "まだ確かめていません"
 NO_SOURCE = "（出典のある値がありません）"
+SOURCE_HEAD = "出典："  # 表の名前の欄の下に置く出典の行の頭
 UNKNOWN_STAGE_DOCS = "どの手続きで使うか分からない書類"
+APPLY_DOCS_FALLBACK = "申請で出す書類"  # 手続きの段階が制度データにないとき
+OFF_PREFIX = "当たると対象外："  # 数値でない要件のうち、当たらないことの中身の頭に付ける
+# 要件と加点の表の見出し（判定で決着したものは、中身を省いた短い表に分ける）
+PENDING_REQS = "満たすと決まっていない要件"
+SETTLED_REQS = "満たす要件・当てはまらない要件"
+PENDING_BONUS = "取れる見込みの加点・確かめが要る加点"
+SETTLED_BONUS = "今回は取れない加点"
 
-REQ_JUDGES = ("満たす", "満たさない見込み", "確かめが要る")
+# 当てはまらない：使わない特例・加点の要件や、従業員の数などで対象にならない要件（返還の表からも省く）
+REQ_JUDGES = ("満たす", "当てはまらない", "満たさない見込み", "確かめが要る")
+SETTLED_JUDGES = ("満たす", "当てはまらない")
 BONUS_JUDGES = ("取れる見込み", "今回は取れない", "確かめが要る")
 INPUT_KEYS = ("制度の概要", "流れの説明", "要件の判定", "加点の判定", "補助額の見込み")
 REQ_KEYS = ("要件", "判定", "理由", "会社の記録")
@@ -94,10 +113,16 @@ _YEN = re.compile(r"^([0-9]+(?:\.[0-9]+)?)(億|万|千)?円?$")
 _TAIL_PAREN = re.compile(r"[（(][^）)]*[）)]$")
 _UNITS = {None: 1, "千": 1000, "万": 10000, "億": 100000000}
 
-# 列の幅（twip）。A4 の本文の幅は 9,638
-W3 = [2300, 4938, 2400]
-W4 = [2000, 3838, 1900, 1900]
-W5 = [700, 2100, 2338, 2600, 1900]
+# 余白と列の幅（twip）。余白 15mm で、A4 の本文の幅は 10,204。表はどれも compact（文字を少し小さく、行の間を詰める）。
+# 出典の列は設けず、行の中で空きのある欄に「出典：…」の行を置く（named）
+MARGIN = 851
+W2 = [3100, 7104]                     # 名前と出典・中身
+W2_WIDE = [4200, 6004]                # 名前・理由と出典（満たすと決まった要件、今回は取れない加点、してはいけないこと）
+W2_NARROW = [2500, 7704]              # 項目・中身と出典（補助額の見込み、決まった期日）
+W3 = [3000, 4900, 2304]               # 名前と出典・中身・自社の状況（取れるか）
+W_DOC = [3700, 1100, 5404]            # 書類・区分・要点と出典
+W_AMOUNT = [4000, 3200, 3004]         # 区分と出典・補助上限・補助率
+W_SOURCES = [2000, 5604, 1100, 1500]  # 呼び名・資料の名前（リンク）・回・取得日
 
 
 class GaiyouError(Exception):
@@ -264,8 +289,10 @@ class Context:
     # 出典
 
     def source_label(self, src: Dict) -> str:
+        """資料の呼び名（資料の一覧の id。「要領8」など）とページ。名前との対応は、Word の終わりの「出典の資料」の表にある
+        （名前のままだと、狭い出典の欄で1つの出典が2行に折れ、行が縦に長くなるため。11/6 のリハーサルの指摘）。"""
         doc = self.docs.get(src.get("資料"))
-        name = str(doc.get("名前") or src.get("資料")) if doc else str(src.get("資料"))
+        name = str(src.get("資料"))
         doc_round = str(doc.get("公募回") or "") if doc else ""
         if doc_round and doc_round != self.round and _ROUND.match(doc_round):
             name += f"（{doc_round}）"
@@ -276,30 +303,21 @@ class Context:
         return name
 
     def sources(self, *nodes: Any) -> List[str]:
+        """値ごとに、最初の出典だけ（2つ目からの出典は制度データに残る。Word では出典の行を1行に収めるため。11/6 の後）。"""
         out: List[str] = []
         for node in nodes:
             if is_sv(node) and node["状態"] != UNREADABLE:
-                _add(out, (self.source_label(s) for s in node.get("出典") or [] if isinstance(s, dict)))
+                first = next((s for s in node.get("出典") or [] if isinstance(s, dict)), None)
+                if first is not None:
+                    _add(out, [self.source_label(first)])
         return out
 
     def record_label(self, item_id: str) -> str:
+        """会社の記録の項目の名前（「会社の記録「従業員の数」」）。どこから覚えたか（原本のページ・社長の発言の日など）は
+        会社の記録にあり、kiroku で見られる。Word では長くなるので名前だけにする（11/6 のリハーサルの後）。"""
         item = self.record.get(item_id) or {}
         name = item.get("名前") or item.get("内容") or item.get("案件") or item_id
-        src = item.get("出典") if isinstance(item.get("出典"), dict) else {}
-        kind = src.get("種類")
-        if kind == "原本":
-            where = str(src.get("ファイル"))
-            if isinstance(src.get("ページ"), int):
-                where += f" p.{src['ページ']}"
-        elif kind == "質問":
-            where = f"質問への答え（{src.get('答えた日')}）"
-        elif kind == "社長の手直し":
-            where = f"社長の手直し（{src.get('ファイル')}、{src.get('日付')}）"
-        elif kind == "社長の発言":
-            where = f"社長の発言（{src.get('日付')}）"
-        else:
-            where = "出典がありません"
-        return f"会社の記録「{_norm(name)}」：{where}"
+        return f"会社の記録「{_norm(name)}」"
 
     def record_sources(self, ids: Optional[Sequence[str]]) -> List[str]:
         return [self.record_label(i) for i in ids or []]
@@ -386,11 +404,44 @@ class Context:
         return out, srcs
 
 
-def source_cell(sources: List[str], value_text: str = "") -> str:
+def merge_pages(sources: List[str]) -> List[str]:
+    """同じ資料のページを1行にまとめる（「公募要領 p.15」「公募要領 p.16」→「公募要領 p.15、16」）。
+    資料の順は、はじめに出た順。会社の記録の出典は、そのまま1行ずつ。"""
+    order: List[str] = []
+    pages: Dict[str, List[str]] = {}
+    for label in sources:
+        name, sep, page = label.partition(" p.")
+        if not sep or label.startswith("会社の記録"):
+            if label not in order:
+                order.append(label)
+            continue
+        if name not in pages:
+            pages[name] = []
+            if name not in order:
+                order.append(name)
+        if page not in pages[name]:
+            pages[name].append(page)
+    return [f"{x} p.{'、'.join(pages[x])}" if x in pages else x for x in order]
+
+
+def source_text(sources: List[str], value_text: str = "") -> str:
+    """出典の1行（「出典：要領8 p.15、16、会社の記録「従業員の数」」）。同じ資料のページはまとめ、出典どうしは「、」でつなぐ。"""
     if sources:
-        return "\n".join(sources)
+        return SOURCE_HEAD + "、".join(merge_pages(sources))
     # 読み取れない値だけの行は、出典の代わりに値の欄に理由がある
     return "" if UNREAD_TEXT in value_text else NO_SOURCE
+
+
+def named(name: str, sources: List[str], value_text: str = "", inline: bool = False) -> str:
+    """文の下に出典の行を置いたセル。出典の列を設けず、中身の欄を広くする（狭い欄で行が縦に長くなるため。11/6 の後）。
+    出典は、行の中で空きのある欄に置く（中身の長い表は名前の下、理由・要点の短い表はその下）。
+    inline は、短い文の後ろに「（出典：…）」で続ける（行を増やさない）。"""
+    src = source_text(sources, value_text)
+    if not name:
+        return src
+    if not src:
+        return name
+    return f"{name}（{src}）" if inline else f"{name}\n{src}"
 
 
 def judge_cell(ctx: Context, judge: Optional[Dict]) -> Tuple[str, List[str]]:
@@ -418,7 +469,12 @@ def _find_special(entry: Dict, name: str) -> Optional[Dict]:
 
 
 def estimate_rows(ctx: Context, spec: Dict) -> Tuple[List[List[str]], Dict[str, Any]]:
-    """補助額の見込みの表の行（項目・中身・出典）と、結果のまとめ。"""
+    """補助額の見込みの表の行（項目と出典・中身）と、結果のまとめ。"""
+    rows: List[List[str]] = []
+
+    def add(item: str, text: str, srcs: List[str]) -> None:
+        rows.append([item, named(text, srcs, text)])
+
     entry = _find_amount(ctx.seido, spec["区分"])
     cap_node = entry["上限"]
     rate_node = entry["補助率"]
@@ -435,10 +491,9 @@ def estimate_rows(ctx: Context, spec: Dict) -> Tuple[List[List[str]], Dict[str, 
     cost = parse_yen(ctx.record[cost_id]["値"])
     cost_src = ctx.record_sources([cost_id])
 
-    rows: List[List[str]] = []
     region = spec["区分"].strip() + (f"\n{spec['理由'].strip()}" if _filled(spec.get("理由")) else "")
     region_src = ctx.sources(entry["上限"], entry["補助率"]) + ctx.record_sources(spec.get("会社の記録"))
-    rows.append(["当たる区分", region, source_cell(region_src)])
+    add("当たる区分", region, region_src)
     if specials:
         texts = []
         srcs: List[str] = []
@@ -446,16 +501,16 @@ def estimate_rows(ctx: Context, spec: Dict) -> Tuple[List[List[str]], Dict[str, 
             cond = special.get("条件")
             texts.append(f"{special['名前']}（{special['種類']}）" + (f"\n条件：{ctx.text(cond)}" if is_sv(cond) else ""))
             _add(srcs, ctx.sources(special["値"], cond))
-        rows.append(["使う特例", "\n".join(texts), source_cell(srcs)])
+        add("使う特例", "\n".join(texts), srcs)
     cap_text = ctx.text(cap_node, yen)
     for node in adds:
         cap_text += f"\n上乗せ：{ctx.text(node, yen)}"
     cap_src = ctx.sources(cap_node, *adds)
-    rows.append(["補助上限", cap_text, source_cell(cap_src, cap_text)])
+    add("補助上限", cap_text, cap_src)
     rate_text = ctx.text(rate_node)
     rate_src = ctx.sources(rate_node)
-    rows.append(["補助率", rate_text, source_cell(rate_src, rate_text)])
-    rows.append(["補助の対象にする経費", yen(cost), source_cell(cost_src)])
+    add("補助率", rate_text, rate_src)
+    add("補助の対象にする経費", yen(cost), cost_src)
 
     used = [cap_node, rate_node] + adds
     all_src: List[str] = []
@@ -464,13 +519,12 @@ def estimate_rows(ctx: Context, spec: Dict) -> Tuple[List[List[str]], Dict[str, 
     missing = [label for label, node in (("補助上限", cap_node), ("補助率", rate_node)) if not usable(node)]
     missing += ["上乗せ" for node in adds if not usable(node)]
     if missing:
-        text = f"出せません（{'・'.join(missing)}が読み取れないため。事務局に確かめてから出し直します）"
-        rows.append(["補助額の見込み", text, source_cell(all_src)])
+        add("補助額の見込み", f"出せません（{'・'.join(missing)}が読み取れないため。資料で値が分かったら出し直します）", all_src)
         return rows, summary
     try:
         rate = Fraction(str(rate_node["値"]))
     except (ValueError, ZeroDivisionError):
-        rows.append(["補助額の見込み", "出せません（補助率を数として読めないため）", source_cell(all_src)])
+        add("補助額の見込み", "出せません（補助率を数として読めないため）", all_src)
         return rows, summary
     limit = int(cap_node["値"]) + sum(int(n["値"]) for n in adds)
     product = cost * rate
@@ -481,9 +535,9 @@ def estimate_rows(ctx: Context, spec: Dict) -> Tuple[List[List[str]], Dict[str, 
     flags = "".join(marks)
     how = f"{yen(cost)} × {rate_node['値']} ＝ {yen(raw)}"
     how += f"。上限の{yen(limit)}で頭打ち" if raw > limit else f"。上限の{yen(limit)}の内"
-    rows.append(["補助額の見込み", f"{flags}{yen(amount)}\n（{how}）", source_cell(all_src)])
-    rows.append(["自己負担の目安", f"{flags}{yen(cost - amount)}\n（補助の対象にする経費から補助額の見込みを引いたもの。"
-                                     "消費税と、補助の対象にならない経費は別）", source_cell(all_src)])
+    add("補助額の見込み", f"{flags}{yen(amount)}\n（{how}）", all_src)
+    add("自己負担の目安", f"{flags}{yen(cost - amount)}\n（補助の対象にする経費から補助額の見込みを引いたもの。"
+                         "消費税と、補助の対象にならない経費は別）", all_src)
     summary["見込み"] = amount
     return rows, summary
 
@@ -625,237 +679,324 @@ def _judges(data: Dict, key: str, target: str) -> Dict[str, Dict]:
     return {_norm(j[target]): j for j in data.get(key) or []}
 
 
+def flow_line(stages: List[Dict]) -> str:
+    """全体の流れを1行で（手続きの段階の名前を順に）。必要なときだけの段階は、別の行にまとめる。"""
+    main = [str(s.get("名前")) for s in stages if not s.get("条件付き")]
+    extra = [str(s.get("名前")) for s in stages if s.get("条件付き")]
+    if not main and not extra:
+        return ""
+    lines = [f"全体の流れ：{' → '.join(main)}"] if main else []
+    if extra:
+        lines.append(f"必要なときだけの手続き：{'、'.join(extra)}")
+    return "\n".join(lines)
+
+
+def special_rows(ctx: Context, amounts: List[Dict]) -> List[List[str]]:
+    """特例の表の行（特例と出典・中身）。区分ごとに同じ特例が繰り返されるので、特例の名前で1行にまとめる。
+
+    区分で違う値（上限の置き換えなど）は、同じ欄に区分ごとに並べる。条件も、区分で違うときだけ区分ごとに並べる。
+    """
+    groups: Dict[str, Dict[str, Any]] = {}
+    for entry in amounts:
+        region = str(entry.get("区分"))
+        for s in entry.get("特例") or []:
+            if not isinstance(s, dict):
+                continue
+            g = groups.setdefault(_norm(s.get("名前", "")), {"名前": str(s.get("名前")).strip(), "種類": [],
+                                                             "値": [], "条件": [], "出典": []})
+            kind = str(s.get("種類"))
+            if kind not in g["種類"]:
+                g["種類"].append(kind)
+            fmt = None if kind == "補助率の置き換え" else yen
+            g["値"].append((region, ctx.text(s.get("値"), fmt)))
+            if is_sv(s.get("条件")):
+                g["条件"].append((region, ctx.text(s["条件"])))
+            _add(g["出典"], ctx.sources(s.get("値"), s.get("条件")))
+    regions = [str(e.get("区分")) for e in amounts]
+    rows = []
+    for g in groups.values():
+        kinds = "・".join(g["種類"])
+        values = g["値"]
+        if len({t for _r, t in values}) == 1:
+            lines = [f"{kinds}：{values[0][1]}"]
+        else:
+            # 区分ごとの値は「／」でつないで1つの段落に（区分ごとに1行にすると、縦に長くなる）
+            lines = [f"{kinds}：" + "／".join(f"{r} {t}" for r, t in values)]
+        used = [r for r, _t in values]
+        if set(used) != set(regions):
+            lines.append(f"使える区分：{'、'.join(used)}")
+        conds = g["条件"]
+        if conds and len({t for _r, t in conds}) == 1 and len(conds) == len(values):
+            lines.append(f"条件：{conds[0][1]}")
+        else:
+            lines += [f"条件（{r}）：{t}" for r, t in conds]
+        body = "\n".join(lines)
+        rows.append([named(g["名前"], g["出典"], body), body])
+    return rows
+
+
+def split_tables(doc: Document, pending_title: str, pending: List[List[str]], settled_title: str,
+                 settled: List[List[str]]) -> None:
+    """まだ決まっていない行の表（名前と出典・中身・判定）と、判定で決着した行の短い表を、見出しとともに置く。
+    まだ決まっていない行がどれも判定なしなら、判定の列（すべて「まだ確かめていません」）を外し、中身の欄を広くする。"""
+    if len(pending) > 1:
+        if all(row[2] == NOT_JUDGED for row in pending[1:]):
+            doc.heading(f"{pending_title}（どれも、{NOT_JUDGED}）", 2)
+            doc.table([row[:2] for row in pending], widths=W2, compact=True)
+        else:
+            doc.heading(pending_title, 2)
+            doc.table(pending, widths=W3, compact=True)
+    if len(settled) > 1:
+        doc.heading(settled_title, 2)
+        doc.table(settled, widths=W2_WIDE, compact=True)
+
+
+def doc_rows(ctx: Context, members: List[Dict]) -> List[List[str]]:
+    """書類の表の行（書類と出典・区分・要点）。必須 → 条件付き → 任意の順（区分の中は制度データの順）。
+
+    要点は、条件・有効期限・期数と、発行元（自社でないとき。取りに行く・頼む書類だと分かるように）、効く審査項目。
+    内容・形式・出す人は入れない（書類の名前で分かることが多く、長くなるため。制度データには残る）。
+    出典は、内容も含めて付ける（書類が要ることの出典）。"""
+    rows = []
+    for cls in DOC_CLASSES:
+        for d in members:
+            if d.get("区分") != cls:
+                continue
+            lines, srcs = ctx.lines(d, (("条件", "条件"), ("有効期限", "有効期限"), ("期数", "期数")))
+            content = d.get("内容")
+            srcs = ctx.sources(content) + [s for s in srcs if s not in ctx.sources(content)]
+            if is_sv(content) and content["状態"] == UNREADABLE:
+                lines.insert(0, f"内容：{ctx.text(content)}")  # 出典の代わりに、読み取れない理由を出す
+            issuer = d.get("発行元")
+            if _filled(issuer) and issuer.strip() != "自社":
+                lines.append(f"発行元：{issuer.strip()}")
+            if d.get("効く審査項目"):
+                lines.append(f"効く審査項目：{'、'.join(map(str, d['効く審査項目']))}")
+            body = "／".join(lines)  # 要点は「／」でつなぎ、行を増やさない
+            rows.append([str(d.get("名前")), cls, named(body, srcs, body, inline=True)])
+    return rows
+
+
 def build(ctx: Context, data: Dict, case: str, today: date, notices: List[str]) -> Tuple[Document, Dict[str, Any]]:
     seido = ctx.seido
     summary: Dict[str, Any] = {}
-    doc = Document()
+    doc = Document(margin_tb=MARGIN, margin_lr=MARGIN, tight=True)  # 余白 15mm、行間を詰める（10ページ以内にまとめるため）
     doc.title("概要と流れ")
     info = seido.get("制度") or {}
     frame = f"（{info['枠']}）" if info.get("枠") else ""
-    head = [f"案件：{case}", f"制度：{info.get('名前')}{frame}", f"制度データの回：{info.get('公募回')}の資料に基づく",
-            f"作った日：{dates.format_date(today)}"]
+    head = [f"案件：{case}　作った日：{dates.format_date(today)}",
+            f"制度：{info.get('名前')}{frame}（制度データは{info.get('公募回')}の資料に基づく）"]
     doc.paragraph("\n".join(head + [n.strip() for n in notices if _filled(n)]))
-    doc.paragraph("数字・期限・一覧は、制度データ（公募要領などから出典つきで読み取ったもの）と会社の記録から道具が入れています。"
-                  "【要確認】の印がある値は、資料と照らして確かめが要るものです。")
+    doc.paragraph("応募の準備に要るところだけを短くまとめています。数字・期限・一覧は、公募要領などの資料（出典は呼び名とページ。"
+                  "呼び名は終わりの「出典の資料」）と会社の記録から入れています。【要確認】は、資料と照らして確かめが要る値です。"
+                  "細かい決まりと、採択された後の手続きは、要るときに案内します。")
+    first = ctx.stages[0] if ctx.stages else None
+    apply_docs = f"{first.get('名前')}で出す書類" if first else APPLY_DOCS_FALLBACK
 
     # 1. 制度の概要
     doc.heading("制度の概要", 1)
     for para in _paragraphs(data["制度の概要"]):
         doc.paragraph(para)
+    flow = flow_line(ctx.stages)
+    # 審査の段階は、名前を1行で（条件の文は制度データに残る）
+    reviews = [s for s in seido.get("審査の段階") or [] if isinstance(s, dict)]
+    if reviews:
+        src = source_text(ctx.sources(*(s.get("条件") for s in reviews)))
+        flow = "\n".join(x for x in (flow, f"審査の段階：{' → '.join(str(s.get('名前')) for s in reviews)}"
+                                      + (f"（{src}）" if src else "")) if x)
+    if flow:
+        doc.paragraph(flow)
+    amounts = [e for e in seido.get("補助額") or [] if isinstance(e, dict)]
     doc.heading("補助額（区分ごと）", 2)
-    rows = [["区分", "補助上限・補助率", "特例", "出典"]]
-    for entry in seido.get("補助額") or []:
+    rows = [["区分", "補助上限", "補助率"]]
+    for entry in amounts:
         cap = ctx.text(entry.get("上限"), yen)
         rate = ctx.text(entry.get("補助率"))
-        srcs = ctx.sources(entry.get("上限"), entry.get("補助率"))
-        specials = []
-        for s in entry.get("特例") or []:
-            fmt = None if s.get("種類") == "補助率の置き換え" else yen
-            line = f"{s.get('名前')}（{s.get('種類')}）：{ctx.text(s.get('値'), fmt)}"
-            if is_sv(s.get("条件")):
-                line += f"\n条件：{ctx.text(s['条件'])}"
-            specials.append(line)
-            _add(srcs, ctx.sources(s.get("値"), s.get("条件")))
-        body = f"補助上限：{cap}\n補助率：{rate}"
-        rows.append([str(entry.get("区分")), body, "\n".join(specials) or "なし", source_cell(srcs, body)])
-    doc.table(rows, widths=W4)
-    doc.heading("審査の段階", 2)
-    rows = [["段階", "条件", "出典"]]
-    for stage in seido.get("審査の段階") or []:
-        text = ctx.text(stage.get("条件"))
-        rows.append([str(stage.get("名前")), text, source_cell(ctx.sources(stage.get("条件")), text)])
-    doc.table(rows, widths=W3)
+        rows.append([named(str(entry.get("区分")), ctx.sources(entry.get("上限"), entry.get("補助率")), cap + rate), cap, rate])
+    doc.table(rows, widths=W_AMOUNT, compact=True)
+    doc.heading("特例（補助上限・補助率が変わるとき）", 2)
+    rows = special_rows(ctx, amounts)
+    if rows:
+        doc.paragraph("条件に当たると、上の表の補助上限か補助率が置き換わるか、上乗せされます。")
+        doc.table([["特例", "中身"]] + rows, widths=W2, compact=True)
+    else:
+        doc.paragraph("特例はありません。")
 
-    # 2. 自社が満たす要件
+    # 2. 自社が満たす要件（数値の要件は基準、数値でない要件は内容だけ。計算式などは制度データに残る）
+    # 満たすと決まった要件は、中身を省いて理由だけの短い表にする（社長が読むのは、まだ決まっていない要件。11/6 の後）
     doc.heading("自社が満たす要件", 1)
-    doc.paragraph("「自社の状況」は、会社の記録と聞き取りから当てはめたものです。「まだ確かめていません」の要件は、"
-                  "これから社長に確かめます。")
+    doc.paragraph("会社の記録と聞き取りから当てはめた結果です。満たす・当てはまらないと決まった要件は、中身を省いて理由だけを"
+                  "書いています。「まだ確かめていません」の要件は、これから社長に確かめます。")
     judges = _judges(data, "要件の判定", "要件")
-    rows = [["要件", "中身", "自社の状況", "出典"]]
+    pending = [["要件", "中身", "自社の状況"]]
+    settled = [["要件", "判定と理由"]]
     count = judged = 0
-    for req in seido.get("数値の要件") or []:
-        lines, srcs = ctx.lines(req, (("基準", "基準"), ("計算式", "計算式"), ("元の数字の決め方", "元の数字の決め方")))
+    reqs = [(r, "基準", "") for r in seido.get("数値の要件") or []]
+    reqs += [(r, "内容", OFF_PREFIX if r.get("種類") == "当たらないこと" else "") for r in seido.get("数値でない要件") or []]
+    for req, key, prefix in reqs:
+        node = req.get(key)
+        srcs = ctx.sources(node)
         judge = judges.get(_norm(req.get("名前")))
         jtext, jsrc = judge_cell(ctx, judge)
-        body = "\n".join(lines)
-        rows.append([f"{req.get('名前')}\n（数値の要件）", body, jtext, source_cell(srcs + [s for s in jsrc if s not in srcs], body)])
+        srcs += [s for s in jsrc if s not in srcs]
+        if judge and judge["判定"] in SETTLED_JUDGES:
+            settled.append([str(req.get("名前")), named(f"{judge['判定']}：{judge['理由'].strip()}", srcs, inline=True)])
+        else:
+            body = prefix + ctx.text(node) if is_sv(node) else ""
+            pending.append([named(str(req.get("名前")), srcs, body), body, jtext])
         count += 1
         judged += bool(judge)
-    for req in seido.get("数値でない要件") or []:
-        lines, srcs = ctx.lines(req, (("内容", "内容"), ("確かめ方", "確かめ方"), ("満たせないとき", "満たせないとき")))
-        judge = judges.get(_norm(req.get("名前")))
-        jtext, jsrc = judge_cell(ctx, judge)
-        kind = "（当たると対象外）" if req.get("種類") == "当たらないこと" else "（満たすこと）"
-        body = "\n".join(lines)
-        rows.append([f"{req.get('名前')}\n{kind}", body, jtext, source_cell(srcs + [s for s in jsrc if s not in srcs], body)])
-        count += 1
-        judged += bool(judge)
-    doc.table(rows, widths=W4)
+    split_tables(doc, PENDING_REQS, pending, SETTLED_REQS, settled)
     summary["要件"] = (count, judged)
 
-    # 3. 義務と返還の条件
-    doc.heading("義務と返還の条件", 1)
-    doc.paragraph("採択された後も守り続けることと、守れないときに補助金を返すことになる条件です。")
-    duty = 0
-    doc.heading("満たせないと返還などがある数値の要件", 2)
-    rows = [["要件", "基準", "満たせないとき", "出典"]]
-    for req in seido.get("数値の要件") or []:
-        if "満たせないとき" not in req:
-            continue
-        base = ctx.text(req.get("基準"))
-        fail = ctx.text(req.get("満たせないとき"))
-        rows.append([str(req.get("名前")), base, fail,
-                     source_cell(ctx.sources(req.get("基準"), req.get("満たせないとき")), base + fail)])
-        duty += 1
-    if len(rows) == 1:
-        rows.append(["なし", "満たせないときの定めのある数値の要件は、制度データにありません", "", ""])
-    doc.table(rows, widths=W4)
-    doc.heading("してはいけないこと", 2)
-    rows = [["してはいけないこと", "中身", "出典"]]
-    for item in seido.get("してはいけないこと") or []:
-        text = ctx.text(item.get("内容"))
-        rows.append([str(item.get("名前")), text, source_cell(ctx.sources(item.get("内容")), text)])
-        duty += 1
-    doc.table(rows, widths=W3)
-    doc.heading("採択後の手続きで守ること", 2)
-    rows = [["手続き", "守ること・注意", "出典"]]
-    for stage in ctx.stages[1:]:
-        for note in stage.get("注意") or []:
-            text = ctx.text(note)
-            rows.append([str(stage.get("名前")), text, source_cell(ctx.sources(note), text)])
-            duty += 1
-    doc.table(rows, widths=W3)
-    summary["義務と返還の条件"] = duty
-
-    # 4. 補助額の見込み
+    # 3. 補助額の見込み
     doc.heading("補助額の見込み", 1)
     spec = data.get("補助額の見込み")
     if spec:
         rows, est = estimate_rows(ctx, spec)
-        doc.table([["項目", "中身", "出典"]] + rows, widths=W3)
+        doc.table([["項目", "中身"]] + rows, widths=W2_NARROW, compact=True)
         summary["補助額の見込み"] = est
     else:
         doc.paragraph("まだ見込みを出していません。補助額のどの区分に当たるかと、補助の対象にする経費の額が分かったら出します。")
         summary["補助額の見込み"] = None
 
-    # 5. 流れと期限
+    # 4. 加点（種類の数と区分ごとの上限は1つの段落。項目は内容だけ）
+    doc.heading("加点", 1)
+    bonus = seido.get("加点") or {}
+    lines = []
+    for key, label in (("種類の数", "加点の種類の数"), ("区分ごとの上限", "区分ごとの上限")):
+        if is_sv(bonus.get(key)):
+            text = ctx.text(bonus[key])
+            src = merge_pages(ctx.sources(bonus[key]))
+            lines.append(f"{label}：{text}" + (f"（{'、'.join(src)}）" if src else ""))
+    if lines:
+        doc.paragraph("\n".join(lines))
+    # 今回は取れないと決まった加点は、中身を省いて理由だけの短い表にする
+    judges = _judges(data, "加点の判定", "加点")
+    pending = [["加点", "中身", "取れるか"]]
+    settled = [["加点", "取れない理由"]]
+    for item in bonus.get("項目") or []:
+        node = item.get("内容")
+        srcs = ctx.sources(node)
+        judge = judges.get(_norm(item.get("名前")))
+        jtext, jsrc = judge_cell(ctx, judge)
+        srcs += [s for s in jsrc if s not in srcs]
+        if judge and judge["判定"] == "今回は取れない":
+            settled.append([str(item.get("名前")), named(judge["理由"].strip(), srcs, inline=True)])
+        else:
+            body = ctx.text(node) if is_sv(node) else ""
+            pending.append([named(str(item.get("名前")), srcs, body), body, jtext])
+    split_tables(doc, PENDING_BONUS, pending, SETTLED_BONUS, settled)
+    summary["加点"] = len(bonus.get("項目") or [])
+
+    # 5. 申請の段階で出す書類（2つ以上の手続きで使う書類は、それぞれの手続きに出す）
+    docs = [d for d in seido.get("書類") or [] if isinstance(d, dict)]
+    stage_ids = [s.get("id") for s in ctx.stages]
+    doc.heading(apply_docs, 1)
+    first_docs = [d for d in docs if first and first.get("id") in (d.get("手続き") or [])]
+    if first_docs:
+        doc.paragraph("応募のときに出す書類です（必須 → 条件付き → 任意）。発行元は、自社で作らない書類だけに書いています。")
+        doc.table([["書類", "区分", "要点"]] + doc_rows(ctx, first_docs), widths=W_DOC, compact=True)
+    else:
+        doc.paragraph("この手続きで出す書類は、制度データにありません。")
+    # どの手続きで使うか分からない書類（制度データの書類の「手続き」が、どの段階にも当たらない）は、申請の書類の後に別の表
+    unknown = [d for d in docs if not set(d.get("手続き") or []) & set(stage_ids)]
+    if unknown:
+        doc.heading(UNKNOWN_STAGE_DOCS, 2)
+        doc.table([["書類", "区分", "要点"]] + doc_rows(ctx, unknown), widths=W_DOC, compact=True)
+    later_docs = [d for d in docs if d not in first_docs and d not in unknown]
+    summary["必要書類"] = len(docs)
+    summary["申請で出す書類"] = len(first_docs)
+    summary["採択後の書類"] = len(later_docs)
+    summary["分からない書類"] = len(unknown)
+
+    # 6. 義務と返還の条件（応募の前に知っておくこと）
+    doc.heading("義務と返還の条件", 1)
+    doc.paragraph("採択された後も守り続けることと、守れないときに補助金を返すことになる条件です。応募する前に知っておいてください。")
+    duty = 0
+    # 数値の要件だけ（数値でない要件の「満たせないとき」は、応募できない・対象外などで、要件の表から分かる）。
+    # 当てはまらないと判定した要件（使わない特例の要件など）は省く
+    doc.heading("満たせないと返還などがある数値の要件", 2)
+    rows = [["要件", "満たせないとき"]]
+    req_judges = _judges(data, "要件の判定", "要件")
+    skipped = 0
+    for req in seido.get("数値の要件") or []:
+        if not is_sv(req.get("満たせないとき")):
+            continue
+        if (req_judges.get(_norm(req.get("名前"))) or {}).get("判定") == "当てはまらない":
+            skipped += 1
+            continue
+        fail = ctx.text(req["満たせないとき"])
+        rows.append([named(str(req.get("名前")), ctx.sources(req["満たせないとき"]), fail), fail])
+        duty += 1
+    if len(rows) == 1:
+        rows.append(["なし", "当てはまる数値の要件に、満たせないときの定めはありません" if skipped
+                     else "満たせないときの定めのある数値の要件は、制度データにありません"])
+    doc.table(rows, widths=W2, compact=True)
+    if skipped:
+        doc.paragraph(f"当てはまらないと判定した要件（{skipped}件）は、省いています。")
+    doc.heading("してはいけないこと", 2)
+    rows = [["してはいけないこと", "中身"]]
+    for item in seido.get("してはいけないこと") or []:
+        text = ctx.text(item.get("内容"))
+        rows.append([str(item.get("名前")), named(text, ctx.sources(item.get("内容")), text, inline=True)])
+        duty += 1
+    doc.table(rows, widths=W2_WIDE, compact=True)
+    summary["義務と返還の条件"] = duty
+
+    # 7. 流れと期限（流れは制度の概要の「全体の流れ」の1行。期限は、決まった期日と申請の期限だけ。
+    #    採択された後の手続きの期限・書類・注意は入れず、採択されたときに段階を切り替える道具が出す。11/6 の後）
     doc.heading("申請から効果報告までの流れと期限", 1)
     if data.get("流れの説明"):
         for para in _paragraphs(data["流れの説明"]):
             doc.paragraph(para)
-    doc.heading("手続きの流れ", 2)
-    rows = [["順番", "手続き", "始まる条件", "期限", "出典"]]
-    for stage in ctx.stages:
-        name = str(stage.get("名前")) + ("（必要なときだけ）" if stage.get("条件付き") else "")
-        if stage.get("フォルダ"):
-            name += f"\nフォルダ：{stage['フォルダ']}"
-        start = ctx.text(stage.get("始まる条件")) if is_sv(stage.get("始まる条件")) else ""
-        limit = ctx.text(stage.get("期限"), ctx.limit_text) if is_sv(stage.get("期限")) else "（期限の決まりは読み取っていません）"
-        srcs = ctx.sources(stage.get("始まる条件"), stage.get("期限"))
-        if not srcs:
-            srcs = ctx.sources(*(stage.get("注意") or []))
-        rows.append([str(stage.get("順番")), name, start, limit, source_cell(srcs, start + limit)])
-    doc.table(rows, widths=W5)
-    doc.heading("決まった期日", 2)
-    rows = [["期日", "日時（日本時間）", "出典"]]
+    rows = [["期日", "日時（日本時間）"]]
     for item in seido.get("決まった期日") or []:
         text = ctx.text(item.get("日時"), due_text)
         if _filled(item.get("注記")) and UNREAD_TEXT not in text:
             text += f"（{item['注記'].strip()}）"
-        rows.append([str(item.get("名前")), text, source_cell(ctx.sources(item.get("日時")), text)])
-    doc.table(rows, widths=W3)
+        rows.append([str(item.get("名前")), named(text, ctx.sources(item.get("日時")), text)])
+    if first is not None and is_sv(first.get("期限")):
+        limit = ctx.text(first["期限"], ctx.limit_text)
+        rows.append([f"{first.get('名前')}の期限", named(limit, ctx.sources(first["期限"]), limit)])
+    doc.table(rows, widths=W2_NARROW, compact=True)
+    later = [s for s in ctx.stages[1:]]
+    later_notes = sum(len(s.get("注意") or []) for s in later)
     summary["流れ"] = (len(ctx.stages), len(seido.get("決まった期日") or []))
+    summary["採択後の注意"] = later_notes
+    if later:
+        doc.paragraph(f"採択された後の手続き（{len(later)}段階）の期限と、出す書類（{len(later_docs)}件）・守ること（{later_notes}件）は、"
+                      "ここには入れていません。採択されたときに、手続きごとに案内します。")
 
-    # 6. 加点
-    doc.heading("加点", 1)
-    bonus = seido.get("加点") or {}
-    rows = [["項目", "中身", "出典"]]
-    for key, label in (("種類の数", "加点の種類の数"), ("区分ごとの上限", "区分ごとの上限")):
-        if is_sv(bonus.get(key)):
-            text = ctx.text(bonus[key])
-            rows.append([label, text, source_cell(ctx.sources(bonus[key]), text)])
-    doc.table(rows, widths=W3)
-    judges = _judges(data, "加点の判定", "加点")
-    rows = [["加点", "中身", "取れるか", "出典"]]
-    for item in bonus.get("項目") or []:
-        lines, srcs = ctx.lines(item, (("区分", "区分"), ("内容", "内容"), ("証拠の種類", "証拠の種類"),
-                                       ("必要な書類", "必要な書類"), ("かかる日数", "かかる日数"),
-                                       ("自動で付く条件", "自動で付く条件"), ("重なったときの扱い", "重なったときの扱い")))
-        jtext, jsrc = judge_cell(ctx, judges.get(_norm(item.get("名前"))))
-        body = "\n".join(lines)
-        rows.append([str(item.get("名前")), body, jtext, source_cell(srcs + [s for s in jsrc if s not in srcs], body)])
-    doc.table(rows, widths=W4)
-    summary["加点"] = len(bonus.get("項目") or [])
-
-    # 7. 必要書類
-    doc.heading("必要書類", 1)
-    doc.paragraph("手続きごとに、出す書類を並べています（必須 → 条件付き → 任意）。2つ以上の手続きで使う書類は、それぞれに出ます。")
-    docs = [d for d in seido.get("書類") or [] if isinstance(d, dict)]
-    stage_ids = [s.get("id") for s in ctx.stages]
-    groups = [(f"{s.get('名前')}で出す書類", [d for d in docs if s.get("id") in (d.get("手続き") or [])])
-              for s in ctx.stages]
-    groups.append((UNKNOWN_STAGE_DOCS, [d for d in docs if not set(d.get("手続き") or []) & set(stage_ids)]))
-    for title, members in groups:
-        if not members:
-            continue
-        doc.heading(title, 2)
-        rows = [["書類", "区分", "決まり", "出典"]]
-        for cls in DOC_CLASSES:
-            for d in members:
-                if d.get("区分") != cls:
-                    continue
-                lines, srcs = ctx.lines(d, (("内容", "内容"), ("条件", "条件"), ("有効期限", "有効期限"), ("期数", "期数")))
-                extra = [f"発行元：{d.get('発行元')}"]
-                for key in ("出す人", "形式"):
-                    if _filled(d.get(key)):
-                        extra.append(f"{key}：{d[key].strip()}")
-                if d.get("効く審査項目"):
-                    extra.append(f"効く審査項目：{'、'.join(map(str, d['効く審査項目']))}")
-                body = "\n".join(lines + extra)
-                rows.append([str(d.get("名前")), cls, body, source_cell(srcs, "\n".join(lines))])
-        doc.table(rows, widths=W4)
-    summary["必要書類"] = len(docs)
-
-    # 8. 資料で分からなかったこと
+    # 8. 資料で分からなかったこと（項目の名前だけ。理由と問い合わせ文の案は制度データに残り、要るときに示す）
     doc.heading("資料で分からなかったこと", 1)
     unread = [u for u in seido.get("読み取れなかった項目") or [] if isinstance(u, dict)]
     if unread:
-        doc.paragraph("推測で埋めずに空けています。問い合わせ文の案は、事務局に確かめるときに使えます。")
-        rows = [["項目", "理由", "問い合わせ文の案"]]
-        for u in unread:
-            rows.append([str(u.get("項目")), str(u.get("理由")), str(u.get("問い合わせ文の案") or "（まだ作っていません）")])
-        doc.table(rows, widths=W3)
+        doc.paragraph("次のことは資料に書かれていなかったので、推測で埋めずに空けています：" + "、".join(str(u.get("項目")) for u in unread)
+                      + "。応募の判断に関わるものは、資料の定めを当てはめてから案内します。")
     else:
         doc.paragraph("ありません。")
 
-    # 9. 資料どうしの食い違い
+    # 9. 資料どうしの食い違い（項目の名前だけ。表の値に関わるものは、値に印と注記がある）
     doc.heading("資料どうしで書き方が違うところ", 1)
     conflicts = [c for c in seido.get("資料どうしの食い違い") or [] if isinstance(c, dict)]
     if conflicts:
-        rows = [["項目", "資料ごとの書き方", "出典"]]
-        for c in conflicts:
-            texts = []
-            srcs: List[str] = []
-            for v in c.get("値") or []:
-                labels = [ctx.source_label(s) for s in v.get("出典") or [] if isinstance(s, dict)]
-                texts.append(f"「{plain(v.get('値'))}」（{'、'.join(labels)}）")
-                _add(srcs, labels)
-            if _filled(c.get("注記")):
-                texts.append(f"※{c['注記'].strip()}")
-            rows.append([str(c.get("項目")), "\n".join(texts), source_cell(srcs)])
-        doc.table(rows, widths=W3)
+        doc.paragraph("次の項目は、資料によって書き方が違います：" + "、".join(str(c.get("項目")) for c in conflicts)
+                      + "。上の表の値のうち、資料で書き方が違うものには【資料で食い違い】の印と注記を付けています。"
+                      "資料ごとの書き方は、聞かれたら資料のページを示して答えます。")
     else:
         doc.paragraph("見つかっていません。")
 
     # 10. 出典の資料
     doc.heading("出典の資料", 1)
-    rows = [["資料", "回", "URL", "取得日"]]
+    doc.paragraph("表の出典は、資料の呼び名とページ（資料の下に印刷された番号）です。呼び名と資料の対応は、次のとおりです。")
+    # 資料の名前を、公式サイトの URL へのリンクにする（URL をそのまま書くと、1行が2〜3行に折れるため）
+    rows = [["呼び名", "資料の名前（公式サイトへのリンク）", "回", "取得日"]]
     for d in seido.get("資料") or []:
         url = str(d.get("URL") or "")
-        rows.append([str(d.get("名前")), str(d.get("公募回")), [(url, url)] if url else "", str(d.get("取得日"))])
-    doc.table(rows, widths=[2600, 1500, 4038, 1500])
-    doc.paragraph("ページは、資料の下に印刷された番号です。この文書は、作り直すたびに同じファイルを直します。"
-                  "前の版は、頼めばいつでも見られます。")
+        name = str(d.get("名前"))
+        rows.append([str(d.get("id")), [(name, url)] if url else name, str(d.get("公募回")), str(d.get("取得日"))])
+    doc.table(rows, widths=W_SOURCES, compact=True)
 
     summary["読み取れない値"] = len(ctx.marked[UNREADABLE])
     summary["要確認の値"] = len(ctx.marked[CHECK])

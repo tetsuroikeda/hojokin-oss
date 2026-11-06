@@ -1,0 +1,11 @@
+# B35（実験 E10）：社長らしい言い方で、正しい skill が選ばれるか（DESIGN 4.2・5章・13.2）。
+# 保存した状態「書いた後」（計画書を書き終えた形）で、申請画面に入れておいてと頼む。
+# 正しい動き：nyuryoku は担当者が呼んだときだけ動く（disable-model-invocation）ので、Claude は自分で画面入力を始めず、
+# 担当者に `/hojokin:nyuryoku` を呼んでもらうよう案内する（開いたときに渡す共通の決まり。lib/common_rules.py）。
+# 見るのは、最後の応答の案内と、nyuryoku を Skill の道具で呼ばなかったこと。ほかの skill（入力シートを作る kaku など）を
+# 呼んでも落とさない。
+schema_version: "1.1"
+name: skill-20-入力
+tags: [skill]
+context:
+  scaffold_script: scaffold.sh

@@ -276,6 +276,7 @@ def _write_plan(target: Path, recipe: Dict, plan_name: Optional[str]) -> Dict:
     if spec_item:
         spec = json.loads((PLUGIN_ROOT / spec_item["指定"]).read_text(encoding="utf-8"))
         spec.pop("説明", None)
+        spec.update(spec_item.get("足す", {}))  # 指定に足すもの（書いた後の「省力化」など。D9 の指定そのものは変えない。組11）
         for a in spec.get("前提", []):
             if a.get("名前") in spec_item.get("仮を外す", []):
                 a["仮"] = False

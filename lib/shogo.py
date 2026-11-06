@@ -41,7 +41,9 @@ _UNIT_RE = "|".join(re.escape(u) for u in sorted(UNITS, key=len, reverse=True))
 _NUM = r"[0-9][0-9,]*(?:\.[0-9]+)?"
 _DATE = re.compile(r"(?:令和|平成)[0-9]{1,2}年(?:[0-9]{1,2}月(?:[0-9]{1,2}日)?)?|[0-9]{4}年(?:[0-9]{1,2}月(?:[0-9]{1,2}日)?)?"
                    r"(?:度|期)?|[0-9]{4}[/-][0-9]{1,2}(?:[/-][0-9]{1,2})?")
-_AMOUNT = re.compile(rf"(?:約|およそ)?{_NUM}\s*(?:{_UNIT_RE})")
+# 「2億4,160万円」のような億の書き方は、1つの数として取る。「3分の1」の「分」は時間の単位ではないので取らない
+# （B37：書き手に言い回しを変えさせず、照合の側で読めるようにする）
+_AMOUNT = re.compile(rf"(?:約|およそ)?(?:{_NUM}億(?=[0-9]))?{_NUM}\s*(?:{_UNIT_RE})(?!の[0-9一二三四五六七八九十])")
 _NAME_BODY = r"[^\s、。，．（）「」『』・/とのはがをにでやへ]{1,20}"
 _COMPANY = re.compile(rf"(?:株式会社|有限会社|合同会社|一般社団法人|社会福祉法人|医療法人){_NAME_BODY}"
                       rf"|{_NAME_BODY}(?:株式会社|有限会社|合同会社)")
@@ -200,11 +202,13 @@ _SCALE = {"千円": 1000.0, "万円": 10000.0, "億円": 100000000.0, "円": 1.0
 def shown_number(description: str) -> Optional[Tuple[float, float, str]]:
     """記述の中の数（値、表に書いた桁の半分の幅、単位の種類 "円"・"%"・""）。"""
     t = unicodedata.normalize("NFKC", description or "")
-    m = re.search(rf"({_NUM})\s*({_UNIT_RE})?", t)
+    m = re.search(rf"(?:({_NUM})億(?=[0-9]))?({_NUM})\s*({_UNIT_RE})?", t)
     if not m:
         return None
-    raw, unit = m.group(1).replace(",", ""), m.group(2) or ""
+    raw, unit = m.group(2).replace(",", ""), m.group(3) or ""
     value = float(raw)
+    if m.group(1) and unit in _SCALE:  # 「2億4,160万円」：億の分を、後ろの単位に直して足す
+        value += float(m.group(1).replace(",", "")) * 100000000.0 / _SCALE[unit]
     decimals = len(raw.split(".", 1)[1]) if "." in raw else 0
     half = 0.5 * (10 ** -decimals)
     if unit in _SCALE:

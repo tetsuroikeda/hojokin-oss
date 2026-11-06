@@ -11,6 +11,7 @@ import json
 import re
 import sys
 import threading
+import unicodedata
 from collections import Counter
 import urllib.error
 import urllib.request
@@ -166,7 +167,12 @@ def test_field_ids_are_unique():
 
 
 def test_person_and_tool_names():
-    """担当者が入れる欄の名前には4語のどれかがあり、ツールが入れる欄の名前には4語がない（DESIGN 5章）。"""
+    """担当者が入れる欄の名前には4語のどれかがあり、ツールが入れるチェック欄の名前には4語がない（DESIGN 5章）。
+
+    ツールが入れるラジオボタン・選択欄は、正解の名前に4語があれば入れてよい（守りが4語で拒むのはチェック欄だけ。
+    DESIGN 14章「画面入力の守りの細部」）。そういう欄は TOOL_FIELDS_WITH_WORDS に挙げたものだけ。
+    """
+    tool_with = set()
     for field in screen.all_fields():
         if field["kind"] not in ("checkbox", "checkboxes", "radio", "select"):
             continue
@@ -178,8 +184,45 @@ def test_person_and_tool_names():
         for name in names:
             if field["who"] == "person":
                 assert has_word(name), name
-            else:
-                assert not has_word(name), name
+            elif has_word(name):
+                assert field["kind"] in ("radio", "select"), name
+                tool_with.add(field["id"])
+    assert tool_with == screen.TOOL_FIELDS_WITH_WORDS
+
+
+# 正解の申請画面に当たる欄がない、ツールが入れる欄（模擬にだけある欄）
+MOCK_ONLY_TOOL_FIELDS = {"corp_number"}
+
+
+def _nfc(text) -> str:
+    return " ".join(unicodedata.normalize("NFC", str(text or "")).split())
+
+
+def _keys(label: str) -> list:
+    """守り（lib/browser_guard.py）と同じ照らし方：名前の全文と、「：」より前の項目名。"""
+    keys = [_nfc(label)]
+    if "：" in label:
+        keys.append(_nfc(label.split("：", 1)[0]))
+    return keys
+
+
+def test_tool_field_names_follow_the_seido_answer():
+    """❷〜❾ のツールが入れる欄の名前は、制度データの正解（電子申請マニュアルの画面の絵から作った欄）の同じ画面の欄と、
+    全文か「：」より前で同じ（NFC。TASKS B29、DESIGN 14章）。❽ の画面の名前は「経費明細・資金調達内訳」。"""
+    answer = json.loads((REPO / "testdata" / "正解" / "省力化_第8回.json").read_text(encoding="utf-8"))
+    screens = sorted(answer["申請画面"]["画面"], key=lambda s: s["順番"])
+    assert [s["名前"] for s in screens] == [s["title"] for s in screen.SECTIONS]
+    names = {s["順番"]: {_nfc(f["名前"]) for f in s.get("欄", [])} for s in screens}
+    missing, hits = [], 0
+    for n, section in enumerate(screen.SECTIONS, start=1):
+        for field in screen.section_fields(section):
+            hit = any(k in names[n] for k in _keys(field["label"]))
+            hits += hit
+            if 2 <= n <= 9 and field["who"] == "tool" and not hit and field["id"] not in MOCK_ONLY_TOOL_FIELDS:
+                missing.append((section["no"], field["id"], field["label"]))
+    assert missing == []
+    # 模擬の222欄のうち当たる数（直す前は133。当たらないのは、法人番号・両立支援の宣誓・❿ のアンケート8欄）
+    assert len(screen.all_fields()) == 222 and hits == 212
 
 
 def test_all_four_words_are_used():
@@ -192,7 +235,7 @@ def test_sections_follow_manual_order():
     assert [s["no"] for s in screen.SECTIONS] == list("❶❷❸❹❺❻❼❽❾❿⓫⓬")
     titles = [s["title"] for s in screen.SECTIONS]
     assert titles == ["宣誓・手引き", "基本情報", "要件", "加点項目", "事業計画名及び作成者情報", "最低賃金及び特例希望",
-                      "事業計画数値", "経費明細｜資金調達内訳", "書類添付", "アンケート", "メールアドレス認証", "確認"]
+                      "事業計画数値", "経費明細・資金調達内訳", "書類添付", "アンケート", "メールアドレス認証", "確認"]
 
 
 # ---- 画面 ----
@@ -238,8 +281,9 @@ def test_shinsei_has_required_parts(running):
     assert any("同意" in x for x in checkbox_labels)
     assert any("誓約" in x for x in checkbox_labels)
     assert any("確認" in x for x in checkbox_labels)
-    assert any(x.startswith("省力化ナビ加点") for x in checkbox_labels)
-    assert [c["label"] for c in by_name["other_subsidy"]] == ["国の他の助成制度との重複：はい", "国の他の助成制度との重複：いいえ"]
+    assert any(x.startswith("⑧省力化ナビ加点：") for x in checkbox_labels)
+    assert [c["label"] for c in by_name["other_subsidy"]] == ["国の他の助成制度との重複確認：はい",
+                                                               "国の他の助成制度との重複確認：いいえ"]
     assert by_name["org_type"][0]["label"] == "組織形態"
     files = [c for c in page.controls if c.get("type") == "file"]
     assert len(files) == len([f for f in screen.all_fields() if f["kind"] == "file"])
@@ -287,16 +331,31 @@ def test_textarea_newlines_become_lf(running):
 
 
 def test_state_tells_tables_apart(running):
-    """❽ 8-3 の2つの表は、項目名が同じ欄があるので、表の名前も残す。"""
+    """❽ 8-3 の2つの表は、行の名前が同じなので、欄の名前の頭に表の名前を付け（正解の欄の名前の形）、表の名前も残す。"""
     base, record_dir = running
     cookie = login(base)
     request(base + "/shinsei", *multipart({"button": "save", "fund_all_own_amount": "100", "fund_d_own_amount": "50"}),
             cookie)
     fields = json.loads((record_dir / server.STATE_FILE).read_text(encoding="utf-8"))["fields"]
     a, d = fields["fund_all_own_amount"], fields["fund_d_own_amount"]
-    assert a["label"] == d["label"] and a["section"] == d["section"]
-    assert a["table"] == "事業全体に要する経費調達一覧" and d["table"] == "補助金申請額（D）の経費内訳"
+    assert a["section"] == d["section"]
+    assert a["label"] == "事業全体に要する経費調達一覧 自己資金（事業に要する経費（円））"
+    assert d["label"] == "補助金申請額の経費内訳 自己資金（事業に要する経費（円））"
+    assert a["table"] == "事業全体に要する経費調達一覧" and d["table"] == "補助金申請額の経費内訳"
     assert fields["biz_name"]["group"] == "2-1. 事業者情報"
+
+
+def test_grid_cells_have_labels(running_screens):
+    """表の中の欄は、見えないラベルで欄の名前を付ける（入れた後も、ページの構造から欄の名前が読めるように。B29）。"""
+    base, _ = running_screens
+    cookie = login_screens(base)
+    for n in (7, 8):
+        page = parse(request(f"{base}/shinsei/{n}", cookie=cookie)[2])
+        labels = {c.get("name"): c["label"] for c in page.controls}
+        cells = [f for f in screen.screen_fields(n) if f.get("grid")]
+        assert cells
+        for cell in cells:
+            assert labels[cell["id"]] == cell["label"], cell["id"]
 
 
 def test_server_start_marks_a_run(tmp_path):
@@ -509,7 +568,8 @@ def test_each_screen_has_its_fields_and_buttons(running_screens):
 
 
 def test_person_fields_on_screens_keep_the_words(running_screens):
-    """担当者が入れる欄は、画面に出たときも、囲むラベルの名前に4語のどれかが入る（DESIGN 5章）。"""
+    """担当者が入れる欄は、画面に出たときも、囲むラベルの名前に4語のどれかが入る（DESIGN 5章）。
+    ツールが入れる欄に4語が入るのは、TOOL_FIELDS_WITH_WORDS のラジオボタン・選択欄だけ。"""
     base, _ = running_screens
     cookie = login_screens(base)
     person = {f["id"] for f in screen.all_fields() if f["who"] == "person"}
@@ -521,7 +581,7 @@ def test_person_fields_on_screens_keep_the_words(running_screens):
                 if control.get("name") in person:
                     seen.add(control["name"])
                     assert has_word(control["label"]), control["label"]
-                else:
+                elif control.get("name") not in screen.TOOL_FIELDS_WITH_WORDS:
                     assert not has_word(control["label"]), control["label"]
     assert seen == person
 
@@ -663,7 +723,7 @@ def test_client_events_on_screen_pages(running_screens):
     request(base + "/log", json.dumps({"event": "click", "button": "fix_3", "label": "修正",
                                       "page": "/shinsei/12"}).encode())
     change, click = read_log(record_dir)[-2:]
-    assert change["page"] == "shinsei/4" and change["label"].startswith("省力化ナビ加点") and change["checked"] is True
+    assert change["page"] == "shinsei/4" and change["label"].startswith("⑧省力化ナビ加点") and change["checked"] is True
     assert click["page"] == "shinsei/12" and click["button"] == "fix_3" and click["button_label"] == "修正"
 
 
