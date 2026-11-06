@@ -32,6 +32,21 @@ os.environ.setdefault("HOJOKIN_SITE_CHECK", "0")
 OLD_BASETEMP_SECONDS = 3 * 60 * 60
 
 
+def _lock_is_alive(numbered: Path) -> bool:
+    """pytest がその回の錠（.lock）に書いた pid が、まだ動いているか（負荷で3時間を超えた回を消さない）。"""
+    try:
+        pid = int((numbered / ".lock").read_text().strip())
+    except (OSError, ValueError):
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _remove_old_basetemps() -> None:
     root = Path(tempfile.gettempdir()) / f"pytest-of-{getpass.getuser()}"
     if not root.is_dir():
@@ -42,7 +57,7 @@ def _remove_old_basetemps() -> None:
         if not re.fullmatch(r"pytest-\d+", old.name) or old.is_symlink() or old.resolve() == current:
             continue
         try:
-            if old.stat().st_mtime > limit:
+            if old.stat().st_mtime > limit or _lock_is_alive(old):
                 continue
             for dirpath, dirnames, filenames in os.walk(old):
                 for name in dirnames + filenames:
