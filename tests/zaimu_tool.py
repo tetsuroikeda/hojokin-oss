@@ -35,7 +35,7 @@ def load(path: Path):
 
 def copy_plugin(dest: Path) -> Path:
     ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
-    for name in ("lib", "skills"):
+    for name in ("lib", "skills", "schema"):  # schema：会社の記録を読む（作ったときの事実の指紋。B37）
         shutil.copytree(REPO_ROOT / name, dest / name, ignore=ignore)
     return dest
 

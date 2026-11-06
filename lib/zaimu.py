@@ -921,7 +921,7 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
         ("付加価値額の伸び", "付加価値額の年平均成長率（％）", "基準年度から毎年平均で何％伸びたか。小数第2位で切り捨て（別紙4 と同じ）"),
         ("労働生産性", "労働生産性（付加価値額÷労働者数）", "働く人1人当たりの付加価値額。小数第2位で切り捨て（別紙4 と同じ）"),
         ("労働生産性の伸び", "労働生産性の年平均成長率（％）", "小数第2位で切り捨て（別紙4 と同じ）"),
-        ("1人当たり給与", "1人当たり給与支給総額（給与支給総額÷給与を受けた従業員数）", "小数第2位で切り捨て（別紙4 と同じ）"),
+        ("1人当たり給与", "1人当たり給与支給総額（給与支給総額÷給与を受けた従業員数）", "給与支給総額は円未満を四捨五入（別紙4 に書く値）。小数第2位で切り捨て（別紙4 と同じ）"),
         ("1人当たり給与の伸び", "1人当たり給与支給総額の年平均成長率（％）", "下がったときは切り上げ、計算できないときは0（別紙4 と同じ）"),
     )
     for key, label, note in ind_labels:
@@ -942,10 +942,13 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
         ind["労働生産性"][y] = p
         pl.formula(f"{col}{pr_r}", f"=IF({col}{va_r}<0,ROUNDUP(({col}{va_r}/{w_ref}),2),ROUNDDOWN(({col}{va_r}/{w_ref}),2))",
                    p, FMT_PER)
-        pp = youken.pay_per_person(py[("合算", "給与支給総額")][y], people["給与を受けた従業員数"][y])
+        # 様式の別紙4 には、給与支給総額を円単位（円未満を四捨五入）で書く。その値から計算しないと、毎年4.1%の賃上げが
+        # 4.09% と4.10% に分かれ、本文と様式が食い違う（11/6 のリハーサル。B37）
+        pp = youken.pay_per_person(youken.round_half_up(py[("合算", "給与支給総額")][y], 0), people["給与を受けた従業員数"][y])
         ind["1人当たり給与"][y] = pp
         pl.formula(f"{col}{pp_r}",
-                   f"=ROUNDDOWN({col}{at[('合算', '給与支給総額')]}/{col}{people_at['給与を受けた従業員数']},2)", pp, FMT_PER)
+                   f"=ROUNDDOWN(ROUND({col}{at[('合算', '給与支給総額')]},0)/{col}{people_at['給与を受けた従業員数']},2)",
+                   pp, FMT_PER)
     for y, col in enumerate(year_cols):
         if y == 0:
             continue

@@ -57,7 +57,7 @@ from pathlib import Path  # noqa: E402
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-from lib import company, places  # noqa: E402
+from lib import company, company_record, places  # noqa: E402
 
 SEIDO_DIR = "記録/制度データ"
 WORK_DIR = f"{company.MARKER_DIR}/{company.TEMP_DIR}/財務モデル"
@@ -292,6 +292,14 @@ def report_text(result: dict) -> str:
 # ---------------------------------------------------------------- 数字の控え
 
 
+def fact_marks(folder: Path) -> dict:
+    """作ったときの会社の記録の事実の指紋（後で増えた・変わった事実を、確かめで知らせるため。B37）。読めなければ空。"""
+    try:
+        return company_record.fact_marks(company_record.load(folder))
+    except company_record.RecordError:
+        return {}
+
+
 def write_numbers(folder: Path, data: dict) -> str:
     places.no_link_on_the_way(folder, NUMBERS_FILE)
     target = places.actual(folder, NUMBERS_FILE, partial=True)
@@ -488,7 +496,9 @@ def main(argv) -> int:
             placed = True
             seido_rel = relative(folder, seido_path) if seido_path is not None else None
             when = dates.format_datetime(dates.now(folder))
-            numbers_rel = write_numbers(folder, zaimu.numbers_record(spec, book, seido_rel, when))
+            record = zaimu.numbers_record(spec, book, seido_rel, when)
+            record[company_record.FACT_MARKS_KEY] = fact_marks(folder)
+            numbers_rel = write_numbers(folder, record)
     except places.PlaceError as e:
         print(f"しませんでした：{e.link or e} が別名（シンボリックリンク）になっているので、書きません。")
         return REFUSED
