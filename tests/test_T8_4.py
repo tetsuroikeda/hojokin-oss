@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 import zipfile
-from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
+from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal, localcontext
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -153,7 +153,8 @@ def hand_indicators(spec: dict) -> dict:
         sales = base["売上"] + (p["単価_新商品"] * p["数量_新商品"] if y >= 1 else 0)
         # 付加価値額 ＝ 営業利益＋人件費＋減価償却費 ＝ 売上 − 原材料費 − その他の経費
         va = sales - base["原材料費"] - base["その他の経費"]
-        pay = base["給与支給総額"] * (1 + p["賃上げ率"]) ** y
+        # 別紙4 には給与支給総額を円単位（円未満を四捨五入）で書き、その値を人数で割る（lib/zaimu.py。57a08b7）
+        pay = (base["給与支給総額"] * (1 + p["賃上げ率"]) ** y).quantize(Decimal(1), rounding=ROUND_HALF_UP)
         out["労働生産性"].append(d_rounddown(va / workers))
         out["1人当たり給与"].append(d_rounddown(pay / base["給与を受けた従業員数"]))
     for y in range(1, n + 1):
@@ -408,9 +409,14 @@ def form_inputs(summary: dict) -> dict:
             f"{col}21": t["減価償却費"][k], f"{col}25": people["役員数"][k], f"{col}26": people["常勤従業員数"][k],
         })
         if y:
-            values.update({f"{col}22": 0, f"{col}33": t["給与支給総額"][k], f"{col}34": people["給与を受けた従業員数"][k]})
-    values.update({"E33": t["給与支給総額"][0], "E34": people["給与を受けた従業員数"][0]})
+            values.update({f"{col}22": 0, f"{col}33": yen(t["給与支給総額"][k]), f"{col}34": people["給与を受けた従業員数"][k]})
+    values.update({"E33": yen(t["給与支給総額"][0]), "E34": people["給与を受けた従業員数"][0]})
     return values
+
+
+def yen(value) -> int:
+    """別紙4 に書く給与支給総額は円単位（円未満を四捨五入。lib/zaimu.py と同じ。57a08b7）。"""
+    return int(Decimal(str(value)).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 @pytest.mark.slow
