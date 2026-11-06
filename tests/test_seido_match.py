@@ -274,7 +274,7 @@ def test_circled_numbers_are_read_as_numbers() -> None:
 
 def test_original_file_is_checked_against_doc_ids() -> None:
     docs = {"Wordその1・2": "事業計画書 その1・その2（参考様式）", "要領9": "公募要領"}
-    evidence = "|".join(urakadori.numeric_fragments("申請にあたっては電子申請システムに PDF 形式のファイル等を添付してください。"))
+    evidence = "|".join(urakadori.numeric_fragments("電子申請では、PDF 形式のファイル等を添付して申請する。"))
     good = {"種類": "ファイル", "提出の形式": "PDF", "元のファイル": "Wordその1・2"}
     assert urakadori.value_problems(good, evidence, docs=docs) == []
     unknown = dict(good, 元のファイル="Word様式")
