@@ -1,28 +1,32 @@
 """T3-9 概要と流れの Word（SPEC F3、DESIGN 4.5・4.6・6章、TASKS M2d）。
 
 SPEC：制度データと会社の記録から、概要と流れの Word を作る。
-合格ライン：要件、義務と返還の条件、補助額の見込み、流れと期限、加点、必要書類が制度データと一致し、すべてに出典がある。
+合格ライン：要件、義務と返還の条件、補助額の見込み、流れと期限、加点、申請で出す書類が制度データと一致し（名前は1件も欠けない）、
+すべてに出典がある。採択された後の手続きの期限・書類・注意は入らない。10ページ以内。
 
 確かめ方
 - 架空の制度データ（テストのためだけに作った値。公式の公募要領の文は使わない）と会社の記録を置いた会社のフォルダで、
   道具（skills/junbi/scripts/gaiyou_word.py）を、Claude が Bash で動かすのと同じく、社長の Mac と同じ /usr/bin/python3 で
   プラグインの写しから動かす。制度データと会社の記録は、先にスキーマを通ることを確かめる。
 - できた Word を zip と XML で読み、見出しの後の表を節ごとに取り出して、制度データと1件ずつ突き合わせる。
-  - 節の並び：応募までに読む節が前、採択された後の手続きの注意と書類が後ろの2つの節（11/6 のリハーサルの指摘。中身は減らさない）。
-    制度の概要には、全体の流れの1行、区分ごとの補助上限・補助率の短い表、特例ごとに1行の表（区分で違う値は1つの欄に並べる）が入る
-  - 要件：数値の要件と数値でない要件が、同じ順で1件も欠けずに並び、値（基準・計算式・内容など）と出典が一致する
-  - 義務と返還の条件：満たせないときのある数値の要件、してはいけないこと（前の節）、申請より後の手続きの段階の注意
-    （後ろの「採択された後の手続きで守ること」）が、1件ずつ一致する
+  - 応募の準備に要るところだけの短い形（11/6 のリハーサルの指摘で、60ページを超える形から10ページ以内にした）。
+    制度の概要には、全体の流れと審査の段階の1行、区分ごとの補助上限・補助率の短い表、特例ごとに1行の表が入る
+  - 要件：数値の要件と数値でない要件が、1件も欠けずに並ぶ。満たす・当てはまらないと決まった要件は理由だけの短い表、
+    ほかは中身（数値の要件は基準、数値でない要件は内容）と判定の表。計算式・元の数字の決め方・確かめ方は入らない
+  - 義務と返還の条件：満たせないときのある数値の要件（当てはまらない要件を除く）と、してはいけないことが、1件ずつ一致する。
+    申請より後の手続きの段階の注意は入らない
   - 補助額の見込み：選んだ区分・特例の上限と補助率、会社の記録の経費から計算した額（円未満切り捨て、上限で頭打ち、
     上乗せ）と自己負担の目安が一致する。上限が読み取れない区分では、見込みを出さない
-  - 流れと期限：すべての手続きの段階が順番どおりに並び、期限の決め方の文（決まった日付／出来事からの期間／早いほう／
-    繰り返し）と出典が一致する。決まった期日も一致する
-  - 加点：種類の数・区分ごとの上限と、すべての項目が一致する
-  - 必要書類：手続きの段階ごとに、その段階で使う書類だけが、区分（必須・条件付き・任意）とともに並ぶ。
-    申請の段階の書類は前の節、ほかの段階の書類は後ろの「採択された後の手続きで出す書類」
-  - すべてに出典：上の節のどの行にも出典があり、制度データの値の出典（資料の名前とページ。回の違う資料は回も）と、
-    会社の記録の出典がそのまま出る。読み取れない値は、出典の代わりに「読み取れませんでした（理由）」を出す。
+  - 流れと期限：全体の流れの1行と、決まった期日・申請の期限が一致する。採択された後の手続きの期限は入らず、件数だけを示す
+    （期限の決め方の文の形は、Context.limit_text を直接確かめる）
+  - 加点：種類の数・区分ごとの上限と、すべての項目が一致する（今回は取れない加点は理由だけの短い表）
+  - 申請で出す書類：申請の段階で使う書類だけが、区分（必須・条件付き・任意）の順に並ぶ。どの手続きで使うか分からない書類は別の表。
+    ほかの段階の書類は入らない
+  - すべてに出典：上の節のどの行にも「出典：」があり、値ごとに最初の出典（資料の呼び名とページ。回の違う資料は回も）と、
+    会社の記録の項目の名前が出る。読み取れない値は、出典の代わりに「読み取れませんでした（理由）」を出す。
     要確認・資料で食い違いの値には印と注記が付く
+  - 10ページ以内：省力化と持続化の制度データ（testdata/正解/）で、判定を入れた形と入れない形を LibreOffice で PDF にして数える
+    （LibreOffice がなければ飛ばす）
 - 作り直すと同じファイルが直り、ほかのファイルは増えない。同じ中身からは同じファイルになる。
 - 渡した判定の名前や id が制度データ・会社の記録にないとき、会社のフォルダでないとき、制度データがないか形が合わないときは、
   何も書かない（前の概要と流れ.docx はそのまま残る）。
@@ -33,9 +37,12 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 import unicodedata
+from datetime import date
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
@@ -58,11 +65,17 @@ SEIDO_SCHEMA = json.loads((REPO_ROOT / "schema" / "制度データ.schema.json")
 RECORD_SCHEMA = json.loads((REPO_ROOT / "schema" / "会社の記録.schema.json").read_text(encoding="utf-8"))
 
 # 資料の id と、Word の出典に出る名前（回の違う資料は回を添える）
-LABELS = {"要領T": "公募要領", "手引T2": "交付申請の手引き（第2回）", "日程T": "スケジュールのページ"}
+# 出典は資料の呼び名（資料の一覧の id）。回の違う資料は回を添える
+LABELS = {"要領T": "要領T", "手引T2": "手引T2（第2回）", "日程T": "日程T"}
 UNREAD = "読み取れませんでした"
 NOT_JUDGED = "まだ確かめていません"
-LATER_NOTES = "採択された後の手続きで守ること"  # 後ろにまとめる節（lib/gaiyou.py の LATER_NOTES・LATER_DOCS）
-LATER_DOCS = "採択された後の手続きで出す書類"
+# 要件と加点の表の見出し（lib/gaiyou.py の PENDING_REQS など）
+PENDING_REQS = "満たすと決まっていない要件"
+SETTLED_REQS = "満たす要件・当てはまらない要件"
+PENDING_BONUS = "取れる見込みの加点・確かめが要る加点"
+SETTLED_BONUS = "今回は取れない加点"
+H1S = ["制度の概要", "自社が満たす要件", "補助額の見込み", "加点", "応募申請で出す書類", "義務と返還の条件",
+       "申請から効果報告までの流れと期限", "資料で分からなかったこと", "資料どうしで書き方が違うところ", "出典の資料"]
 
 
 # ---- 架空の制度データ（テストのためだけに作った値） ----
@@ -238,19 +251,11 @@ def record() -> dict:
     ]}
 
 
-REC = {
-    "f-001": "会社の記録「常勤の従業員数」：原本/登記・名簿/2026-10-01_労働者名簿.xlsx",
-    "f-002": "会社の記録「設備投資の額（税抜き）」：原本/見積・契約・請求/2026-10-20_見積書_架空機械.pdf p.1",
-    "f-003": "会社の記録「事業場内最低賃金」：社長の発言（2026-11-02）",
-    "f-004": "会社の記録「加点の認定」：質問への答え（2026-11-03）",
-    "f-005": "会社の記録「別の設備の額」：社長の発言（2026-11-03）",
-    "f-006": "会社の記録「端数のある設備の額」：原本/見積・契約・請求/2026-10-21_見積書_端数.pdf",
-    "f-007": "会社の記録「大型機械の額」：原本/見積・契約・請求/2026-10-22_見積書_大型機械.pdf",
-    "f-008": "会社の記録「ライン増設の額」：社長の発言（2026-11-03）",
-    "f-009": "会社の記録「ライン全体の額」：原本/見積・契約・請求/2026-10-23_見積書_ライン.pdf p.2",
-    "f-010": "会社の記録「包装機の額」：質問への答え（2026-11-03）",
-    "f-011": "会社の記録「検査機の額」：原本/見積・契約・請求/2026-10-24_見積書_検査機.pdf",
-}
+# 会社の記録の出典は、項目の名前だけ（どこから覚えたかは会社の記録にあり、kiroku で見られる）
+REC = {fid: f"会社の記録「{name}」" for fid, name in (
+    ("f-001", "常勤の従業員数"), ("f-002", "設備投資の額（税抜き）"), ("f-003", "事業場内最低賃金"), ("f-004", "加点の認定"),
+    ("f-005", "別の設備の額"), ("f-006", "端数のある設備の額"), ("f-007", "大型機械の額"), ("f-008", "ライン増設の額"),
+    ("f-009", "ライン全体の額"), ("f-010", "包装機の額"), ("f-011", "検査機の額"))}
 
 INPUT = {
     "制度の概要": ["作業を機械に置き換える投資の費用を、一部補助する架空の制度です。", "申請は電子申請で行います。"],
@@ -287,18 +292,50 @@ def label(src: dict) -> str:
 
 
 def srcs(*nodes) -> set:
-    """制度データの値の出典（読み取れない値には出典がない）。"""
+    """制度データの値の出典。値ごとに最初の出典だけ（読み取れない値には出典がない）。"""
     out = set()
     for node in nodes:
         if node and node["状態"] != "読み取れない":
-            out |= {label(s) for s in node["出典"]}
+            out.add(label(node["出典"][0]))
     return out
 
 
+SOURCE_LINE = re.compile(r"^出典：(.*)$")
+SOURCE_INLINE = re.compile(r"（出典：(.*)）$")
+PAGES_ONLY = re.compile(r"^[0-9]+(–[0-9]+)?$")
+
+
+def split_cell(cell: str) -> tuple:
+    """セルを（出典を除いた文、出典の集合）に分ける。出典は「出典：…」の行か、文の後ろの「（出典：…）」。
+    同じ資料のページは「要領T p.2、3」とまとめてあるので、1つずつ（「要領T p.2」「要領T p.3」）に戻す。"""
+    lines = cell.split("\n")
+    found = None
+    if lines and SOURCE_LINE.match(lines[-1]):
+        found = SOURCE_LINE.match(lines.pop()).group(1)
+    elif lines and SOURCE_INLINE.search(lines[-1]):
+        m = SOURCE_INLINE.search(lines[-1])
+        found = m.group(1)
+        lines[-1] = lines[-1][:m.start()]
+    out = []
+    for item in (found.split("、") if found else []):
+        if PAGES_ONLY.match(item) and out and " p." in out[-1]:
+            out.append(out[-1].split(" p.")[0] + " p." + item)
+        else:
+            out.append(item)
+    assert len(out) == len(set(out)), f"出典が重なっています：{cell}"
+    return "\n".join(lines), set(out)
+
+
 def cell_sources(cell: str) -> set:
-    lines = [x for x in cell.split("\n") if x]
-    assert len(lines) == len(set(lines)), f"出典が重なっています：{cell}"
-    return set(lines)
+    return split_cell(cell)[1]
+
+
+def row_sources(row: list) -> set:
+    """行の中の出典（どの欄にあってもよい）。"""
+    out = set()
+    for cell in row:
+        out |= cell_sources(cell)
+    return out
 
 
 # ---- 会社のフォルダと道具 ----
@@ -441,26 +478,26 @@ def test_fixtures_follow_schemas() -> None:
 
 
 def test_sections_and_header(word: Word) -> None:
-    # 応募までに読む節を前に、採択された後の手続きの注意と書類を後ろにまとめる（11/6 のリハーサルの指摘）
-    assert word.headings(1) == [
-        "制度の概要", "自社が満たす要件", "補助額の見込み", "加点", "応募申請で出す書類", "義務と返還の条件",
-        "申請から効果報告までの流れと期限", LATER_NOTES, LATER_DOCS,
-        "資料で分からなかったこと", "資料どうしで書き方が違うところ", "出典の資料",
-    ]
+    # 応募の準備に要るところだけの短い形。採択された後の手続きの節はない（11/6 のリハーサルの指摘）
+    assert word.headings(1) == H1S
+    assert word.headings(2) == ["補助額（区分ごと）", "特例（補助上限・補助率が変わるとき）", PENDING_REQS, SETTLED_REQS,
+                                f"{PENDING_BONUS}（どれも、{NOT_JUDGED}）", SETTLED_BONUS, "どの手続きで使うか分からない書類",
+                                "満たせないと返還などがある数値の要件", "してはいけないこと"]
     head = word.paragraphs[1][2]
     assert f"案件：{CASE}" in head
     assert "制度：テスト用 作業改善補助金（一般型）" in head
     assert "第3回の資料に基づく" in head
     assert NOTICE in head  # 直近回の資料に基づくことを示す（SPEC F3）
-    # 読み方：応募までに読む節と、後ろにまとめた節を示す
-    assert any(f"後ろの「{LATER_NOTES}」と「{LATER_DOCS}」にまとめています" in t for _s, h, t in word.paragraphs if h is None)
-    # 説明の文は Claude が書いたもの（渡したとおり、段落に分けて入る）。その後に、全体の流れを1行で
+    # 読み方：短くまとめたこと、出典の呼び名、採択された後は要るときに案内すること
+    intro = word.paragraphs[2][2]
+    assert "短くまとめています" in intro and "出典の資料" in intro and "採択された後の手続き" in intro
+    # 説明の文は Claude が書いたもの（渡したとおり、段落に分けて入る）。その後に、全体の流れと審査の段階を1行ずつ
     assert word.overview() == INPUT["制度の概要"]
     assert word.section_paragraphs("制度の概要")[len(INPUT["制度の概要"])] == (
         "全体の流れ：応募申請 → 採択発表 → 交付申請 → 補助事業の実施 → 実績報告 → 効果報告\n"
-        "必要なときだけの手続き：計画変更の承認")
+        "必要なときだけの手続き：計画変更の承認\n"
+        "審査の段階：書面審査（出典：要領T p.3）")
     assert INPUT["流れの説明"] in word.section_paragraphs("申請から効果報告までの流れと期限")
-    assert any("採択された後に読むところ" in p for p in word.section_paragraphs(LATER_NOTES))
 
 
 # ---- 補助額と特例（区分ごとの表は短く、特例は特例ごとに1行。11/6 のリハーサルで特例の欄が縦に長かった） ----
@@ -468,24 +505,25 @@ def test_sections_and_header(word: Word) -> None:
 
 def test_amounts_and_specials(word: Word) -> None:
     rows = word.table("制度の概要", "補助額（区分ごと）")
+    # 出典は区分の下（出典の列は設けない）。読み取れない上限には出典がなく、補助率の出典が出る
     assert rows == [
-        ["従業員5人以下", "750万円", "1/2", "公募要領 p.1"],
-        ["従業員6〜20人", "1,500万円", "1/2", "公募要領 p.1"],
-        ["従業員21人以上", f"{UNREAD}（上限が書かれていない）", "1/2", "公募要領 p.1"],
+        ["従業員5人以下\n出典：要領T p.1", "750万円", "1/2"],
+        ["従業員6〜20人\n出典：要領T p.1", "1,500万円", "1/2"],
+        ["従業員21人以上\n出典：要領T p.1", f"{UNREAD}（上限が書かれていない）", "1/2"],
     ]
     rows = word.table("制度の概要", "特例（補助上限・補助率が変わるとき）")
     # 2つの区分にある同じ特例は1行にまとめ、使える区分を添える
     assert rows == [
-        ["小規模の補助率", "補助率の置き換え：2/3\n使える区分：従業員5人以下、従業員6〜20人\n条件：小規模事業者", "公募要領 p.1"],
-        ["創業の補助率", "補助率の置き換え：3/4\n使える区分：従業員5人以下\n条件：創業から5年以内", "公募要領 p.1"],
-        ["賃上げ特例", "上限の置き換え：2,000万円\n使える区分：従業員6〜20人\n条件：賃上げを大きく行う", "公募要領 p.2"],
-        ["地域の上乗せ", "上限の上乗せ：【要確認】100万円\n※裏取り：上乗せの額が根拠の文にありません\n使える区分：従業員6〜20人",
-         "スケジュールのページ"],
+        ["小規模の補助率\n出典：要領T p.1", "補助率の置き換え：2/3\n使える区分：従業員5人以下、従業員6〜20人\n条件：小規模事業者"],
+        ["創業の補助率\n出典：要領T p.1", "補助率の置き換え：3/4\n使える区分：従業員5人以下\n条件：創業から5年以内"],
+        ["賃上げ特例\n出典：要領T p.2", "上限の置き換え：2,000万円\n使える区分：従業員6〜20人\n条件：賃上げを大きく行う"],
+        ["地域の上乗せ\n出典：日程T", "上限の上乗せ：【要確認】100万円\n※裏取り：上乗せの額が根拠の文にありません\n使える区分：従業員6〜20人"],
     ]
 
 
 def test_specials_with_values_by_region() -> None:
-    """区分で値が違う特例（上限の置き換え）は、1つの欄に区分ごとに並べる。条件が区分で違えば、条件も区分ごとに。"""
+    """区分で値が違う特例（上限の置き換え）は、1つの段落に区分ごとの値を「／」でつなぐ。条件が区分で違えば、条件は区分ごとに。
+    同じ資料のページは、出典の1行にまとめる。"""
     from lib import gaiyou
 
     amounts = [
@@ -496,9 +534,25 @@ def test_specials_with_values_by_region() -> None:
     ]
     ctx = gaiyou.Context({"制度": seido()["制度"], "資料": seido()["資料"], "補助額": amounts, "手続きの段階": []}, {})
     assert gaiyou.special_rows(ctx, amounts) == [
-        ["賃上げ", "上限の置き換え：\n・5人以下：1,000万円\n・6〜20人：2,000万円\n条件（5人以下）：賃上げする\n条件（6〜20人）：大きく賃上げする",
-         "公募要領 p.2\n公募要領 p.3"],
+        ["賃上げ\n出典：要領T p.2、3",
+         "上限の置き換え：5人以下 1,000万円／6〜20人 2,000万円\n条件（5人以下）：賃上げする\n条件（6〜20人）：大きく賃上げする"],
     ]
+
+
+def test_sources_first_only_and_pages_merged() -> None:
+    """出典は値ごとに最初の1つ。同じ資料のページは1行にまとめ、会社の記録はそのまま並べる。"""
+    from lib import gaiyou
+
+    node = sv("値", "要領T", 5)
+    node["出典"].append({"資料": "手引T2", "ページ": 9})  # 2つ目の出典は出さない
+    ctx = gaiyou.Context(seido(), {})
+    assert ctx.sources(node) == ["要領T p.5"]
+    assert gaiyou.merge_pages(["要領T p.5", "日程T", "要領T p.7–8", "会社の記録「名前」", "手引T2（第2回） p.3"]) == [
+        "要領T p.5、7–8", "日程T", "会社の記録「名前」", "手引T2（第2回） p.3"]
+    assert gaiyou.named("名前", ["要領T p.5"]) == "名前\n出典：要領T p.5"
+    assert gaiyou.named("理由", ["要領T p.5"], inline=True) == "理由（出典：要領T p.5）"
+    assert gaiyou.named("", ["要領T p.5"]) == "出典：要領T p.5"
+    assert gaiyou.named("読み取れませんでした（理由）", [], "読み取れませんでした（理由）") == "読み取れませんでした（理由）"
 
 
 # ---- 要件 ----
@@ -506,41 +560,51 @@ def test_specials_with_values_by_region() -> None:
 
 def test_requirements_match_seido(word: Word) -> None:
     data = seido()
-    rows = word.table("自社が満たす要件")
-    reqs = data["数値の要件"] + data["数値でない要件"]
-    assert len(rows) == len(reqs)
-    numeric = {"基準": "基準", "計算式": "計算式", "元の数字の決め方": "元の数字の決め方"}
-    other = {"内容": "内容", "確かめ方": "確かめ方", "満たせないとき": "満たせないとき"}
     judges = {j["要件"]: j for j in INPUT["要件の判定"]}
-    for row, req in zip(rows, reqs):
-        name, body, status, source = row
-        is_numeric = req in data["数値の要件"]
-        kind = "（数値の要件）" if is_numeric else ("（当たると対象外）" if req["種類"] == "当たらないこと" else "（満たすこと）")
-        assert name == f"{req['名前']}\n{kind}"
-        fields = numeric if is_numeric else other
-        expected_lines = []
-        nodes = []
-        for key, head in fields.items():
-            if key not in req:
-                continue
-            node = req[key]
-            nodes.append(node)
-            if node["状態"] == "読み取れない":
-                expected_lines.append(f"{head}：{UNREAD}（{node['理由']}）")
-            else:
-                expected_lines.append(f"{head}：{node['値']}")
-        assert body.split("\n") == expected_lines, (name, body)
+    reqs = data["数値の要件"] + data["数値でない要件"]
+    settled = [r for r in reqs if judges.get(r["名前"], {}).get("判定") in ("満たす", "当てはまらない")]
+    pending = [r for r in reqs if r not in settled]
+    # まだ決まっていない要件：中身（数値の要件は基準、数値でない要件は内容）と判定。名前は1件も欠けない
+    rows = word.table("自社が満たす要件", PENDING_REQS)
+    assert [split_cell(r[0])[0] for r in rows] == [r["名前"] for r in pending]
+    for row, req in zip(rows, pending):
+        name, body, status = row
+        node = req["基準"] if req in data["数値の要件"] else req["内容"]
+        prefix = "当たると対象外：" if req.get("種類") == "当たらないこと" else ""
+        want = f"{UNREAD}（{node['理由']}）" if node["状態"] == "読み取れない" else prefix + node["値"]
+        assert body == want, req["名前"]
         judge = judges.get(req["名前"])
-        expected_src = srcs(*nodes)
+        expected_src = srcs(node)
         if judge:
             assert status == f"{judge['判定']}\n{judge['理由']}"
             expected_src |= {REC[i] for i in judge.get("会社の記録", [])}
         else:
             assert status == NOT_JUDGED
         if expected_src:
-            assert cell_sources(source) == expected_src, name
+            assert cell_sources(name) == expected_src, req["名前"]
         else:
-            assert source == "" and UNREAD in body, name  # 読み取れない値だけの行は、理由を出す
+            assert name == req["名前"] and UNREAD in body  # 読み取れない値だけの行は、出典の代わりに理由を出す
+    # 満たすと決まった要件：中身を省き、判定と理由（出典は理由の後ろ）
+    rows = word.table("自社が満たす要件", SETTLED_REQS)
+    assert rows == [["最低の時給", "満たす：いちばん低い時給は1,330円（出典：要領T p.2、会社の記録「事業場内最低賃金」）"]]
+    assert [r["名前"] for r in settled] == ["最低の時給"]
+    # 計算式・元の数字の決め方・確かめ方は、Word に入れない（制度データに残る）
+    for text in ("出来高 ÷ 労働時間", "事業場でいちばん低い時給", "登記事項証明書で確かめる"):
+        assert text not in word.text
+
+
+def test_not_applicable_requirement_is_short_and_left_out_of_refunds(company: Company) -> None:
+    """当てはまらない要件（使わない特例の要件など）は、理由だけの短い表に入り、返還の表から省く。"""
+    judges = INPUT["要件の判定"] + [{"要件": "労働時間あたりの出来高", "判定": "当てはまらない", "理由": "この特例は使わない"}]
+    out = ok(company.run(dict(INPUT, 要件の判定=judges)))
+    assert "判定を書いたもの 3件" in out
+    word = Word(company.out)
+    rows = word.table("自社が満たす要件", SETTLED_REQS)
+    assert rows[0] == ["労働時間あたりの出来高", "当てはまらない：この特例は使わない（出典：要領T p.2）"]
+    assert "労働時間あたりの出来高" not in [split_cell(r[0])[0] for r in word.table("自社が満たす要件", PENDING_REQS)]
+    rows = word.table("義務と返還の条件", "満たせないと返還などがある数値の要件")
+    assert [split_cell(r[0])[0] for r in rows] == ["最低の時給"]
+    assert "当てはまらないと判定した要件（1件）は、省いています。" in word.section_paragraphs("義務と返還の条件")
 
 
 # ---- 義務と返還の条件 ----
@@ -548,31 +612,27 @@ def test_requirements_match_seido(word: Word) -> None:
 
 def test_duties_and_refunds_match_seido(word: Word) -> None:
     data = seido()
+    # 満たせないときのある数値の要件（数値でない要件の「対象外」などは入れない。基準は要件の表にある）
     rows = word.table("義務と返還の条件", "満たせないと返還などがある数値の要件")
     reqs = [r for r in data["数値の要件"] if "満たせないとき" in r]
-    assert [r[0] for r in rows] == [r["名前"] for r in reqs] == ["労働時間あたりの出来高", "最低の時給"]
-    assert rows[0][1:] == ["年平均で3.0%以上伸ばす", "【要確認】補助金の一部を返す\n※裏取り：返す額の決め方がない",
-                           "公募要領 p.2\n公募要領 p.4"]
-    assert rows[1][1:3] == ["地域の最低賃金＋30円以上", "その年の分を返す"]
+    assert [split_cell(r[0])[0] for r in rows] == [r["名前"] for r in reqs] == ["労働時間あたりの出来高", "最低の時給"]
+    assert rows == [["労働時間あたりの出来高\n出典：要領T p.4", "【要確認】補助金の一部を返す\n※裏取り：返す額の決め方がない"],
+                    ["最低の時給\n出典：手引T2（第2回） p.6", "その年の分を返す"]]
     for row, req in zip(rows, reqs):
-        assert cell_sources(row[3]) == srcs(req["基準"], req["満たせないとき"])
+        assert cell_sources(row[0]) == srcs(req["満たせないとき"])
 
     rows = word.table("義務と返還の条件", "してはいけないこと")
-    assert len(rows) == len(data["してはいけないこと"])
+    assert [r[0] for r in rows] == [i["名前"] for i in data["してはいけないこと"]]
     for row, item in zip(rows, data["してはいけないこと"]):
-        assert row[0] == item["名前"]
-        assert cell_sources(row[2]) == srcs(item["内容"])
-    assert rows[0][1] == "交付決定の前に発注しない"
-    assert rows[1][1] == "【資料で食い違い】同じ経費で他の補助金を受けない\n※手引では国と自治体の補助金"
+        assert cell_sources(row[1]) == srcs(item["内容"])
+    assert rows[0][1] == "交付決定の前に発注しない（出典：要領T p.4）"
+    assert rows[1][1] == "【資料で食い違い】同じ経費で他の補助金を受けない\n※手引では国と自治体の補助金（出典：要領T p.4）"
 
-    # 申請より後の手続きの段階の注意（申請の段階の注意は入らない）。後ろの節にまとめる
+    # 申請より後の手続きの段階の注意は、Word に入れない（採択されたときに、段階を切り替える道具が出す）
     assert [b for a, b, _r in word.tables if a == "義務と返還の条件"] == ["満たせないと返還などがある数値の要件", "してはいけないこと"]
-    rows = word.table(LATER_NOTES)
-    stages = sorted(data["手続きの段階"], key=lambda s: s["順番"])[1:]
-    notes = [(s["名前"], n) for s in stages for n in s.get("注意", [])]
-    assert [(r[0], r[1]) for r in rows] == [(name, n["値"]) for name, n in notes]
-    assert [cell_sources(r[2]) for r in rows] == [srcs(n) for _name, n in notes]
-    assert "GビズIDを先に取る" not in "\n".join(r[1] for r in rows)
+    for stage in data["手続きの段階"]:
+        for note in stage.get("注意", []):
+            assert note["値"] not in word.text, note["値"]
 
 
 # ---- 補助額の見込み ----
@@ -580,10 +640,10 @@ def test_duties_and_refunds_match_seido(word: Word) -> None:
 # 自己負担の目安の2行目（どの見込みにも付く）
 SELF_NOTE = "（補助の対象にする経費から補助額の見込みを引いたもの。消費税と、補助の対象にならない経費は別）"
 # 上限の置き換え（賃上げ特例）と上乗せ（地域の上乗せ）の行
-RAISE = ("賃上げ特例（上限の置き換え）\n条件：賃上げを大きく行う", {"公募要領 p.2"})
+RAISE = ("賃上げ特例（上限の置き換え）\n条件：賃上げを大きく行う", {"要領T p.2"})
 ADD_LINE = "上乗せ：【要確認】100万円\n※裏取り：上乗せの額が根拠の文にありません"
 RAISE_AND_ADD = ("賃上げ特例（上限の置き換え）\n条件：賃上げを大きく行う\n地域の上乗せ（上限の上乗せ）",
-                 {"公募要領 p.2", "スケジュールのページ"})
+                 {"要領T p.2", "日程T"})
 
 # 見込みと自己負担の目安は、2行目の計算（経費 × 補助率 ＝ 額。上限の◯の内／で頭打ち）まで1字ずつ比べる。
 # 特例の件は、その特例を無視すると見込みか2行目が変わる経費にしてある（コメントの「無視すると」）。
@@ -592,137 +652,137 @@ ESTIMATES = {
     # 補助率の置き換えを無視すると 1/2 で 1,125万円
     "補助率の置き換え": (
         INPUT["補助額の見込み"],
-        {"当たる区分": ("従業員6〜20人\n常勤の従業員は12人", {"公募要領 p.1", REC["f-001"]}),
-         "使う特例": ("小規模の補助率（補助率の置き換え）\n条件：小規模事業者", {"公募要領 p.1"}),
-         "補助上限": ("1,500万円", {"公募要領 p.1"}),
-         "補助率": ("2/3", {"公募要領 p.1"}),
+        {"当たる区分": ("従業員6〜20人\n常勤の従業員は12人", {"要領T p.1", REC["f-001"]}),
+         "使う特例": ("小規模の補助率（補助率の置き換え）\n条件：小規模事業者", {"要領T p.1"}),
+         "補助上限": ("1,500万円", {"要領T p.1"}),
+         "補助率": ("2/3", {"要領T p.1"}),
          "補助の対象にする経費": ("2,250万円", {REC["f-002"]}),
-         "補助額の見込み": ("1,500万円\n（2,250万円 × 2/3 ＝ 1,500万円。上限の1,500万円の内）", {"公募要領 p.1", REC["f-002"]}),
-         "自己負担の目安": (f"750万円\n{SELF_NOTE}", {"公募要領 p.1", REC["f-002"]})},
+         "補助額の見込み": ("1,500万円\n（2,250万円 × 2/3 ＝ 1,500万円。上限の1,500万円の内）", {"要領T p.1", REC["f-002"]}),
+         "自己負担の目安": (f"750万円\n{SELF_NOTE}", {"要領T p.1", REC["f-002"]})},
     ),
     # 上限の置き換え 2,000万円＋上乗せ 100万円（要確認）、補助率 1/2：22,500,000 × 1/2 ＝ 11,250,000。
     # 見込みは元の上限の内なので、置き換えと上乗せは2行目の「上限の2,100万円」にだけ出る（無視すると 1,500万円）
     "上限の置き換えと上乗せ（上限の内）": (
         {"区分": "従業員6〜20人", "特例": ["賃上げ特例", "地域の上乗せ"], "補助の対象にする経費": "f-002"},
-        {"当たる区分": ("従業員6〜20人", {"公募要領 p.1"}),
+        {"当たる区分": ("従業員6〜20人", {"要領T p.1"}),
          "使う特例": RAISE_AND_ADD,
-         "補助上限": (f"2,000万円\n{ADD_LINE}", {"公募要領 p.2", "スケジュールのページ"}),
-         "補助率": ("1/2", {"公募要領 p.1"}),
+         "補助上限": (f"2,000万円\n{ADD_LINE}", {"要領T p.2", "日程T"}),
+         "補助率": ("1/2", {"要領T p.1"}),
          "補助の対象にする経費": ("2,250万円", {REC["f-002"]}),
          "補助額の見込み": ("【要確認】1,125万円\n（2,250万円 × 1/2 ＝ 1,125万円。上限の2,100万円の内）",
-                           {"公募要領 p.2", "スケジュールのページ", "公募要領 p.1", REC["f-002"]}),
-         "自己負担の目安": (f"【要確認】1,125万円\n{SELF_NOTE}", {"公募要領 p.2", "スケジュールのページ", "公募要領 p.1", REC["f-002"]})},
+                           {"要領T p.2", "日程T", "要領T p.1", REC["f-002"]}),
+         "自己負担の目安": (f"【要確認】1,125万円\n{SELF_NOTE}", {"要領T p.2", "日程T", "要領T p.1", REC["f-002"]})},
     ),
     # 上限の置き換えが効く：36,000,000 × 1/2 ＝ 18,000,000。元の上限 1,500万円を超え、置き換えた 2,000万円の内。
     # 置き換えを無視すると 1,500万円で頭打ち
     "上限の置き換えが効く": (
         {"区分": "従業員6〜20人", "特例": ["賃上げ特例"], "補助の対象にする経費": "f-007"},
-        {"当たる区分": ("従業員6〜20人", {"公募要領 p.1"}),
+        {"当たる区分": ("従業員6〜20人", {"要領T p.1"}),
          "使う特例": RAISE,
-         "補助上限": ("2,000万円", {"公募要領 p.2"}),
-         "補助率": ("1/2", {"公募要領 p.1"}),
+         "補助上限": ("2,000万円", {"要領T p.2"}),
+         "補助率": ("1/2", {"要領T p.1"}),
          "補助の対象にする経費": ("3,600万円", {REC["f-007"]}),
          "補助額の見込み": ("1,800万円\n（3,600万円 × 1/2 ＝ 1,800万円。上限の2,000万円の内）",
-                           {"公募要領 p.2", "公募要領 p.1", REC["f-007"]}),
-         "自己負担の目安": (f"1,800万円\n{SELF_NOTE}", {"公募要領 p.2", "公募要領 p.1", REC["f-007"]})},
+                           {"要領T p.2", "要領T p.1", REC["f-007"]}),
+         "自己負担の目安": (f"1,800万円\n{SELF_NOTE}", {"要領T p.2", "要領T p.1", REC["f-007"]})},
     ),
     # 上乗せが効く：41,000,000 × 1/2 ＝ 20,500,000。置き換えた上限 2,000万円を超え、上乗せした 2,100万円の内。
     # 上乗せを無視すると 2,000万円で頭打ち
     "上乗せがないと頭打ち": (
         {"区分": "従業員6〜20人", "特例": ["賃上げ特例", "地域の上乗せ"], "補助の対象にする経費": "f-008"},
-        {"当たる区分": ("従業員6〜20人", {"公募要領 p.1"}),
+        {"当たる区分": ("従業員6〜20人", {"要領T p.1"}),
          "使う特例": RAISE_AND_ADD,
-         "補助上限": (f"2,000万円\n{ADD_LINE}", {"公募要領 p.2", "スケジュールのページ"}),
-         "補助率": ("1/2", {"公募要領 p.1"}),
+         "補助上限": (f"2,000万円\n{ADD_LINE}", {"要領T p.2", "日程T"}),
+         "補助率": ("1/2", {"要領T p.1"}),
          "補助の対象にする経費": ("4,100万円", {REC["f-008"]}),
          "補助額の見込み": ("【要確認】2,050万円\n（4,100万円 × 1/2 ＝ 2,050万円。上限の2,100万円の内）",
-                           {"公募要領 p.2", "スケジュールのページ", "公募要領 p.1", REC["f-008"]}),
-         "自己負担の目安": (f"【要確認】2,050万円\n{SELF_NOTE}", {"公募要領 p.2", "スケジュールのページ", "公募要領 p.1", REC["f-008"]})},
+                           {"要領T p.2", "日程T", "要領T p.1", REC["f-008"]}),
+         "自己負担の目安": (f"【要確認】2,050万円\n{SELF_NOTE}", {"要領T p.2", "日程T", "要領T p.1", REC["f-008"]})},
     ),
     # 置き換えて上乗せした上限で頭打ち：44,000,000 × 1/2 ＝ 22,000,000 → 2,000万円＋100万円 ＝ 2,100万円
     # （元の上限なら 1,500万円、上乗せを無視すると 2,000万円）
     "置き換えて上乗せした上限で頭打ち": (
         {"区分": "従業員6〜20人", "特例": ["賃上げ特例", "地域の上乗せ"], "補助の対象にする経費": "f-009"},
-        {"当たる区分": ("従業員6〜20人", {"公募要領 p.1"}),
+        {"当たる区分": ("従業員6〜20人", {"要領T p.1"}),
          "使う特例": RAISE_AND_ADD,
-         "補助上限": (f"2,000万円\n{ADD_LINE}", {"公募要領 p.2", "スケジュールのページ"}),
-         "補助率": ("1/2", {"公募要領 p.1"}),
+         "補助上限": (f"2,000万円\n{ADD_LINE}", {"要領T p.2", "日程T"}),
+         "補助率": ("1/2", {"要領T p.1"}),
          "補助の対象にする経費": ("4,400万円", {REC["f-009"]}),
          "補助額の見込み": ("【要確認】2,100万円\n（4,400万円 × 1/2 ＝ 2,200万円。上限の2,100万円で頭打ち）",
-                           {"公募要領 p.2", "スケジュールのページ", "公募要領 p.1", REC["f-009"]}),
-         "自己負担の目安": (f"【要確認】2,300万円\n{SELF_NOTE}", {"公募要領 p.2", "スケジュールのページ", "公募要領 p.1", REC["f-009"]})},
+                           {"要領T p.2", "日程T", "要領T p.1", REC["f-009"]}),
+         "自己負担の目安": (f"【要確認】2,300万円\n{SELF_NOTE}", {"要領T p.2", "日程T", "要領T p.1", REC["f-009"]})},
     ),
     # 上乗せだけ（元の上限に足す）：31,000,000 × 1/2 ＝ 15,500,000。1,500万円＋100万円 ＝ 1,600万円の内。
     # 上乗せを無視すると 1,500万円で頭打ち
     "上乗せだけ": (
         {"区分": "従業員6〜20人", "特例": ["地域の上乗せ"], "補助の対象にする経費": "f-010"},
-        {"当たる区分": ("従業員6〜20人", {"公募要領 p.1"}),
-         "使う特例": ("地域の上乗せ（上限の上乗せ）", {"スケジュールのページ"}),
-         "補助上限": (f"1,500万円\n{ADD_LINE}", {"公募要領 p.1", "スケジュールのページ"}),
-         "補助率": ("1/2", {"公募要領 p.1"}),
+        {"当たる区分": ("従業員6〜20人", {"要領T p.1"}),
+         "使う特例": ("地域の上乗せ（上限の上乗せ）", {"日程T"}),
+         "補助上限": (f"1,500万円\n{ADD_LINE}", {"要領T p.1", "日程T"}),
+         "補助率": ("1/2", {"要領T p.1"}),
          "補助の対象にする経費": ("3,100万円", {REC["f-010"]}),
          "補助額の見込み": ("【要確認】1,550万円\n（3,100万円 × 1/2 ＝ 1,550万円。上限の1,600万円の内）",
-                           {"公募要領 p.1", "スケジュールのページ", REC["f-010"]}),
-         "自己負担の目安": (f"【要確認】1,550万円\n{SELF_NOTE}", {"公募要領 p.1", "スケジュールのページ", REC["f-010"]})},
+                           {"要領T p.1", "日程T", REC["f-010"]}),
+         "自己負担の目安": (f"【要確認】1,550万円\n{SELF_NOTE}", {"要領T p.1", "日程T", REC["f-010"]})},
     ),
     # 上乗せだけで頭打ち：41,000,000 × 1/2 ＝ 20,500,000 → 1,500万円＋100万円 ＝ 1,600万円。
     # 上乗せは1回だけ足す（同じ上乗せを2回渡すのは BAD_INPUTS で断る）。上乗せを無視すると 1,500万円で頭打ち
     "上乗せだけで頭打ち": (
         {"区分": "従業員6〜20人", "特例": ["地域の上乗せ"], "補助の対象にする経費": "f-008"},
-        {"当たる区分": ("従業員6〜20人", {"公募要領 p.1"}),
-         "使う特例": ("地域の上乗せ（上限の上乗せ）", {"スケジュールのページ"}),
-         "補助上限": (f"1,500万円\n{ADD_LINE}", {"公募要領 p.1", "スケジュールのページ"}),
-         "補助率": ("1/2", {"公募要領 p.1"}),
+        {"当たる区分": ("従業員6〜20人", {"要領T p.1"}),
+         "使う特例": ("地域の上乗せ（上限の上乗せ）", {"日程T"}),
+         "補助上限": (f"1,500万円\n{ADD_LINE}", {"要領T p.1", "日程T"}),
+         "補助率": ("1/2", {"要領T p.1"}),
          "補助の対象にする経費": ("4,100万円", {REC["f-008"]}),
          "補助額の見込み": ("【要確認】1,600万円\n（4,100万円 × 1/2 ＝ 2,050万円。上限の1,600万円で頭打ち）",
-                           {"公募要領 p.1", "スケジュールのページ", REC["f-008"]}),
-         "自己負担の目安": (f"【要確認】2,500万円\n{SELF_NOTE}", {"公募要領 p.1", "スケジュールのページ", REC["f-008"]})},
+                           {"要領T p.1", "日程T", REC["f-008"]}),
+         "自己負担の目安": (f"【要確認】2,500万円\n{SELF_NOTE}", {"要領T p.1", "日程T", REC["f-008"]})},
     ),
     # 補助率と上限の両方の置き換え：27,000,000 × 2/3 ＝ 18,000,000。置き換えた上限 2,000万円の内。
     # 補助率の置き換えを無視すると 1,350万円、上限の置き換えを無視すると 1,500万円で頭打ち
     "補助率と上限の置き換え": (
         {"区分": "従業員6〜20人", "特例": ["小規模の補助率", "賃上げ特例"], "補助の対象にする経費": "f-011"},
-        {"当たる区分": ("従業員6〜20人", {"公募要領 p.1"}),
+        {"当たる区分": ("従業員6〜20人", {"要領T p.1"}),
          "使う特例": ("小規模の補助率（補助率の置き換え）\n条件：小規模事業者\n"
-                     "賃上げ特例（上限の置き換え）\n条件：賃上げを大きく行う", {"公募要領 p.1", "公募要領 p.2"}),
-         "補助上限": ("2,000万円", {"公募要領 p.2"}),
-         "補助率": ("2/3", {"公募要領 p.1"}),
+                     "賃上げ特例（上限の置き換え）\n条件：賃上げを大きく行う", {"要領T p.1", "要領T p.2"}),
+         "補助上限": ("2,000万円", {"要領T p.2"}),
+         "補助率": ("2/3", {"要領T p.1"}),
          "補助の対象にする経費": ("2,700万円", {REC["f-011"]}),
          "補助額の見込み": ("1,800万円\n（2,700万円 × 2/3 ＝ 1,800万円。上限の2,000万円の内）",
-                           {"公募要領 p.2", "公募要領 p.1", REC["f-011"]}),
-         "自己負担の目安": (f"900万円\n{SELF_NOTE}", {"公募要領 p.2", "公募要領 p.1", REC["f-011"]})},
+                           {"要領T p.2", "要領T p.1", REC["f-011"]}),
+         "自己負担の目安": (f"900万円\n{SELF_NOTE}", {"要領T p.2", "要領T p.1", REC["f-011"]})},
     ),
     # 上限で頭打ち：20,000,000 × 1/2 ＝ 10,000,000 → 上限 7,500,000
     "上限で頭打ち": (
         {"区分": "従業員5人以下", "補助の対象にする経費": "f-005"},
-        {"当たる区分": ("従業員5人以下", {"公募要領 p.1"}),
-         "補助上限": ("750万円", {"公募要領 p.1"}),
-         "補助率": ("1/2", {"公募要領 p.1"}),
+        {"当たる区分": ("従業員5人以下", {"要領T p.1"}),
+         "補助上限": ("750万円", {"要領T p.1"}),
+         "補助率": ("1/2", {"要領T p.1"}),
          "補助の対象にする経費": ("2,000万円", {REC["f-005"]}),
-         "補助額の見込み": ("750万円\n（2,000万円 × 1/2 ＝ 1,000万円。上限の750万円で頭打ち）", {"公募要領 p.1", REC["f-005"]}),
-         "自己負担の目安": (f"1,250万円\n{SELF_NOTE}", {"公募要領 p.1", REC["f-005"]})},
+         "補助額の見込み": ("750万円\n（2,000万円 × 1/2 ＝ 1,000万円。上限の750万円で頭打ち）", {"要領T p.1", REC["f-005"]}),
+         "自己負担の目安": (f"1,250万円\n{SELF_NOTE}", {"要領T p.1", REC["f-005"]})},
     ),
     # 円未満は切り捨て：12,345,679 × 2/3 ＝ 8,230,452.66…
     "円未満の切り捨て": (
         {"区分": "従業員6〜20人", "特例": ["小規模の補助率"], "補助の対象にする経費": "f-006"},
-        {"当たる区分": ("従業員6〜20人", {"公募要領 p.1"}),
-         "使う特例": ("小規模の補助率（補助率の置き換え）\n条件：小規模事業者", {"公募要領 p.1"}),
-         "補助上限": ("1,500万円", {"公募要領 p.1"}),
-         "補助率": ("2/3", {"公募要領 p.1"}),
+        {"当たる区分": ("従業員6〜20人", {"要領T p.1"}),
+         "使う特例": ("小規模の補助率（補助率の置き換え）\n条件：小規模事業者", {"要領T p.1"}),
+         "補助上限": ("1,500万円", {"要領T p.1"}),
+         "補助率": ("2/3", {"要領T p.1"}),
          "補助の対象にする経費": ("12,345,679円", {REC["f-006"]}),
          "補助額の見込み": ("8,230,452円\n（12,345,679円 × 2/3 ＝ 8,230,452円。上限の1,500万円の内）",
-                           {"公募要領 p.1", REC["f-006"]}),
-         "自己負担の目安": (f"4,115,227円\n{SELF_NOTE}", {"公募要領 p.1", REC["f-006"]})},
+                           {"要領T p.1", REC["f-006"]}),
+         "自己負担の目安": (f"4,115,227円\n{SELF_NOTE}", {"要領T p.1", REC["f-006"]})},
     ),
     # 上限が読み取れない区分では、見込みを出さない（推測で埋めない）
     "上限が読み取れない": (
         {"区分": "従業員21人以上", "補助の対象にする経費": "f-002"},
-        {"当たる区分": ("従業員21人以上", {"公募要領 p.1"}),
+        {"当たる区分": ("従業員21人以上", {"要領T p.1"}),
          "補助上限": ("読み取れませんでした（上限が書かれていない）", set()),
-         "補助率": ("1/2", {"公募要領 p.1"}),
+         "補助率": ("1/2", {"要領T p.1"}),
          "補助の対象にする経費": ("2,250万円", {REC["f-002"]}),
-         "補助額の見込み": ("出せません（補助上限が読み取れないため。事務局に確かめてから出し直します）",
-                           {"公募要領 p.1", REC["f-002"]})},
+         "補助額の見込み": ("出せません（補助上限が読み取れないため。資料で値が分かったら出し直します）",
+                           {"要領T p.1", REC["f-002"]})},
     ),
 }
 
@@ -734,14 +794,15 @@ def test_estimate_matches_seido_and_record(company: Company, case: str) -> None:
     out = ok(company.run(data))
     rows = Word(company.out).table("補助額の見込み")
     assert [r[0] for r in rows] == list(expected)
-    for item, value, source in rows:
+    for item, cell in rows:
+        value, source = split_cell(cell)  # 出典は中身の下の「出典：」の行
         want, want_src = expected[item]
         # どの行も、2行目（計算と上限、自己負担の注記）まで丸ごと比べる
         assert value == want, (item, value)
         if want_src:
-            assert cell_sources(source) == want_src, item
+            assert source == want_src, item
         else:
-            assert source == "" and UNREAD in value, item
+            assert source == set() and cell == value and UNREAD in value, item
     # 結果の行（担当者に見える）も、Word と同じ見込み
     want = expected["補助額の見込み"][0]
     if want.startswith("出せません"):
@@ -753,7 +814,8 @@ def test_estimate_matches_seido_and_record(company: Company, case: str) -> None:
 
 def test_estimate_shows_calculation(word: Word) -> None:
     rows = {r[0]: r for r in word.table("補助額の見込み")}
-    assert rows["補助額の見込み"][1] == "1,500万円\n（2,250万円 × 2/3 ＝ 1,500万円。上限の1,500万円の内）"
+    assert rows["補助額の見込み"][1] == ("1,500万円\n（2,250万円 × 2/3 ＝ 1,500万円。上限の1,500万円の内）\n"
+                                      "出典：要領T p.1、会社の記録「設備投資の額（税抜き）」")
 
 
 def test_no_estimate_without_input(company: Company) -> None:
@@ -782,26 +844,32 @@ LIMITS = {
 
 def test_flow_and_deadlines_match_seido(word: Word) -> None:
     data = seido()
-    rows = word.table("申請から効果報告までの流れと期限", "手続きの流れ")
-    stages = sorted(data["手続きの段階"], key=lambda s: s["順番"])
-    assert [r[0] for r in rows] == [str(s["順番"]) for s in stages] == [str(n) for n in range(1, 8)]
-    for row, stage in zip(rows, stages):
-        _order, name, start, limit, source = row
-        want = stage["名前"] + ("（必要なときだけ）" if stage.get("条件付き") else "")
-        if stage.get("フォルダ"):
-            want += f"\nフォルダ：{stage['フォルダ']}"
-        assert name == want
-        assert start == stage["始まる条件"]["値"]
-        assert limit == LIMITS[stage["id"]], stage["id"]
-        assert cell_sources(source) == srcs(stage["始まる条件"], stage.get("期限")), stage["id"]
-
-    rows = word.table("申請から効果報告までの流れと期限", "決まった期日")
+    # 流れは制度の概要の「全体の流れ」の1行（test_sections_and_header）。期限は、決まった期日と申請の期限だけ
+    rows = word.table("申請から効果報告までの流れと期限")
     assert rows == [
-        ["申請の締切", "2027年3月12日（金）16:00", "公募要領 p.1"],
-        ["採択発表", "2027年5月上旬（予定）", "スケジュールのページ"],
-        ["交付申請の受付開始", f"{UNREAD}（後日お知らせとなっている）", ""],
+        ["申請の締切", "2027年3月12日（金）16:00\n出典：要領T p.1"],
+        ["採択発表", "2027年5月上旬（予定）\n出典：日程T"],
+        ["交付申請の受付開始", f"{UNREAD}（後日お知らせとなっている）"],
+        ["応募申請の期限", f"{LIMITS['申請']}\n出典：要領T p.1"],
     ]
-    assert [r[0] for r in rows] == [d["名前"] for d in data["決まった期日"]]
+    assert [r[0] for r in rows[:-1]] == [d["名前"] for d in data["決まった期日"]]
+    # 採択された後の手続きの期限は入れず、件数だけを示す（採択されたときに、段階を切り替える道具が出す）
+    for stage_id in ("交付申請", "実施", "実績報告", "効果報告"):
+        assert LIMITS[stage_id].split("\n")[0] not in word.text
+    assert ("採択された後の手続き（6段階）の期限と、出す書類（1件）・守ること（3件）は、ここには入れていません。"
+            "採択されたときに、手続きごとに案内します。") in word.section_paragraphs("申請から効果報告までの流れと期限")
+
+
+def test_limit_text_forms() -> None:
+    """期限の決め方の文（決まった日付／出来事からの期間／早いほう／繰り返し）。Word には申請の期限だけが出るが、
+    形はすべて確かめておく（制度データが変わったとき、申請の段階の期限がどの形でも読めるように）。"""
+    from lib import gaiyou
+
+    ctx = gaiyou.Context(seido(), {})
+    for stage in seido()["手続きの段階"]:
+        node = stage.get("期限")
+        got = ctx.text(node, ctx.limit_text) if node else "（期限の決まりは読み取っていません）"
+        assert got == LIMITS[stage["id"]], stage["id"]
 
 
 # ---- 加点 ----
@@ -809,19 +877,29 @@ def test_flow_and_deadlines_match_seido(word: Word) -> None:
 
 def test_bonus_points_match_seido(word: Word) -> None:
     data = seido()
-    rows = word.table("加点", first="項目")
-    assert rows == [["加点の種類の数", "2", "公募要領 p.3"],
-                    ["区分ごとの上限", f"{UNREAD}（区分ごとの上限が書かれていない）", ""]]
-    rows = word.table("加点", first="加点")
+    # 種類の数と区分ごとの上限は1つの段落
+    assert word.section_paragraphs("加点")[0] == (
+        f"加点の種類の数：2（要領T p.3）\n区分ごとの上限：{UNREAD}（区分ごとの上限が書かれていない）")
     items = data["加点"]["項目"]
-    assert [r[0] for r in rows] == [i["名前"] for i in items]
-    assert rows[0][1].split("\n") == ["内容：認定を受けた計画がある", "証拠の種類：入力", "かかる日数：認定まで約45日"]
-    assert rows[0][2] == "今回は取れない\n認定まで約45日かかり、締切に間に合わない"
-    assert cell_sources(rows[0][3]) == srcs(items[0]["内容"], items[0]["かかる日数"]) | {REC["f-004"]}
-    assert rows[1][1].split("\n") == ["区分：政策", "内容：【資料で食い違い】賃上げを表明する", "※手引では別の書き方",
-                                      "証拠の種類：添付", "必要な書類：賃上げ表明書", "自動で付く条件：賃上げ特例を選ぶと付く"]
-    assert rows[1][2] == NOT_JUDGED
-    assert cell_sources(rows[1][3]) == srcs(items[1]["内容"], items[1]["自動で付く条件"])
+    # 今回は取れない加点：中身を省き、理由だけ（出典は理由の後ろ）
+    rows = word.table("加点", SETTLED_BONUS)
+    assert rows == [["認定計画の加点", "認定まで約45日かかり、締切に間に合わない（出典：要領T p.3、会社の記録「加点の認定」）"]]
+    assert cell_sources(rows[0][1]) == srcs(items[0]["内容"]) | {REC["f-004"]}
+    # 残りの加点：内容だけ。判定がどれもないので、判定の列は外す
+    rows = word.table("加点", f"{PENDING_BONUS}（どれも、{NOT_JUDGED}）")
+    assert rows == [["賃上げ表明の加点\n出典：要領T p.3", "【資料で食い違い】賃上げを表明する\n※手引では別の書き方"]]
+    assert [split_cell(r[0])[0] for r in rows] + ["認定計画の加点"] == [i["名前"] for i in items][::-1]
+    # 証拠の種類・必要な書類・かかる日数・自動で付く条件は、Word に入れない（制度データに残る）
+    assert "賃上げ特例を選ぶと付く" not in word.text and "認定まで約45日\n" not in word.text
+
+
+def test_pending_rows_keep_judgement_column_when_some_are_judged(company: Company) -> None:
+    """まだ決まっていない加点のうち1つでも判定があれば、判定の列を残す。"""
+    bonus = INPUT["加点の判定"] + [{"加点": "賃上げ表明の加点", "判定": "確かめが要る", "理由": "表明するかを聞く"}]
+    ok(company.run(dict(INPUT, 加点の判定=bonus)))
+    rows = Word(company.out).table("加点", PENDING_BONUS)
+    assert rows == [["賃上げ表明の加点\n出典：要領T p.3", "【資料で食い違い】賃上げを表明する\n※手引では別の書き方",
+                     "確かめが要る\n表明するかを聞く"]]
 
 
 # ---- 必要書類 ----
@@ -830,38 +908,41 @@ def test_bonus_points_match_seido(word: Word) -> None:
 def test_documents_match_seido_by_stage(word: Word) -> None:
     data = seido()
     stages = sorted(data["手続きの段階"], key=lambda s: s["順番"])
-    groups = [(f"{s['名前']}で出す書類", [d for d in data["書類"] if s["id"] in d["手続き"]]) for s in stages]
     ids = {s["id"] for s in stages}
-    groups.append(("どの手続きで使うか分からない書類", [d for d in data["書類"] if not set(d["手続き"]) & ids]))
-    groups = [(title, docs) for title, docs in groups if docs]
-    # 申請の段階の書類は前の節に、採択された後の手続きの書類は後ろの節に、段階ごとに並ぶ
-    assert [rows[0] for a, b, rows in word.tables if a == "応募申請で出す書類"] == [["書類", "区分", "決まり", "出典"]]
-    titles = [b for a, b, _rows in word.tables if a == LATER_DOCS]
-    assert ["応募申請で出す書類"] + titles == [title for title, _docs in groups] == [
-        "応募申請で出す書類", "交付申請で出す書類", "実績報告で出す書類", "どの手続きで使うか分からない書類"]
     order = {"必須": 0, "条件付き": 1, "任意": 2}
-    for title, docs in groups:
-        rows = word.table(title) if title == "応募申請で出す書類" else word.table(LATER_DOCS, title)
+    groups = [("応募申請で出す書類", None, [d for d in data["書類"] if stages[0]["id"] in d["手続き"]]),
+              ("応募申請で出す書類", "どの手続きで使うか分からない書類", [d for d in data["書類"] if not set(d["手続き"]) & ids])]
+    for h1, h2, docs in groups:
+        rows = word.table(h1, h2)
         docs = sorted(docs, key=lambda d: order[d["区分"]])  # 区分の中は制度データの順
-        assert [(r[0], r[1]) for r in rows] == [(d["名前"], d["区分"]) for d in docs], title
+        assert [(r[0], r[1]) for r in rows] == [(d["名前"], d["区分"]) for d in docs], h2
         for row, d in zip(rows, docs):
-            body = row[2].split("\n")
-            nodes = [d[k] for k in ("内容", "条件", "有効期限", "期数") if k in d]
-            for key in ("内容", "条件", "有効期限", "期数"):
-                if key in d:
-                    assert f"{key}：{d[key]['値']}" in body, (d["名前"], key)
-            assert f"発行元：{d['発行元']}" in body
+            body, source = split_cell(row[2])
+            # 要点は、条件・有効期限・期数・発行元（自社でないとき）・効く審査項目を「／」でつなぐ。内容は入れない
+            want = [f"{key}：{d[key]['値']}" for key in ("条件", "有効期限", "期数") if key in d]
+            if d["発行元"] != "自社":
+                want.append(f"発行元：{d['発行元']}")
             if d.get("効く審査項目"):
-                assert f"効く審査項目：{'、'.join(d['効く審査項目'])}" in body
-            assert cell_sources(row[3]) == srcs(*nodes), d["名前"]
-    # 応募申請の書類は、必須 → 条件付き → 任意
-    assert [r[0] for r in word.table("応募申請で出す書類")] == ["決算書", "登記簿の写し", "見積書", "賃上げ表明書", "会社案内"]
+                want.append(f"効く審査項目：{'、'.join(d['効く審査項目'])}")
+            assert body == "／".join(want), d["名前"]
+            # 出典は、内容も含めた値ごとの最初の出典
+            assert source == srcs(*(d[k] for k in ("内容", "条件", "有効期限", "期数") if k in d)), d["名前"]
+    assert word.table("応募申請で出す書類") == [
+        ["決算書", "必須", "期数：直近2期分（出典：要領T p.2）"],
+        ["登記簿の写し", "必須", "有効期限：発行から3か月以内／発行元：役所（出典：要領T p.2）"],
+        ["見積書", "必須", "発行元：外部機関（出典：手引T2（第2回） p.5）"],
+        ["賃上げ表明書", "条件付き", "条件：賃上げ特例を選ぶとき（出典：要領T p.3）"],
+        ["会社案内", "任意", "効く審査項目：計画面（出典：要領T p.3）"],
+    ]
+    assert word.table("応募申請で出す書類", "どの手続きで使うか分からない書類") == [
+        ["古い様式の届け", "任意", "出典：手引T2（第2回） p.11"]]
+    # 採択された後の手続きだけで使う書類は、Word に入れない（数は流れと期限の節に出る）
+    assert "実績報告書" not in word.text
 
 
 # ---- すべてに出典 ----
 
-SECTIONS = ("制度の概要", "自社が満たす要件", "補助額の見込み", "加点", "応募申請で出す書類", "義務と返還の条件",
-            "申請から効果報告までの流れと期限", LATER_NOTES, LATER_DOCS)
+SECTIONS = H1S[:7]  # 出典の要る節（資料で分からなかったこと・食い違い・出典の資料の前まで）
 
 
 def test_every_row_has_source(word: Word) -> None:
@@ -871,27 +952,77 @@ def test_every_row_has_source(word: Word) -> None:
         if h1 not in SECTIONS:
             continue
         for row in rows[1:]:
-            source = row[-1]
-            if source:
-                # 出典は、資料の名前（とページ）か、会社の記録の出典
-                for line in source.split("\n"):
-                    assert line in REC.values() or any(line == name or line.startswith(name + " p.")
+            found = row_sources(row)
+            if found:
+                # 出典は、資料の呼び名（とページ）か、会社の記録の項目の名前
+                for item in found:
+                    assert item in REC.values() or any(item == name or item.startswith(name + " p.")
                                                        for name in LABELS.values()), (h1, h2, row)
             else:
                 # 出典のない行は、読み取れない値だけの行（理由を出す）
-                assert UNREAD in "\n".join(row[:-1]), (h1, h2, row)
+                assert UNREAD in "\n".join(row), (h1, h2, row)
             checked += 1
-    assert checked >= 40
+    assert checked >= 20
 
 
-def test_unreadable_items_and_conflicts_are_shown(word: Word) -> None:
-    rows = word.table("資料で分からなかったこと")
-    assert rows == [["加点の区分ごとの上限", "区分ごとの上限が書かれていない", "加点の区分ごとに、いくつまで選べますか。"]]
-    rows = word.table("資料どうしで書き方が違うところ")
-    assert rows == [["二重受給の範囲", "「国の補助金」（公募要領 p.4）\n「国と自治体の補助金」（交付申請の手引き（第2回） p.2）",
-                     "公募要領 p.4\n交付申請の手引き（第2回） p.2"]]
+def test_unreadable_items_and_conflicts_are_shown(word: Word, company: Company) -> None:
+    # 資料で分からなかったことは、項目の名前だけ。問い合わせ文の案は Word に入れない（制度データに残る。11/6 のリハーサル）
+    paras = word.section_paragraphs("資料で分からなかったこと")
+    assert len(paras) == 1 and "加点の区分ごとの上限" in paras[0]
+    assert "加点の区分ごとに、いくつまで選べますか。" not in word.text
+    assert "事務局" not in word.text  # 事務局への問い合わせを指示しない
+    # 食い違いは項目の名前だけ（表の値には印と注記がある）
+    paras = word.section_paragraphs("資料どうしで書き方が違うところ")
+    assert len(paras) == 1 and "二重受給の範囲" in paras[0] and "【資料で食い違い】" in paras[0]
+    assert "国と自治体の補助金」" not in word.text
+    # 出典の資料：呼び名と資料の名前の対応。名前は公式サイトへのリンク
     rows = word.table("出典の資料")
-    assert [(r[0], r[1], r[2]) for r in rows] == [(d["名前"], d["公募回"], d["URL"]) for d in seido()["資料"]]
+    data = seido()["資料"]
+    assert rows == [[d["id"], d["名前"], d["公募回"], d["取得日"]] for d in data]
+    with zipfile.ZipFile(company.out) as zf:
+        rels = zf.read("word/_rels/document.xml.rels").decode("utf-8")
+    assert all(d["URL"] in rels for d in data)
+
+
+# ---- 10ページ以内（11/6 のリハーサルの指摘） ----
+
+SOFFICE = shutil.which("soffice") or next(
+    (p for p in ("/Applications/LibreOffice.app/Contents/MacOS/soffice",) if Path(p).exists()), None)
+TRUTH = REPO_ROOT / "testdata" / "正解"
+
+
+def judged_input(data: dict) -> dict:
+    """判定を入れた形：数値の要件は確かめが要る（計画の数字はこれから）、数値でない要件は満たす、加点は交互。"""
+    reqs = [{"要件": r["名前"], "判定": "確かめが要る", "理由": "計画の数字を作ってから確かめる"} for r in data["数値の要件"]]
+    reqs += [{"要件": r["名前"], "判定": "満たす", "理由": "会社の記録で確かめた"} for r in data["数値でない要件"]]
+    bonus = [{"加点": b["名前"], "判定": "今回は取れない" if i % 2 else "確かめが要る",
+              "理由": "認定を受けていない" if i % 2 else "日数を聞いてから決める"} for i, b in enumerate(data["加点"]["項目"])]
+    return {"要件の判定": reqs, "加点の判定": bonus, "流れの説明": "テストのための流れの説明です。"}
+
+
+@pytest.mark.skipif(SOFFICE is None, reason="LibreOffice がないので、ページを数えられない")
+def test_within_ten_pages(tmp_path: Path) -> None:
+    """省力化と持続化の制度データ（正解。資料の文を写さない形）で、判定を入れた形と入れない形を PDF にして数える。"""
+    sys.path.insert(0, str(REPO_ROOT))
+    from lib import gaiyou
+
+    files = []
+    for name in ("省力化_第8回", "持続化_第20回"):
+        data = json.loads((TRUTH / f"{name}.json").read_text(encoding="utf-8"))
+        for kind, extra in (("判定なし", {}), ("判定あり", judged_input(data))):
+            spec = dict({"制度の概要": ["テストのための説明の文です。", "2つ目の段落です。"]}, **extra)
+            assert gaiyou.validate(spec, data, {}) == []
+            doc, _summary = gaiyou.build(gaiyou.Context(data, {}), spec, "テストの案件", date(2026, 11, 6), [])
+            path = tmp_path / f"{name}_{kind}.docx"
+            doc.save(path)
+            files.append(path)
+    profile = (tmp_path / "lo_profile").as_uri()
+    subprocess.run([SOFFICE, f"-env:UserInstallation={profile}", "--headless", "--convert-to", "pdf",
+                    "--outdir", str(tmp_path), *map(str, files)], capture_output=True, timeout=300, check=True)
+    for path in files:
+        pdf = path.with_suffix(".pdf").read_bytes()
+        pages = len(re.findall(rb"/Type\s*/Page[^s]", pdf))
+        assert 1 <= pages <= 10, (path.name, pages)
 
 
 # ---- 作り直しと、書かないとき ----
