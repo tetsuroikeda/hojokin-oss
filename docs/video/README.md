@@ -47,6 +47,8 @@ hojokin の紹介動画を、コードで作る道具です。映像・字幕・
 
 声の鍵：`gemini` は環境変数 `GEMINI_API_KEY`（無ければ `HOJOKIN_TTS_ENV` の .env）。`vertex` は `gcloud auth login` 済みで、`HOJOKIN_TTS_PROJECT` に Google Cloud のプロジェクトを渡す。鍵はリポに置きません。
 
+今の版の声は、Vertex AI の Gemini 3.8 Flash TTS（声 Charon）で作りました。耳で聴けないぶん、Gemini 2.5 Pro に書き起こさせて台本と照らし、読み違えた場面は台詞を言いやすく直して作り直しています。
+
 ほかに要るもの：ffmpeg、LibreOffice（soffice）、pdftoppm（poppler）。
 
 ## ファイル

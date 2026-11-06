@@ -141,7 +141,7 @@ def main() -> None:
             sec = duration(dst)
             cps = len(re.sub(r"[、。・「」？\s]", "", speech)) / sec
             # 日本語の語りは 1秒に6〜10字ほど。外れたら読み違いの兆しとして作り直す
-            if 5.0 <= cps <= 11.5 or provider == "say":
+            if 4.0 <= cps <= 11.5 or provider == "say":
                 break
             print(f"  {s['id']}: 1秒 {cps:.1f} 字で外れたので作り直す（{attempt + 1}回目）")
         speeds[s["id"]] = round(sec, 2)
