@@ -91,6 +91,16 @@ def test_facts_finds_numbers_dates_and_companies() -> None:
     assert ("数字", "1日") not in found  # 「1日に」は単位の1つ分を言うだけ
 
 
+def test_oku_amounts_and_fractions_are_read_as_written() -> None:
+    """「2億4,160万円」は1つの数として取り、財務モデルの値と照らせる。「3分の1」の「分」は時間として取らない（B37）。"""
+    found = shogo.facts("売上は2億160万円から2億4,160万円に増える。増産分を毎年3分の1ずつ足す。1日延べ2,280分。")
+    assert ("数字", "2億160万円") in found and ("数字", "2億4,160万円") in found
+    assert ("数字", "4,160万円") not in found and ("数字", "3分") not in found
+    assert ("数字", "2,280分") in found
+    assert shogo.shown_number("2億4,160万円") == (241600000.0, 5000.0, "円")
+    assert shogo.shown_number("554万円") == (5540000.0, 5000.0, "円")
+
+
 def test_covered_ignores_about_and_commas() -> None:
     assert shogo.covered("約3,500パック", ["約3500パック"]) and shogo.covered("3,500パック", [shogo.norm("約3,500パック")])
     assert not shogo.covered("3,600パック", [shogo.norm("約3,500パック")])
