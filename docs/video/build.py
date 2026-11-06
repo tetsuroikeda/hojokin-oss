@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import shutil
@@ -27,9 +28,9 @@ VOICE = OUT / "voice"
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 # 場面ごとの、絵の動きに要る最短の長さ（秒）。台詞が短くても、絵が見終わるまで次へ行かない
-MIN_DUR = {"wall": 5.6, "title": 12.5, "p1": 13.5, "p2": 16.5, "p3": 14.5, "pm": 14.0,
-           "p4": 16.0, "p5": 14.0, "learn": 13.5, "safe": 8.5, "end": 6.0}
-VOICE_LEAD = {"wall": 1.2, "title": 0.9}  # 台詞を場面の頭から何秒遅らせるか（ほかは 0.3 秒）
+MIN_DUR = {"road": 15.0, "title": 6.5, "s1": 11.5, "s2": 11.5, "s3": 12.5, "s4": 13.0, "s5": 10.5,
+           "pm": 22.0, "how": 13.0, "learn": 11.0, "start": 9.5, "built": 15.0, "end": 6.0}
+VOICE_LEAD = {"road": 0.4, "title": 0.6}  # 台詞を場面の頭から何秒遅らせるか（ほかは 0.3 秒）
 
 
 def run(cmd, **kw):
@@ -41,14 +42,9 @@ def duration(path: Path) -> float:
     return float(out)
 
 
-def make_voices(lines: dict) -> dict:
-    VOICE.mkdir(parents=True, exist_ok=True)
-    durs = {}
-    for s in lines["scenes"]:
-        f = VOICE / f"{s['id']}.aiff"
-        run(["say", "-v", lines["voice"], "-r", str(lines["rate"]), "-o", str(f), s["text"]])
-        durs[s["id"]] = duration(f)
-    return durs
+def make_voices(provider: str) -> None:
+    # 声は tts.py が out/voice/<場面>.wav に作る（Gemini・Vertex・say）
+    run([sys.executable, str(HERE / "tts.py"), str(HERE / "台詞.json"), str(VOICE), "--provider", provider])
 
 
 def split_caption(sentence: str, limit: int = 44) -> list:
@@ -89,17 +85,28 @@ def make_timeline(lines: dict, durs: dict):
     return timeline, captions, round(t, 3)
 
 
+def terminal_text(path: Path) -> str:
+    # 端末の記録から、画面に出た文字だけを取り出す（色や位置の制御の印を除く）
+    rec = json.loads(path.read_text(encoding="utf-8"))
+    raw = b"".join(base64.b64decode(e[1]) for e in rec["events"]).decode("utf-8", "ignore")
+    return re.sub(r"\x1b\[[0-9;?<>=]*[a-zA-Z~]|\x1b\][^\x07]*\x07|\x1b[()][A-Z0-9]|\x1b[=>]", "", raw)
+
+
 def check_quotes(material: dict) -> None:
     # 素材.json の引用が、実際の対話の記録にそのままあるかを確かめる
-    for key in ("pm", "shorui", "learn"):
+    for key in ("pm", "shorui", "learn", "how"):
         src = (HERE / material[key]["source"]).read_text(encoding="utf-8")
+        if src.lstrip().startswith("{"):
+            src = terminal_text(HERE / material[key]["source"])
         flat = re.sub(r"\s+", "", src.replace("**", ""))
         if key == "pm":
-            quotes = material[key]["lines"]
+            quotes = [c[2] for c in material[key]["callouts"]]
         elif key == "shorui":
             quotes = [f[-1] for f in material[key]["fubi"]] + [material[key]["summary"]]
-        else:
+        elif key == "learn":
             quotes = [s[1] for s in material[key]["second"]]
+        else:
+            quotes = [material[key]["quote"]]
         for q in quotes:
             if re.sub(r"\s+", "", q.replace("**", "")) not in flat:
                 sys.exit(f"引用が対話の記録にありません（{key}）：{q}")
@@ -125,8 +132,17 @@ def render_assets(company: Path) -> None:
     # pdftoppm はページの数で名前の桁を変えるので、-1 と -01 をそろえる
     for p in ASSETS.glob("*-0?.png"):
         p.rename(p.with_name(p.name.replace("-0", "-")))
-    run([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--window-size=1600,2400",
-         f"--screenshot={ASSETS / 'status_html.png'}", (company / "今の状態.html").as_uri()], stderr=subprocess.DEVNULL)
+    # 普段使いの Chrome と重ならないよう、作業用のプロファイルで開く。たまに終了コードが0でないので、できた画像で判断する
+    shot = ASSETS / "status_html.png"
+    for _ in range(3):
+        shot.unlink(missing_ok=True)
+        subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--window-size=1600,2400",
+                        f"--user-data-dir={OUT / 'chrome-profile'}", f"--screenshot={shot}", (company / "今の状態.html").as_uri()],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if shot.exists():
+            break
+    else:
+        sys.exit("今の状態.html を画像にできませんでした")
     shutil.copy(ROOT / "testdata" / "計画書" / "材料" / "5_差し戻し" / "差し戻し_5_機械の名称と型番.png", ASSETS / "sashimodoshi.png")
 
 
@@ -146,8 +162,10 @@ def write_data(timeline, captions, total, material, cdata) -> None:
     learn.update({"facts": cdata["facts"], "ruleCount": cdata["ruleCount"], "questions": cdata["questions"]})
     data = {
         "timeline": timeline, "captions": captions, "total": total,
-        "facts": material["facts"],
-        "pm": {"user": material["pm"]["user"], "lines": material["pm"]["lines"]},
+        "pm": {"callouts": [c[:2] for c in material["pm"]["callouts"]]},
+        "term": json.loads((HERE / material["pm"]["source"]).read_text(encoding="utf-8")),
+        "how": {"items": material["how"]["items"], "quote": material["how"]["quote"]},
+        "built": material["built"],
         "shorui": {k: material["shorui"][k] for k in ("inputs", "tree", "fubi", "summary")},
         "learn": learn,
     }
@@ -158,7 +176,7 @@ def mix_audio(timeline, total) -> Path:
     # 台詞を時刻どおりに置き、BGM を台詞の下で沈める（sidechaincompress）
     inputs, filters, labels = [], [], []
     for i, s in enumerate(timeline):
-        inputs += ["-i", str(VOICE / f"{s['id']}.aiff")]
+        inputs += ["-i", str(VOICE / f"{s['id']}.wav")]
         ms = int(s["voiceAt"] * 1000)
         filters.append(f"[{i}:a]aresample=44100,aformat=channel_layouts=stereo,adelay={ms}|{ms}[v{i}]")
         labels.append(f"[v{i}]")
@@ -184,11 +202,12 @@ def main() -> None:
     OUT.mkdir(exist_ok=True)
     ASSETS.mkdir(parents=True, exist_ok=True)
     render_assets(company)
-    # --keep-voice：out/voice/ の声（録り直した人の声など）をそのまま使い、長さだけ測る
-    if "--keep-voice" in sys.argv:
-        durs = {s["id"]: duration(VOICE / f"{s['id']}.aiff") for s in lines["scenes"]}
-    else:
-        durs = make_voices(lines)
+    # --keep-voice：out/voice/ の声（作り直した声・録った人の声など）をそのまま使い、長さだけ測る
+    # --provider gemini|vertex|say：声を作る先（既定は 台詞.json の voice.provider）
+    if "--keep-voice" not in sys.argv:
+        provider = sys.argv[sys.argv.index("--provider") + 1] if "--provider" in sys.argv else lines["voice"]["provider"]
+        make_voices(provider)
+    durs = {s["id"]: duration(VOICE / f"{s['id']}.wav") for s in lines["scenes"]}
     timeline, captions, total = make_timeline(lines, durs)
     write_data(timeline, captions, total, material, company_data(company))
     print(f"全体 {total:.1f} 秒")
