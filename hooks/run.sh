@@ -1,7 +1,7 @@
 #!/bin/sh
 # hook の起動用（DESIGN 5章「補助プログラムが動かないときは止める」）。
 # 使い方：sh run.sh <場面> [guard]
-#   guard は、書き込み（Write・Edit・NotebookEdit）、Bash、ブラウザの道具を受け取る PreToolUse に付ける
+#   guard は、書き込み（Write・Edit・NotebookEdit）、Bash、ブラウザの道具、claude.ai に上げる道具（Artifact）を受け取る PreToolUse に付ける
 #   （hooks.json の matcher で分ける）。会社のフォルダの外を読む道具の PreToolUse には付けない。
 # - 会社のフォルダの目印（.hojokin/）がなければ、Python を動かさず、何も出さずに終える。
 # - 目印があれば Python の hook（main.py）を動かし、終了コードが0のときだけ、その出力を返す。
@@ -92,8 +92,8 @@ else
 fi
 
 if [ "$role" = guard ]; then
-  printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"${cause}、会社のフォルダでのファイルの書き込み、Bash、ブラウザの道具を止めました（hojokin プラグインの決まり）。${advice}\"}}"
+  printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"${cause}、会社のフォルダでのファイルの書き込み、Bash、ブラウザの道具、claude.ai に上げる道具を止めました（hojokin プラグインの決まり）。${advice}\"}}"
 elif [ "$event" = SessionStart ]; then
-  printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"【hojokin】${cause}、この会社のフォルダでは、ファイルの書き込み、Bash、ブラウザの道具を止めています（hojokin プラグインの決まり）。社長の最初の発言に答えるときに、まず次のことをしてください。${advice}\"}}"
+  printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"【hojokin】${cause}、この会社のフォルダでは、ファイルの書き込み、Bash、ブラウザの道具、claude.ai に上げる道具を止めています（hojokin プラグインの決まり）。社長の最初の発言に答えるときに、まず次のことをしてください。${advice}\"}}"
 fi
 exit 0

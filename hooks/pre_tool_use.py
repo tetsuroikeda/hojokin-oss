@@ -4,6 +4,7 @@ hooks.json の matcher で、書き込みの道具（Write・Edit・NotebookEdit
 ブラウザの道具・画面を操作する機能を受け取る（Python が動かないときは run.sh が拒む）。
 別の matcher で、読む道具（Read・Grep・Glob など）も受け取り、会社のフォルダの外を読むことを拒む（outside_read.py）。
 ブラウザの道具・画面を操作する機能は、画面入力の守り（lib/browser_guard.py）が判定する。
+claude.ai に上げる道具（Artifact・ArtifactData・ArtifactComments）も同じ matcher で受け取り、artifact_hooks.py が判定する。
 版の名前のファイルを拒むことは、後のタスクでここに足す。
 
 会社のフォルダの外への書き込みは、設定の blockWritesOutsideWorkingDirectories で止める決まりだが、
@@ -15,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import artifact_hooks
 import outside_read
 import shinsa_hooks
 import version_hooks
@@ -63,6 +65,9 @@ def handle(data: dict, folder: Path) -> Optional[dict]:
     if browser_guard.is_browser_tool(tool):
         # 画面入力の守り（S4。lib/browser_guard.py）
         return browser_guard.pre_tool_use(data, folder)
+    if tool in artifact_hooks.TOOLS:
+        # claude.ai に上げる道具の守り。上げてよいのは、同意を得た今の状態の写しだけ（artifact_hooks.py）
+        return artifact_hooks.pre_tool_use(data, folder)
     if tool in WRITE_TOOLS:
         return _outside_write(data, folder) or version_hooks.pre_tool_use(data, folder)
     if tool in outside_read.READ_TOOLS:

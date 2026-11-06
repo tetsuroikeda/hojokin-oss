@@ -37,6 +37,9 @@ GUARDED_TOOLS = (
     "mcp__remote-devices__claude-in-chrome__computer",
     "mcp__computer-use__left_click",
     "mcp__remote-devices__computer-use__left_click",
+    "Artifact",  # claude.ai に上げる道具（hooks/artifact_hooks.py）
+    "ArtifactData",
+    "ArtifactComments",
 )
 # 会社のフォルダの外を読むかを Python が見る道具（Python が動かないときは拒まない）
 READ_TOOLS = ("Read", "NotebookRead", "Grep", "Glob", "LS")
