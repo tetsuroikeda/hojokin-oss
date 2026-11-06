@@ -120,6 +120,14 @@ def test_oku_amounts_and_fractions_are_read_as_written() -> None:
     assert shogo.shown_number("554万円") == (5540000.0, 5000.0, "円")
 
 
+def test_negative_amounts_keep_their_sign() -> None:
+    """赤字の営業利益「-169,440円」「▲17万円」は負の数として財務モデルと照らす（前は符号を落として食い違いと出た。B37）。"""
+    assert shogo.shown_number("-169,440円") == (-169440.0, 0.5, "円")
+    assert shogo.shown_number("−169,440円") == (-169440.0, 0.5, "円")
+    assert shogo.shown_number("▲17万円") == (-170000.0, 5000.0, "円")
+    assert shogo.shown_number("169,440円") == (169440.0, 0.5, "円")
+
+
 def test_covered_ignores_about_and_commas() -> None:
     assert shogo.covered("約3,500パック", ["約3500パック"]) and shogo.covered("3,500パック", [shogo.norm("約3,500パック")])
     assert not shogo.covered("3,600パック", [shogo.norm("約3,500パック")])
