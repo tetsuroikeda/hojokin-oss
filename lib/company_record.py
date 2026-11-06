@@ -258,6 +258,22 @@ def _items(data: dict, kind: Optional[str] = None) -> List[dict]:
     return [it for it in data["項目"] if kind is None or it["種類"] == kind]
 
 
+FACT_MARKS_KEY = "作ったときの事実"  # 財務モデルの数字の控えに、作ったときの指紋を残す欄
+
+
+def fact_marks(data: dict) -> Dict[str, str]:
+    """有効な事実ごとの、値の短い指紋（id → 指紋）。財務モデルを作ったときに控え、後で増えた・変わった事実を見つける（B37）。"""
+    import hashlib
+
+    out = {}
+    for it in _items(data, FACT):
+        if it.get("状態") != VALID:
+            continue
+        raw = json.dumps(it.get("値"), ensure_ascii=False, sort_keys=True)
+        out[it["id"]] = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
+    return out
+
+
 def _next_id(data: dict, kind: str) -> str:
     prefix = f"{ID_PREFIX[kind]}-"
     numbers = [0]

@@ -200,15 +200,17 @@ _SCALE = {"千円": 1000.0, "万円": 10000.0, "億円": 100000000.0, "円": 1.0
 
 
 def shown_number(description: str) -> Optional[Tuple[float, float, str]]:
-    """記述の中の数（値、表に書いた桁の半分の幅、単位の種類 "円"・"%"・""）。"""
+    """記述の中の数（値、表に書いた桁の半分の幅、単位の種類 "円"・"%"・""）。前に「-」「−」「▲」「△」があれば負の数。"""
     t = unicodedata.normalize("NFKC", description or "")
-    m = re.search(rf"(?:({_NUM})億(?=[0-9]))?({_NUM})\s*({_UNIT_RE})?", t)
+    m = re.search(rf"([-−▲△])?(?:({_NUM})億(?=[0-9]))?({_NUM})\s*({_UNIT_RE})?", t)
     if not m:
         return None
-    raw, unit = m.group(2).replace(",", ""), m.group(3) or ""
+    raw, unit = m.group(3).replace(",", ""), m.group(4) or ""
     value = float(raw)
-    if m.group(1) and unit in _SCALE:  # 「2億4,160万円」：億の分を、後ろの単位に直して足す
-        value += float(m.group(1).replace(",", "")) * 100000000.0 / _SCALE[unit]
+    if m.group(2) and unit in _SCALE:  # 「2億4,160万円」：億の分を、後ろの単位に直して足す
+        value += float(m.group(2).replace(",", "")) * 100000000.0 / _SCALE[unit]
+    if m.group(1):  # 「-169,440円」「▲17万円」：赤字の営業利益など（前は符号を落とし、財務モデルと食い違うと出ていた）
+        value = -value
     decimals = len(raw.split(".", 1)[1]) if "." in raw else 0
     half = 0.5 * (10 ** -decimals)
     if unit in _SCALE:

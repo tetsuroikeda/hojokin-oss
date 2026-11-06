@@ -74,6 +74,7 @@ TOOL_CALLS = (
     ("kaku/scripts/kakunin.py", "prepare", ()),
     ("kaku/scripts/kakunin.py", "result", ()),
     ("kaku/scripts/kakunin.py", "finish", ()),
+    ("kaku/scripts/kakunin.py", "chiken", ()),
     ("kaku/scripts/keihi.py", "save", ("--case", "{case}", "--input", "記録/一時/経費明細.json")),
     ("kaku/scripts/keihi.py", "show", ()),
     ("kaku/scripts/moji.py", None, ("--file", "{original}")),

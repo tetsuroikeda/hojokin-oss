@@ -718,6 +718,12 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
         matched = shogo.check(texts, evidence_rows, numbers, _nouns(folder), cells=cells)
         for f in matched[shogo.NO_SOURCE]:
             findings.append(Finding(UNSUPPORTED, "本文", f["場所"], f"{f['文字']}（{f['理由']}）"))
+    newer = facts_after_model(folder, numbers)
+    if newer:
+        shown = "、".join(newer[:10]) + (f"、ほか{len(newer) - 10}件" if len(newer) > 10 else "")
+        notes.append("財務モデルを作った後に、会社の記録に増えた・変わった事実があります：" + shown
+                     + "。増産の量・取引先・単価・人の配置など、財務モデルの前提に関わるなら、財務モデルを作り直し、"
+                     "計画書の数字もそろえてください")
     style, style_note = style_count(folder, texts)
     if style_note:
         notes.append(style_note)
@@ -950,6 +956,45 @@ def _company_extract(folder: Path) -> Tuple[Optional[dict], str]:
     if not rules and not results:
         return None, "会社の記録に、書き方の決まりと過去に受けた指摘がまだありません"
     return {"書き方の決まり": rules, "申請と採否（過去に受けた指摘）": results}, ""
+
+
+_MADE_AT = re.compile(r"([0-9]{4})年([0-9]{1,2})月([0-9]{1,2})日")
+
+
+def facts_after_model(folder: Path, numbers: Optional[dict]) -> List[str]:
+    """財務モデルを作った後に増えた・値が変わった、会社の記録の事実（「名前（id）」）。
+    控えに作ったときの事実の指紋があれば、それと比べる。前の控え（指紋なし）は、覚えた日が作った日より後のものを挙げる。
+    完成を止めない注意にする（財務モデルの前提に関わるかは Claude が判断する。B37）。"""
+    if not numbers:
+        return []
+    from lib import company_record
+
+    try:
+        data = company_record.load(folder)
+    except Exception:  # 記録が読めないときは、ほかの確かめで分かる
+        return []
+    marks = numbers.get(company_record.FACT_MARKS_KEY)
+    out = []
+    if isinstance(marks, dict):
+        for fid, mark in company_record.fact_marks(data).items():
+            if marks.get(fid) != mark:
+                item = company_record.find(data, fid, company_record.FACT)
+                out.append(f"{item.get('名前')}（{fid}）")
+        return out
+    made = _MADE_AT.search(str(numbers.get("作った日時") or ""))
+    if not made:
+        return []
+    made_day = datetime.date(int(made.group(1)), int(made.group(2)), int(made.group(3)))
+    for it in data.get("項目", []):
+        if it.get("種類") != company_record.FACT or it.get("状態") != company_record.VALID:
+            continue
+        try:
+            learned = datetime.date.fromisoformat(str(it.get("覚えた日") or "")[:10])
+        except ValueError:
+            continue
+        if learned > made_day:
+            out.append(f"{it.get('名前')}（{it.get('id')}）")
+    return out
 
 
 def yardstick_text(folder: Path, plugin_root: Path) -> Tuple[Optional[str], str]:

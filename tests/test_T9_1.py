@@ -71,6 +71,25 @@ def test_citation_in_the_text_is_found(env: kt.Env, citation: str) -> None:
     assert len(report["本文の出典"]) >= 1 and report["本文の出典"][0]["場所"] == "1-1 現状分析"
 
 
+def test_facts_learned_after_the_model_are_noted_but_do_not_stop(env: kt.Env) -> None:
+    """財務モデルを作った後に会社の記録に増えた事実は、注意に挙げる。完成は止めない（B37。11/6 のリハーサル）。"""
+    import json
+
+    from lib import company_record
+
+    model = pt.numbers()
+    model[company_record.FACT_MARKS_KEY] = {}  # 作ったときは、会社の記録に事実がなかった
+    pt.place(env, pt.form_or_skip(), model=model)
+    code, report = env.count()
+    assert code == 0 and not any("財務モデルを作った後" in n for n in report["注意"])
+
+    source = company_record.make_source(env.folder, "社長の発言", utterance="3年目までに1日約500パック増やす")
+    _, fact, _ = company_record.add_fact(env.folder, "増産の見込み", "3年目までに1日約500パック増やす", True, source)
+    code, report = env.count()
+    notes = [n for n in report["注意"] if "財務モデルを作った後" in n]
+    assert code == 0 and len(notes) == 1 and f"増産の見込み（{fact['id']}）" in notes[0], json.dumps(report["注意"], ensure_ascii=False)
+
+
 def test_mixed_plan_passes_the_code_check(env: kt.Env) -> None:
     """聞き取りと食い違う記述は、表の出典が正しい計画書と同じなので、コードでは見つからない（審査役が見る。T9-2）。"""
     pt.place(env, pt.form_or_skip(), variant=pt.MIXED)
@@ -99,6 +118,14 @@ def test_oku_amounts_and_fractions_are_read_as_written() -> None:
     assert ("数字", "2,280分") in found
     assert shogo.shown_number("2億4,160万円") == (241600000.0, 5000.0, "円")
     assert shogo.shown_number("554万円") == (5540000.0, 5000.0, "円")
+
+
+def test_negative_amounts_keep_their_sign() -> None:
+    """赤字の営業利益「-169,440円」「▲17万円」は負の数として財務モデルと照らす（前は符号を落として食い違いと出た。B37）。"""
+    assert shogo.shown_number("-169,440円") == (-169440.0, 0.5, "円")
+    assert shogo.shown_number("−169,440円") == (-169440.0, 0.5, "円")
+    assert shogo.shown_number("▲17万円") == (-170000.0, 5000.0, "円")
+    assert shogo.shown_number("169,440円") == (169440.0, 0.5, "円")
 
 
 def test_covered_ignores_about_and_commas() -> None:

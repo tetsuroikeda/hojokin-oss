@@ -245,6 +245,31 @@ def test_tool_reports_low_case_shoryoku_and_writes_numbers(tmp_path) -> None:
     assert names["基準_給与支給総額"]["番号"] == "J-03" and names["人件費単価"]["番号"] == "S-03"
 
 
+def test_tool_keeps_fact_marks_and_check_lists_facts_learned_later(tmp_path) -> None:
+    """作ったときの会社の記録の事実の指紋を控えに残し、後で増えた・変わった事実を確かめの注意に挙げる（B37。
+    11/6 のリハーサルで、増産の見込みを聞いた後も財務モデルが前年比5%の式のままだった）。"""
+    from lib import company_record, kakunin
+
+    env = zt.Env(tmp_path)
+    folder = env.company(spec=demo())
+    source = company_record.make_source(folder, "社長の発言", utterance="1日に約3,500パック出している")
+    _, old, _ = company_record.add_fact(folder, "1日の出荷", "約3,500パック", True, source)
+    zt.ok(env.run(folder))
+    numbers = json.loads((folder / "記録" / "財務モデルの数字.json").read_text(encoding="utf-8"))
+    assert list(numbers[company_record.FACT_MARKS_KEY]) == [old["id"]]
+    assert kakunin.facts_after_model(folder, numbers) == []
+
+    _, new, _ = company_record.add_fact(folder, "増産の見込み", "1日に約500パック増やせる", True, source)
+    company_record.update_fact(folder, old["id"], "約3,600パック", source)
+    assert kakunin.facts_after_model(folder, numbers) == [f"1日の出荷（{old['id']}）", f"増産の見込み（{new['id']}）"]
+
+    # 指紋のない前の控えは、覚えた日が作った日より後の事実を挙げる
+    older = {"作った日時": "2000年1月1日（土）10:00"}
+    assert len(kakunin.facts_after_model(folder, older)) == 2
+    assert kakunin.facts_after_model(folder, {"作った日時": "2999年1月1日（火）10:00"}) == []
+    assert kakunin.facts_after_model(folder, None) == []
+
+
 BREAKDOWN = {
     "決算書": "決算書 第18期（架空）",
     "行": [
