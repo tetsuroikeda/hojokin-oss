@@ -1,11 +1,12 @@
 """T9-3 文体（数えられるもの）（SPEC F9。TASKS B17。DESIGN 6章・8.2）。
 
-合格ライン：docs/style-criteria.md の A と B で数える → 「要修正」0件。B への該当は社長が残すと決めたもの以外0件。
-A と B が重なる項目は A に従い、「注意」「弱い注意」は合否に使わない。
+合格ライン（11/7 の作者の決定で直した）：docs/style-criteria.md の A と B で数える → 「要修正」（記号の残り、です・ます調と
+である調の混在）0件。会社の記録の避けたい言い方への該当0件。B への該当と、A の「注意」（100字を超える文を含む）・「弱い注意」は、
+数えて示すが合否に使わない。A と B が重なる項目は A に従う。
 
 - 文体の基準の表は、そのたびに docs/style-criteria.md から読む（lib/buntai.py）。
-- A の要修正（100字を超える文、記号の残り、です・ます調とである調の混在）と、B の避ける言い回し、会社の記録の
-  避けたい言い方を数え、確かめる道具（kakunin.py count）の合否に入れる。
+- A の要修正と、会社の記録の避けたい言い方を数え、確かめる道具（kakunin.py count）の合否に入れる。
+- B の避ける言い回しと100字を超える文は、数えて道具の出力に示すが、合否に入れない。
 - 社長が残すと決めた言い回し（会社の記録の「好む言い方」の「」）は数えない。
 - A と B が重なる言い回し（「さまざまな」「等」、カタカナ語）は、注意として数え、合否に使わない。
 - 全項目が書けた計画書（D9）は、要修正0件・避ける言い回し0件で通る。
@@ -41,8 +42,14 @@ def test_b_table_is_read_from_the_criteria_file(criteria) -> None:
     assert not any("〇〇" in p or "「" in p for p in phrases)
 
 
+def test_long_sentence_is_caution_and_not_failing(criteria) -> None:
+    """100字を超える文は、注意として示すが合否に使わない（11/7 の作者の決定）。"""
+    got = count("当社は" + "、".join(["惣菜を作り"] * 20) + "、病院と介護施設とスーパーに毎朝届けています。", criteria)
+    assert any("100字を超える" in f["基準"] for f in got[buntai.CAUTION]), got
+    assert got[buntai.MUST_FIX] == [] and buntai.failing(got) == 0
+
+
 @pytest.mark.parametrize("text, rule", [
-    ("当社は" + "、".join(["惣菜を作り"] * 20) + "、病院と介護施設とスーパーに毎朝届けています。", "100字を超える"),
     ("**強み**は、病院ごとの細かい注文に応えることです。", "記号の残り"),
     ("当社は惣菜を作っています。病院に届けている。スーパーにも届けています。", "混在"),
 ])
@@ -59,9 +66,10 @@ def test_must_fix_items_are_counted(criteria, text: str, rule: str) -> None:
     ("これにより、1日4,500パックの出荷が可能になります。", "これにより〜が可能になります"),
 ])
 def test_b_phrases_are_counted(criteria, text: str, phrase: str) -> None:
+    """B の避ける言い回しは数えて示すが、合否に使わない（11/7 の作者の決定）。"""
     got = count(text, criteria)
     assert any(f"「{phrase}」" in f["基準"] for f in got[buntai.B_HIT]), got
-    assert buntai.failing(got) == 1
+    assert buntai.failing(got) == 0
 
 
 def test_overlap_with_a_is_caution_and_not_failing(criteria) -> None:
@@ -107,13 +115,13 @@ def test_full_plan_has_no_must_fix_and_no_b(env: kt.Env) -> None:
     assert code == 0
 
 
-def test_b_phrase_in_the_plan_stops_the_check(env: kt.Env) -> None:
+def test_b_phrase_in_the_plan_is_shown_but_does_not_stop_the_check(env: kt.Env) -> None:
     items = pt.items_with(pt.CORRECT, "1-2 経営課題", "。", "。人手の確保は喫緊の課題です。")
     pt.place(env, pt.form_or_skip(), items=items)
     code, report = env.count()
-    assert code == 3
+    assert code == 0
     assert [f["場所"] for f in report["文体"]["避ける言い回し"]] == ["1-2 経営課題"]
-    text = kt.code(env.tool("count"), 3)
+    text = kt.code(env.tool("count"), 0)
     assert "避ける言い回し 1件" in text and "喫緊の課題" in text and "すぐ手を打つべき課題" in text
 
 

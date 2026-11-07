@@ -821,9 +821,9 @@ def report_text(report: dict) -> str:
         lines.append(f"- 文字数：{f['場所']} {f['文字数']}字（{f['決まり']}。{f['理由']}）")
     style = report.get("文体")
     if style:
-        lines.append(f"文体：要修正 {len(style['要修正'])}件、避ける言い回し {len(style['避ける言い回し'])}件、"
-                     f"会社の避けたい言い方 {len(style['避けたい言い方'])}件（注意 {len(style['注意'])}件・"
-                     f"弱い注意 {len(style['弱い注意'])}件は合否に使いません）")
+        lines.append(f"文体：要修正 {len(style['要修正'])}件、会社の避けたい言い方 {len(style['避けたい言い方'])}件"
+                     f"（避ける言い回し {len(style['避ける言い回し'])}件・注意 {len(style['注意'])}件・"
+                     f"弱い注意 {len(style['弱い注意'])}件は合否に使いません。避ける言い回しは、自然に言い換えられる所だけ直す）")
         for key in ("要修正", "避ける言い回し", "避けたい言い方"):
             for f in style[key]:
                 fix = f"→ {f['直し方']}" if f.get("直し方") else ""
