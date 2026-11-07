@@ -66,8 +66,10 @@ def gemini(text: str, model: str, voice: str, key: str, raw: Path) -> Path:
 
 def vertex(text: str, model: str, voice: str, raw: Path) -> Path:
     # Vertex AI 経由。gcloud でログインしてあること（gcloud auth login）。プロジェクトは HOJOKIN_TTS_PROJECT で渡す
+    # gcloud の既定と別のアカウントで送るときは HOJOKIN_TTS_ACCOUNT で渡す（gcloud の設定は変えない）
     project = os.environ["HOJOKIN_TTS_PROJECT"]
-    token = subprocess.check_output(["gcloud", "auth", "print-access-token"], text=True).strip()
+    account = os.environ.get("HOJOKIN_TTS_ACCOUNT")
+    token = subprocess.check_output(["gcloud", "auth", "print-access-token"] + ([f"--account={account}"] if account else []), text=True).strip()
     body = {
         "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {

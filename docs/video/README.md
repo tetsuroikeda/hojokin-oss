@@ -59,9 +59,9 @@ hojokin の紹介動画を、コードで作る道具です。映像・字幕・
 
 旗：`--provider gemini|vertex|say`（声を作る先）、`--keep-voice`（out/voice/ の声をそのまま使う。人の声に差し替えるとき）、`--no-video`（映像を撮らない）、`--keep-video`（撮った映像を使い回し、音だけ重ね直す）。
 
-声の鍵：`gemini` は環境変数 `GEMINI_API_KEY`（無ければ `HOJOKIN_TTS_ENV` の .env）。`vertex` は `gcloud auth login` 済みで、`HOJOKIN_TTS_PROJECT` に Google Cloud のプロジェクトを渡す。鍵はリポに置きません。
+声の鍵：`gemini` は環境変数 `GEMINI_API_KEY`（無ければ `HOJOKIN_TTS_ENV` の .env）。`vertex` は `gcloud auth login` 済みで、`HOJOKIN_TTS_PROJECT` に Google Cloud のプロジェクト（Vertex AI の API を有効にしたもの）を渡す。gcloud の既定と別のアカウントで送るときは `HOJOKIN_TTS_ACCOUNT` にアカウントを渡す（gcloud の設定は変えない）。鍵はリポに置きません。
 
-今の版の声は、Vertex AI の Gemini 3.8 Flash TTS（声 Charon）で作りました。耳で聴けないぶん、Gemini 2.5 Pro に書き起こさせて台本と照らし、読み違えた場面は台詞を言いやすく直して作り直しています。
+声は、Vertex AI の Gemini 3.8 Flash TTS（声 Charon）で作ります（台詞.json の voice）。前の版（やまぶき惣菜）では、耳で聴けないぶん Gemini 2.5 Pro に書き起こさせて台本と照らし、読み違えた場面は台詞を言いやすく直して作り直しました。
 
 ほかに要るもの：ffmpeg、LibreOffice（soffice）、pdftoppm（poppler）。
 

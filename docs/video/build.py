@@ -119,10 +119,11 @@ def render_assets(company: Path, extra: Path, material: dict) -> None:
     pdf = ASSETS / "pdf"
     pdf.mkdir(parents=True, exist_ok=True)
     case1 = company / "案件" / "2026_省力化（一般型）第9回"
-    # 写す元と、画像にするページ（最初・最後）
+    # 写す元と、画像にするページ（最初・最後。文字のときは、その文字があるページ）。
+    # 概要と流れは、書体の置き換わりでページ割りが動くので、見出しの文字でページを探す
     sources = {
         "kouho.docx": (company / "補助金の候補.docx", 1, 2),
-        "gaiyou.docx": (extra / "概要と流れ.docx", 5, 5),
+        "gaiyou.docx": (extra / "概要と流れ.docx", "満たす要件・当てはまらない要件", None),
         "keikaku.docx": (case1 / "1_申請" / "申請書" / "その1・2.docx", 1, 3),
         "konkyo.xlsx": (case1 / "1_申請" / "申請書" / "根拠対照表.xlsx", 1, 1),
         "zaimu.xlsx": (company / "財務モデル.xlsx", 1, 1),
@@ -132,14 +133,27 @@ def render_assets(company: Path, extra: Path, material: dict) -> None:
     run(["soffice", "--headless", "--convert-to", "pdf", *[n for n in sources]], cwd=pdf, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for name, (_src, first, last) in sources.items():
         stem = name.split(".")[0]
-        run(["pdftoppm", "-r", "110", "-png", "-f", str(first), "-l", str(last), f"{stem}.pdf", str(ASSETS / stem)], cwd=pdf)
-    # pdftoppm はページの数で名前の桁を変えるので、-1 と -01 をそろえる
-    for p in ASSETS.glob("*-0?.png"):
-        p.rename(p.with_name(p.name.replace("-0", "-")))
+        if isinstance(first, str):
+            first = last = find_page(pdf / f"{stem}.pdf", first)
+        run(["pdftoppm", "-r", "110", "-png", "-f", str(first), "-l", str(last), f"{stem}.pdf", str(ASSETS / f"{stem}_p")], cwd=pdf)
+        # pdftoppm はページの数で名前の桁を変えるので、元の文書の何ページ目かによらず 1 から番号を振り直す
+        made = sorted(ASSETS.glob(f"{stem}_p-*.png"), key=lambda p: int(p.stem.rsplit("-", 1)[1]))
+        for i, p in enumerate(made, 1):
+            p.rename(ASSETS / f"{stem}-{i}.png")
     # 別の段階で作った画像（指摘の前後、採択のお知らせ）
     names = [n for pair in material["fix"]["pairs"] for n in pair[3:5]] + ["saitaku_tsuuchi.png"]
     for n in names:
         shutil.copy(extra / n, ASSETS / n)
+
+
+def find_page(pdf: Path, text: str) -> int:
+    # 空白を除いた文字で、そのページを探す
+    pages = int(re.search(r"Pages:\s+(\d+)", subprocess.check_output(["pdfinfo", str(pdf)], text=True)).group(1))
+    for n in range(1, pages + 1):
+        body = subprocess.check_output(["pdftotext", "-f", str(n), "-l", str(n), str(pdf), "-"], text=True)
+        if re.sub(r"\s+", "", text) in re.sub(r"\s+", "", body):
+            return n
+    sys.exit(f"{pdf.name} に「{text}」のページがありません")
 
 
 def short_question(q: str, limit: int = 22) -> str:
