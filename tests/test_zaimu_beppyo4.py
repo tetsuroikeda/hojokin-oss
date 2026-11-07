@@ -421,6 +421,15 @@ def test_accounts_block_on_the_plan_sheet() -> None:
     assert plan.cells[f"B{op}"].formula == f"=B{profit}"  # 営業利益は合算の行を指す（1円も違わない）
     assert plan.cells[f"F{op}"].py == 4_800_000  # 決算書の営業利益
     assert plan.cells[f"B{op + 1}"].formula.startswith("=ROUND(SUM(") and a[op + 1] == zaimu.ACCOUNTS_CHECK
+    # 決算書の列の決算期：直近期の決算書なら直近期（2026年3月期）、基準年度の決算書なら基準年度（2028年3月期）
+    head = book.accounts["行"]
+    assert plan.cells[f"A{head + 1}"].value == "決算期" and plan.cells[f"F{head + 1}"].value == "2026年3月期"
+    base = book_of(with_accounts(rehearsal_spec(), breakdown_with_sides(), "基準年度"))
+    sheet = {sh.title: sh for sh in base.sheets}[PLAN]
+    head = base.accounts["行"]
+    assert sheet.cells[f"F{head + 1}"].value == "2028年3月期" and sheet.cells[f"B{head + 1}"].value == "2028年3月期"
+    assert base.accounts["損益の区分"] is True and base.accounts["照らし"] == [0] * 4
+    assert any("内訳は基準年度の割合で分けた見込み" in str(c.value) for c in sheet.cells.values())
 
 
 def test_accounts_by_kind_when_sides_are_missing() -> None:
