@@ -26,11 +26,12 @@ def load_key() -> str:
     if key:
         return key
     env = Path(os.environ.get("HOJOKIN_TTS_ENV", str(Path.home() / "Projects/movie-remotion/.env.local")))
+    # 値が空の行（置き場だけの行など）は飛ばす
     for line in env.read_text(encoding="utf-8").splitlines():
-        m = re.match(r"\s*GEMINI_API_KEY\s*=\s*(.*)\s*$", line)
-        if m:
+        m = re.match(r"\s*(?:export\s+)?GEMINI_API_KEY\s*=\s*(.*)\s*$", line)
+        if m and m.group(1).strip().strip("'\""):
             return m.group(1).strip().strip("'\"")
-    sys.exit("GEMINI_API_KEY が見つかりません")
+    sys.exit("GEMINI_API_KEY が見つかりません（値の入った行がありません）")
 
 
 def gemini(text: str, model: str, voice: str, key: str, raw: Path) -> Path:
