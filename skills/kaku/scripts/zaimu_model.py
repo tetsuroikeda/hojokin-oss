@@ -14,7 +14,8 @@ kaku が、聞き取りと書類から前提を集めた後に動かす。数字
 
 すること
 1. 指定を確かめ、会社のフォルダの直下に「財務モデル.xlsx」を作る（シートは3つ：前提・計画（N年）・月次（1年目））。
-   前提のセルに名前を付け、計画は名前を使った数式で書く。
+   前提のセルに名前を付け、計画は名前を使った数式で書く。指定に「決算書の科目」（kijun --into が書く）があれば、
+   計画のシートのいちばん下に損益の内訳（決算書の科目。計画の年は、区分の値を科目の割合で分けた見込み）を置く。
 2. LibreOffice で計算し直し（計算し直しは「常に」）、数式のセルの値が、すべて Python の計算と一致するかを確かめる。
    食い違えば、財務モデル.xlsx を置かずに終了コード3で終える（道具の不具合なので、作者に知らせる）。
    LibreOffice がない・動かないときは、確かめずに置き、そのことを伝える（Excel で開くと計算される）。
@@ -38,6 +39,8 @@ kaku が、聞き取りと書類から前提を集めた後に動かす。数字
       行に「損益の区分」（売上原価 か 販管費）を付けると、区分ごとの売上原価の割合を出し、--into の指定の
       「売上原価の割合」に書く（様式の別紙4 の売上原価・販売費及び一般管理費に使う）。決算書の売上原価と販管費の
       合計（"売上原価"・"販売費及び一般管理費"）を渡すと、行の合計と1円でも違えば断る。
+      --into では、科目ごとの金額も指定の「決算書の科目」に書く（期は --as のもの）。build はこれを使って、計画の
+      シートのいちばん下に「損益の内訳」（決算書の科目。計画の年は、区分の値を決算書の科目の割合で分けた見込み）を置く。
       入力：{"決算書": "決算書 第18期", "行": [{"科目": "材料費", "区分": "原材料費", "金額": 82600000, "出典": "p.3",
              "損益の区分": "売上原価"}], "営業利益": {"金額": 4800000, "出典": "p.2"},
              "売上原価": {"金額": 148200000, "出典": "p.3"}, "販売費及び一般管理費": {"金額": 48600000, "出典": "p.3"},
@@ -246,6 +249,20 @@ def beppyo_lines(b) -> list:
     return lines
 
 
+def accounts_lines(acc) -> list:
+    """損益の内訳（決算書の科目）を置いた場所と分け方。"""
+    if not acc:
+        return []
+    shape = "売上高・売上原価・売上総利益・販売費及び一般管理費・営業利益の形" if acc["損益の区分"] else "区分ごと"
+    period = "基準年度" if acc["期"] == "基準年度" else "直近期（決算書）"
+    lines = ["", f"損益の内訳：計画のシートの {acc['行']} 行目から、{acc['決算書'] or '決算書'}の科目 {acc['科目の数']} 個を{shape}で"
+             f"置きました。計画の年の科目の値は、区分の値を{period}の科目の割合で分けた見込みです（区分の計と営業利益は合算と同じ）。"]
+    if any(v != 0 for v in acc["照らし"]):
+        lines.append("  照らし：科目の和から出した営業利益が、合算の営業利益と合いません（道具の不具合なので、作者に知らせる）")
+    lines += [f"  知らせ：{note}" for note in acc.get("知らせ") or []]
+    return lines
+
+
 def report_text(result: dict) -> str:
     lines = []
     s = result["中身"]
@@ -310,7 +327,7 @@ def report_text(result: dict) -> str:
         if low["判定"] == "満たさない":
             lines.append("  数量が2割少ないと要件を満たせません。要件を満たせないと返還につながるので、社長に伝えてください。")
         lines += low_case_lines(low)
-    lines += timeline_lines(s.get("年度")) + beppyo_lines(s.get("別紙4"))
+    lines += timeline_lines(s.get("年度")) + beppyo_lines(s.get("別紙4")) + accounts_lines(result.get("損益の内訳"))
     sh = s.get("省力化")
     if sh is not None:
         shown = sh["表示"]
@@ -438,9 +455,23 @@ def kijun_block(data, zaimu) -> dict:
     for key in zaimu.PEOPLE_KEYS:
         if key in people:
             block[key] = people[key]
+    shares = cost_share_block(data, rows, totals, head, zaimu)
     return {"基準年度": block, "営業利益": {"足し上げ": built, "決算書": expected},
             "人数のない項目": [k for k in zaimu.PEOPLE_KEYS if k not in people],
-            "売上原価の割合": cost_share_block(data, rows, totals, head, zaimu)}
+            "売上原価の割合": shares, "決算書の科目": accounts_block(rows, head, shares is not None)}
+
+
+def accounts_block(rows: list, head: str, sided: bool) -> dict:
+    """指定の「決算書の科目」（財務モデルの損益の内訳に使う）。科目・区分・金額と、損益の区分・出典（あれば）。"""
+    out = []
+    for row in rows:
+        item = {"科目": row["科目"].strip(), "区分": row["区分"], "金額": row["金額"]}
+        if sided and row["区分"] != "売上":
+            item["損益の区分"] = SIDES[row["損益の区分"]]
+        if isinstance(row.get("出典"), str) and row["出典"].strip():
+            item["出典"] = row["出典"].strip()
+        out.append(item)
+    return {"決算書": head, "行": out}
 
 
 def cost_share_block(data: dict, rows: list, totals: dict, head: str, zaimu) -> "dict | None":
@@ -515,6 +546,7 @@ def run_kijun(folder: Path, args) -> int:
                     spec_data[block][key] = old_base[key]
             if result["売上原価の割合"] is not None:
                 spec_data[zaimu.COST_SHARE_KEY] = result["売上原価の割合"]["割合"]
+            spec_data[zaimu.ACCOUNTS_KEY] = dict(result["決算書の科目"], 期=args.as_block)
             rel = places.relative_inside(folder, spec_real)
             places.no_link_on_the_way(folder, rel)
             tmp = spec_real.with_name(spec_real.name + ".tmp")
@@ -546,6 +578,8 @@ def run_kijun(folder: Path, args) -> int:
         block = "基準年度" if args.as_block == "基準年度" else zaimu.RECENT_KEY
         lines.append(f"{result['書いた指定']} の{block}を置き換えました"
                      + ("（売上原価の割合も書きました）。" if result["売上原価の割合"] is not None else "。"))
+        lines.append(f"決算書の科目（{len(result['決算書の科目']['行'])}個）も、指定の「{zaimu.ACCOUNTS_KEY}」に書きました"
+                     "（財務モデルの計画のシートの下に、損益の内訳として置きます）。")
         if args.as_block == "直近期":
             lines.append(f"基準年度は、{zaimu.RECENT_KEY}からの式（例：{{\"式\": \"直近_給与支給総額*(1+賃上げ率)^経過年数\", "
                          "\"根拠\": …, \"出典\": …}）で指定に書き、「年度」（直近期・補助事業の完了予定）を足してから build してください。")
@@ -663,6 +697,7 @@ def main(argv) -> int:
         "制度データ": relative(folder, seido_path) if seido_path is not None else None,
         "数字の控え": numbers_rel,
         "中身": book.summary,
+        "損益の内訳": book.accounts,  # 数字の控えには入れない（控えの形は変えない）
     }
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))

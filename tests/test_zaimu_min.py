@@ -97,6 +97,49 @@ def test_builds_three_sheets_with_named_cells_and_formulas(tmp_path) -> None:
     assert not (folder / ".hojokin" / "一時" / "財務モデル").exists()
 
 
+def test_restrained_look(tmp_path) -> None:
+    """見た目（11/7 の作者の指摘）：表の罫線、見出しの行の薄い灰色と太字、合計・利益の行の上の線と太字、見出しの固定、
+    印刷の向きと1ページの幅。塗りの色は見出しの灰色・入力の薄い黄色・仮の薄いオレンジの3つだけ。値・数式・名前は変えない。"""
+    env = zt.Env(tmp_path)
+    folder = env.company()
+    zt.ok(env.run(folder))
+    book = zt.dump_xlsx(folder / zt.MODEL)
+    # 色を増やさない
+    used = {color for sheet in book["fills"].values() for color in sheet.values()}
+    assert used <= {zaimu.FILL_HEAD, zaimu.FILL_INPUT, zaimu.FILL_PROVISIONAL}, used
+    assert zaimu.FILL_HEAD in used
+    # 見出しの行（前提の「番号」の行・計画の「項目」の行）は薄い灰色の塗りと太字
+    pre, plan = book["cells"]["前提"], book["cells"][PLAN]
+    head = min(int(ref[1:]) for ref, v in pre.items() if ref.startswith("A") and v == "番号")  # 前提の表の見出し
+    for col in "ABCDEFGH":
+        assert book["fills"]["前提"][f"{col}{head}"] == zaimu.FILL_HEAD
+    assert f"A{head}" in book["bold"]["前提"]
+    assert book["fills"][PLAN]["A9"] == zaimu.FILL_HEAD and "A9" in book["bold"][PLAN]
+    # 表の行は細い薄い灰色の罫線。小見出し（【既存事業】）には引かない
+    sales = zt.row_of(plan, "【既存事業】") + 1
+    assert f"C{sales}" in book["grid"][PLAN] and book["tops"][PLAN][f"C{sales}"] == zaimu.LINE_GRID
+    assert f"A{sales - 1}" not in book["grid"][PLAN]
+    # 合計・利益の行（合算の営業利益）は上の線と太字
+    profit = zt.row_of(plan, "【合算】") + 8
+    assert plan[f"A{profit}"] == "営業利益"
+    assert book["tops"][PLAN][f"C{profit}"] == zaimu.LINE_RULE and f"C{profit}" in book["bold"][PLAN]
+    monthly = book["cells"]["月次（1年目）"]
+    assert monthly["A9"] == "営業利益" and book["tops"]["月次（1年目）"]["B9"] == zaimu.LINE_RULE
+    # 円と整数は3桁ごとの区切り、率は %
+    row = book["names"]["単価_新商品"].split("$")[-1]
+    assert book["formats"]["前提"][f"C{row}"] == "#,##0"
+    # 見出しの固定・印刷（A4 横、1ページの幅）・画面の目盛りの線は消す
+    props = book["props"]
+    assert (props["前提"]["freeze"], props[PLAN]["freeze"], props["月次（1年目）"]["freeze"]) == ("C3", "B11", "B4")
+    for sheet in book["sheets"]:
+        p = props[sheet]
+        assert (p["orientation"], p["fitToWidth"], p["fitToHeight"], p["fitToPage"], p["gridlines"]) == (
+            "landscape", 1, 0, True, False), sheet
+    assert "$9:$10" in str(props[PLAN]["print_rows"])
+    # 名前は前提の値のセルだけ（印刷の設定で増えない）
+    assert set(book["names"]) == {"単価_新商品", "数量_新商品", "賃上げ率"} | {"基準_" + k for k in zaimu.BASE_KEYS}
+
+
 def test_json_report_sums_and_requirements(tmp_path) -> None:
     env = zt.Env(tmp_path)
     folder = env.company()

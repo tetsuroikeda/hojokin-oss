@@ -254,9 +254,20 @@ def test_kijun_writes_cost_share_and_recent_year(tmp_path) -> None:
     assert written["売上原価の割合"]["原材料費"]["値"] == 1
     assert written["売上原価の割合"]["給与支給総額"]["値"] == pytest.approx(33_400_000 / 41_600_000)
     assert "労務費の給与 33,400,000円" in written["売上原価の割合"]["給与支給総額"]["出典"]
+    # 決算書の科目も指定に書く（期は --as のもの。損益の区分は「販売費及び一般管理費」にそろえる）
+    accounts = written["決算書の科目"]
+    assert accounts["期"] == "直近期" and accounts["決算書"] == BREAKDOWN["決算書"]
+    assert [r["科目"] for r in accounts["行"]] == [r["科目"] for r in BREAKDOWN["行"]]
+    assert accounts["行"][1] == {"科目": "材料費", "区分": "原材料費", "金額": 82_600_000, "損益の区分": "売上原価", "出典": "p.3"}
+    assert accounts["行"][-1]["損益の区分"] == "販売費及び一般管理費" and "損益の区分" not in accounts["行"][0]
+    assert f"決算書の科目（{len(BREAKDOWN['行'])}個）も、指定の「決算書の科目」に書きました" in text
     out = zt.ok(env.run(folder))  # 書いた指定で作れる（応募の締切は指定にある）
     assert "様式（別紙4）に写す数字（円に丸めた値。列は 2028年3月期、2029年3月期、2030年3月期、2031年3月期）" in out
     assert "→ 合う" in out and "足下の賃上げ（2026年3月期、2027年3月期、2028年3月期）" in out
+    assert "損益の内訳：計画のシートの" in out and "売上高・売上原価・売上総利益・販売費及び一般管理費・営業利益の形" in out
+    assert "直近期（決算書）の科目の割合で分けた見込み" in out
+    numbers = json.loads((folder / "記録" / "財務モデルの数字.json").read_text(encoding="utf-8"))
+    assert "損益の内訳" not in numbers and "損益の内訳" not in numbers["中身"]  # 数字の控えの形は変えない
 
 
 @pytest.mark.parametrize("how, words", [
@@ -332,6 +343,146 @@ def test_tool_reports_the_low_case_reason(tmp_path) -> None:
     assert "3年目：売上 233,377,200円 → 186,701,760円" in text
 
 
+# ---------------------------------------------------------------- 損益の内訳（決算書の科目。11/7 の作者の指摘）
+
+
+def accounts_of(data: dict, period: str = "直近期") -> dict:
+    """決算の内訳から、指定の「決算書の科目」（kijun --into が書く形）。"""
+    rows = []
+    for r in data["行"]:
+        row = {"科目": r["科目"], "区分": r["区分"], "金額": r["金額"], "出典": r["出典"]}
+        if "損益の区分" in r:
+            row["損益の区分"] = r["損益の区分"]
+        rows.append(row)
+    return {"決算書": data["決算書"], "期": period, "行": rows}
+
+
+def with_accounts(spec: dict, data: dict, period: str = "直近期") -> dict:
+    return dict(copy.deepcopy(spec), **{"決算書の科目": accounts_of(data, period)})
+
+
+def kind_sums(acc: dict, kind: str) -> list:
+    """区分ごとの、内訳の行の和（年ごと）。"""
+    lines = [x for x in acc["行ごと"] if x["区分"] == kind]
+    return [sum(x["年ごと"][y] for x in lines) for y in range(len(lines[0]["年ごと"]))]
+
+
+def test_accounts_add_up_to_the_totals() -> None:
+    """科目の値は区分の合算 × 決算書の割合。区分の和と営業利益は合算と同じで、売上原価・販管費は別紙4 と同じ。"""
+    spec = with_accounts(rehearsal_spec(), breakdown_with_sides())
+    book = book_of(spec)
+    s, acc = book.summary, book.accounts
+    assert acc["損益の区分"] is True and acc["期"] == "直近期" and acc["科目の数"] == len(BREAKDOWN["行"])
+    for kind in zaimu.ROW_KEYS:
+        for y, v in enumerate(kind_sums(acc, kind)):
+            assert v == pytest.approx(s["合算"][kind][y], abs=1e-6), (kind, y)
+    assert acc["営業利益"] == s["合算"]["営業利益"] and acc["照らし"] == [0] * 4
+    # 売上原価と販管費（丸める前）は、別紙4 の売上原価・販管費（円に丸めた値）と円未満の差だけ
+    rows = s["別紙4"]["年ごと"]
+    for y in range(4):
+        assert abs(acc["年ごと"]["売上原価"][y] - rows["売上原価"][y]) <= 0.5
+        assert abs(acc["年ごと"]["販売費及び一般管理費"][y] - rows["販売費及び一般管理費"][y]) <= 0.5
+    # 給与支給総額は、決算書の割合（労務費の給与 334／給料手当 82）で分けた見込み
+    pay = {x["名前"]: x for x in acc["行ごと"] if x["区分"] == "給与支給総額"}
+    assert pay["労務費の給与"]["割合"] == pytest.approx(33_400_000 / 41_600_000)
+    for y in range(4):
+        assert pay["給料手当"]["年ごと"][y] == pytest.approx(s["合算"]["給与支給総額"][y] * 8_200_000 / 41_600_000)
+    # 本補助金の設備の減価償却費は決算書にないので別の行。割合がなければ、決算書の減価償却費の割合（28/36）で2行に分ける
+    new = [x for x in acc["行ごと"] if x["種類"] == "本補助金の設備"]
+    assert [(x["損益の区分"], x["年ごと"][1]) for x in new] == [
+        ("売上原価", pytest.approx(2_250_000 * 28 / 36)), ("販売費及び一般管理費", pytest.approx(2_250_000 * 8 / 36))]
+    assert new[0]["年ごと"][0] == 0
+    # 割合に「本補助金の設備の減価償却費」: 1 があれば、1行で売上原価に入れる（別紙4 と同じ）
+    spec["売上原価の割合"]["本補助金の設備の減価償却費"] = item(1, "見積書（架空）")
+    own = book_of(spec)
+    new = [x for x in own.accounts["行ごと"] if x["種類"] == "本補助金の設備"]
+    assert [(x["名前"], x["損益の区分"]) for x in new] == [("本補助金で導入する設備の減価償却費", "売上原価")]
+    for y in range(4):
+        assert abs(own.accounts["年ごと"]["売上原価"][y] - own.summary["別紙4"]["年ごと"]["売上原価"][y]) <= 0.5
+
+
+def test_accounts_block_on_the_plan_sheet() -> None:
+    """計画のシートのいちばん下に、売上高・売上原価・売上総利益・販管費・営業利益の形で置く。説明の文と数式。"""
+    book = book_of(with_accounts(rehearsal_spec(), breakdown_with_sides()))
+    plan = {sh.title: sh for sh in book.sheets}[PLAN]
+    a = {int(ref[1:]): c.value for ref, c in plan.cells.items() if ref.startswith("A") and ref[1:].isdigit()}
+    title = next(r for r, v in a.items() if v == zaimu.ACCOUNTS_TITLE)
+    assert title > max(r for r, v in a.items() if isinstance(v, str) and v.startswith("1人当たり給与支給総額の年平均成長率（％。直近期"))
+    assert any("内訳は直近期（決算書）の割合で分けた見込み" in str(v) for r, v in a.items() if r > title)
+    order = [v for r, v in sorted(a.items()) if r > title and v in ("売上高", "売上原価", "売上総利益", "販売費及び一般管理費", "営業利益")]
+    assert order == ["売上高", "売上原価", "売上総利益", "販売費及び一般管理費", "営業利益"]
+    pay = next(x for x in book.accounts["行ごと"] if x["名前"] == "労務費の給与")
+    r = pay["行"]
+    total_row = zt.row_of({f"A{k}": v for k, v in a.items()}, "【合算】") + 4  # 合算の給与支給総額
+    assert plan.cells[f"C{r}"].formula == f"=C{total_row}*$G${r}"  # 区分の合算 × 割合（G 列。決算書の金額は F 列）
+    assert plan.cells[f"F{r}"].value == 33_400_000 and plan.cells[f"G{r}"].formula.startswith(f"=F{r}/SUM(")
+    op = next(r for r, v in a.items() if r > title and v == "営業利益")
+    profit = zt.row_of({f"A{k}": v for k, v in a.items()}, "【合算】") + 8
+    assert plan.cells[f"B{op}"].formula == f"=B{profit}"  # 営業利益は合算の行を指す（1円も違わない）
+    assert plan.cells[f"F{op}"].py == 4_800_000  # 決算書の営業利益
+    assert plan.cells[f"B{op + 1}"].formula.startswith("=ROUND(SUM(") and a[op + 1] == zaimu.ACCOUNTS_CHECK
+
+
+def test_accounts_by_kind_when_sides_are_missing() -> None:
+    """損益の区分がない科目は区分ごとに並べる。決算書に科目のない区分に計画の値があれば、1行で示して知らせる。"""
+    data = copy.deepcopy(BREAKDOWN)
+    data["行"] = [r for r in data["行"] if r["区分"] != "減価償却費"]
+    spec = with_accounts(zt.load(zt.SPEC3), data, "基準年度")
+    book = zaimu.build(zaimu.parse_spec(spec), youken.read_requirements(zt.load(zt.SEIDO)))
+    acc, s = book.accounts, book.summary
+    assert acc["損益の区分"] is False and "売上原価" not in acc["年ごと"]
+    for kind in zaimu.ROW_KEYS:
+        if any(v for v in s["合算"][kind]):
+            for y, v in enumerate(kind_sums(acc, kind)):
+                assert v == pytest.approx(s["合算"][kind][y], abs=1e-6), (kind, y)
+    assert acc["照らし"] == [0] * 6
+    rest = [x for x in acc["行ごと"] if x["種類"] == "科目のない区分"]
+    assert [x["名前"] for x in rest] == ["減価償却費（決算書に科目がない分）"]
+    assert any("決算書に減価償却費の科目がない" in n for n in acc["知らせ"])
+    # 基準年度の区分の値が決算書の科目の計と違えば知らせる（指定前提3つの基準年度は、この決算書とは別の数字）
+    assert any("決算書の科目の計" in n for n in acc["知らせ"])
+    plan = {sh.title: sh for sh in book.sheets}["計画（5年）"]
+    assert any("内訳は基準年度の割合で分けた見込み" in str(c.value) for c in plan.cells.values())
+
+
+def test_without_accounts_the_book_is_the_same() -> None:
+    """決算書の科目がない指定（今までの指定）でも作れ、科目を足しても、上のセル・まとめ・数字の控えは変わらない。"""
+    plain = book_of(rehearsal_spec())
+    assert plain.accounts is None
+    added = book_of(with_accounts(rehearsal_spec(), breakdown_with_sides()))
+    for old, new in zip(plain.sheets, added.sheets):
+        assert old.title == new.title
+        for ref, cell in old.cells.items():
+            assert new.cells[ref] == cell, (old.title, ref)
+        extra = set(new.cells) - set(old.cells)
+        if old.title != PLAN:
+            assert not extra, old.title
+        else:
+            bottom = max(int(re.sub(r"[A-Z]+", "", ref)) for ref in old.cells)
+            assert extra and all(int(re.sub(r"[A-Z]+", "", ref)) > bottom for ref in extra)
+    assert json.dumps(plain.summary, ensure_ascii=False, default=str) == json.dumps(added.summary, ensure_ascii=False, default=str)
+    assert plain.names == added.names
+    numbers = [zaimu.numbers_record(zaimu.parse_spec(spec), b, None, "") for spec, b in (
+        (rehearsal_spec(), plain), (with_accounts(rehearsal_spec(), breakdown_with_sides()), added))]
+    assert json.dumps(numbers[0], ensure_ascii=False, default=str) == json.dumps(numbers[1], ensure_ascii=False, default=str)
+
+
+@pytest.mark.parametrize("change, words", [
+    (lambda a: a["行"][1].update({"区分": "仕入"}), "区分「仕入」は使えません"),
+    (lambda a: a["行"][2].pop("損益の区分"), "損益の区分（売上原価か販管費）が付いていない行があります：労務費の給与"),
+    (lambda a: a["行"][2].update({"損益の区分": "営業外"}), "損益の区分「営業外」は使えません"),
+    (lambda a: a.update({"期": "前期"}), "期は「基準年度」か「直近期」"),
+    (lambda a: a.update({"行": []}), "「行」（科目ごとの金額）がありません"),
+    (lambda a: a["行"][0].update({"金額": "三億"}), "金額 の値が数ではありません"),
+])
+def test_bad_accounts_are_refused(change, words) -> None:
+    spec = with_accounts(rehearsal_spec(), breakdown_with_sides())
+    change(spec["決算書の科目"])
+    with pytest.raises(zaimu.SpecError) as e:
+        zaimu.parse_spec(spec)
+    assert words in str(e.value)
+
+
 # ---------------------------------------------------------------- LibreOffice で計算し直す（slow）
 
 
@@ -339,7 +490,7 @@ def test_tool_reports_the_low_case_reason(tmp_path) -> None:
 def test_beppyo_block_recalculated(tmp_path) -> None:
     soffice = zt.soffice_or_skip()
     env = zt.Env(tmp_path)
-    spec = rehearsal_spec()
+    spec = with_accounts(rehearsal_spec(), breakdown_with_sides())  # 損益の内訳も、計算し直して確かめる
     spec["売上原価の割合"]["本補助金の設備の減価償却費"] = item(1, "見積書（架空）")
     folder = env.company(spec=spec, seido=SEIDO9)
     result = zt.ok_json(env.run(folder, "--json", soffice=soffice))
@@ -355,6 +506,19 @@ def test_beppyo_block_recalculated(tmp_path) -> None:
                 assert lo[f"{col}{row}"] == pytest.approx(b["年ごと"][key][y], abs=1e-6), (key, y)
     row = zt.row_of(cells, "1人当たり給与支給総額の年平均成長率（％。直近期から基準年度まで、経過年数で）")
     assert lo[f"D{row}"] == b["足下の賃上げ"]["伸び"]
+    # 損益の内訳：計算し直した科目の和が区分の合算と合い、照らしは0、売上原価は別紙4 と円未満の差だけ
+    acc = result["損益の内訳"]
+    total = zt.row_of(cells, "【合算】")
+    for kind, offset in (("給与支給総額", 4), ("その他の経費", 7)):
+        rows = [x["行"] for x in acc["行ごと"] if x["区分"] == kind]
+        for col in "BCDE":
+            assert sum(lo[f"{col}{r}"] for r in rows) == pytest.approx(lo[f"{col}{total + offset}"], abs=1e-6), (kind, col)
+    check = zt.row_of(cells, zaimu.ACCOUNTS_CHECK)
+    assert [lo[f"{col}{check}"] for col in "BCDE"] == [0, 0, 0, 0]
+    cost = next(r for r in range(acc["行"], check) if cells.get(f"A{r}") == "売上原価")
+    form = [int(ref[1:]) for ref, v in cells.items() if ref.startswith("A") and v == "　売上原価（区分ごとの合算 × 売上原価の割合）"][-1]
+    for col in "BCDE":
+        assert abs(lo[f"{col}{cost}"] - lo[f"{col}{form}"]) <= 0.5
 
 
 # ---------------------------------------------------------------- 公式の別紙4 に同じ数字を入れる（slow）
