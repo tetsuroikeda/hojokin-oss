@@ -561,12 +561,14 @@ def report(out: Outcome) -> str:
         if isinstance(rule, dict) and isinstance(rule.get("注記"), str):
             lines.append(f"- 制度データの注記：{rule['注記']}")
         clues = out.clues.get(str(out.target.get("名前") or out.target.get("id") or ""), [])
-        if d is not None and not d.dated and clues:
+        if (d is None or not d.dated) and clues:
             lines.append("- 制度データでは、この段階の期限を読み取れないとしていますが、資料の本文に、期限らしい文があります"
                          "（制度データの抜けかもしれません）：")
             lines += [f"  - {c.line()}" for c in clues]
-            lines.append("- 日付を頭で計算せず、junbi の手順（制度データの期限の抜けを直す）で、この段階を読んだ章を、上のページを"
-                         "足して読み取り役に読ませ直し、裏取りの道具に通してまとめ直してから、--show で期限を出し直してください")
+            stage_id = str(out.target.get("id") or out.target.get("名前") or "")
+            lines.append("- 日付を頭で計算しないでください。junbi の手順（制度データの期限の抜けを直す）で、ページを読んで当たっていると"
+                         f"確かめたら、seido_data.py --add-deadline {stage_id} で、この段階の期限の欄だけを足し（--merge でまとめ直さない）、"
+                         "--show で期限を出し直してください")
         elif d is not None and not d.dated:
             lines.append(f"- {_undated_hint(rule)}")
         if row.years:
