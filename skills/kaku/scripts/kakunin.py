@@ -217,6 +217,13 @@ def main(argv) -> int:
         return BROKEN
     handlers = {"count": do_count, "konkyo": do_konkyo, "prepare": do_prepare, "result": do_result,
                 "finish": do_finish}
+    # 質問の記録（回数の数え直し）と審査役の結果の保存は hooks が行う。hooks が動いていなければ、先に知らせる
+    # （11/6 のリハーサルで、親のフォルダで開いたまま進め、審査役の結果が「まだ届いていない」・回数が数え直されない
+    # まま、理由が分からず止まったため。止めはしない。lib/company.py の hookの合図）
+    if args.command in ("count", "prepare", "result") and not getattr(args, "json", False):
+        problem = company.hook_signal_problem(folder)
+        if problem:
+            print(f"【注意】{problem}")
     try:
         return handlers[args.command](folder, args, kk)
     except Refused as e:

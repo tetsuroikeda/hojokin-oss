@@ -43,6 +43,11 @@
      - 文字の値は、そのまま根拠の文にあるか、文字の2字ずつの組の半分以上（仮）が根拠の文にあること
        （値は根拠の文を短く言い換えてよいため。DESIGN 9章）。短い文字（6字まで）は、そのまま根拠の文にあること。
        言葉を比べるときは、句読点・かっこと数字を除く（数は上で別に照らす）。
+     - 資料の id を書く欄（様式の入力先の「元のファイル」）は、根拠の文と照らさず、資料の一覧（今の資料と前の回の資料）の id と照らす。
+       文字の値の中の資料の呼び名（資料の一覧の id と名前）も、根拠の文の言葉・数とは照らさない
+       （根拠の文は資料の中の文で、資料の呼び名は入らない。11/6 のリハーサルで「Wordその1・2」が外れた）。
+     - 丸数字は数として読む。①〜⑳は NFKC で数字になるが、黒丸の❶〜❿・⓫〜⓴、二重丸の⓵〜⓾、➀〜➓ はならないので、
+       表で数字にそろえる（電子申請マニュアルの流れ「❷ 基本情報」の 2。11/6 のリハーサル）。
    - どれかが外れたら、状態を「要確認」にし、注記に「裏取り：」と理由を書く。外れなければ、状態はそのまま
      （道具は、読み取り役が付けた状態より上げない。読み取り役が「要確認」とした値は、要確認のまま）。
    - 「読み取れない」の値は、出典がないので照らさない（値は null。理由を持つ）。
@@ -92,10 +97,30 @@ VERSION_WORDS = re.compile(r"(?i)(?:[_\-\s・](?:v|ver\.?)\d+|最終|修正版|�
 SKIP_TEXT_KEYS = {"種類", "旬"}
 # 金額（円）の欄（値の中の欄の名前）
 MONEY_KEYS = {"金額"}
+# 資料の id を書く欄（スキーマの「元の様式の資料の id」）。根拠の文の言葉とは照らさず、資料の一覧の id と照らす
+# （根拠の文は資料の中の文なので、資料の呼び名は入らない。11/6 のリハーサルで「Wordその1・2」が外れた）
+DOC_ID_KEYS = {"元のファイル"}
 # 補助額の特例のうち、値が金額のもの（スキーマで「補助率の置き換え」のほかは出典つきの金額）
 MONEY_SPECIALS = {"上限の置き換え", "上限の上乗せ"}
 
 ELLIPSIS = re.compile(r"…+|‥+|⋯+|\.{3,}|・{3,}")
+
+
+def _circled_table() -> Dict[int, str]:
+    """NFKC で数字にならない丸数字（黒丸の❶〜❿・⓫〜⓴、二重丸の⓵〜⓾、サンセリフの➀〜➓、⓿）を数字にする表。
+    ①〜⑳・㉑〜㊿ は NFKC で数字になる（「1」「21」）ので、同じ形（前後に区切りを入れない）にそろえる。
+    電子申請マニュアルの流れ（❶ 宣誓・手引き ❷ 基本情報 …）の順番を、数として読むため（11/6 のリハーサル）。"""
+    table: Dict[int, str] = {}
+    for start, first in ((0x2776, 1), (0x2780, 1), (0x278A, 1), (0x24F5, 1), (0x24EB, 11)):
+        for k in range(10):
+            table[start + k] = str(first + k)
+    table[0x24FF] = "0"
+    table[0x1F10B] = "0"
+    table[0x1F10C] = "0"
+    return table
+
+
+_CIRCLED = _circled_table()
 _DASHES = str.maketrans({c: "-" for c in "‐‑‒–—―−－﹣"})
 _TILDES = str.maketrans({c: "~" for c in "〜～∼"})
 _SPACES = re.compile(r"[\s​‌‍﻿]+")
@@ -276,15 +301,15 @@ def form_for(keys: List[str]) -> Dict:
 
 
 def normalize(text: str) -> str:
-    """NFKC にそろえ、ダッシュと波線を1つの形にし、空白と改行を除く。"""
-    text = unicodedata.normalize("NFKC", text).translate(_DASHES).translate(_TILDES)
+    """NFKC にそろえ（NFKC で数字にならない丸数字も数字にする）、ダッシュと波線を1つの形にし、空白と改行を除く。"""
+    text = unicodedata.normalize("NFKC", text.translate(_CIRCLED)).translate(_DASHES).translate(_TILDES)
     return _SPACES.sub("", text)
 
 
 def numeric_form(text: str) -> str:
     """数を読むための形。normalize と同じだが、数字と数字の間の空白は「|」にして残す
     （「※２ 2/3」を「22/3」と読まないように）。"""
-    text = unicodedata.normalize("NFKC", text).translate(_DASHES).translate(_TILDES)
+    text = unicodedata.normalize("NFKC", text.translate(_CIRCLED)).translate(_DASHES).translate(_TILDES)
     text = _DIGIT_GAP.sub("|", text)
     return _SPACES.sub("", text)
 
@@ -614,12 +639,37 @@ def _short(text: str, limit: int = 30) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+def doc_id_problems(doc_id: str, docs: Optional[Dict[str, str]]) -> List[str]:
+    """資料の id を書く欄（元のファイル）が、資料の一覧の id か。docs（id → 資料の名前）が分からなければ照らさない。"""
+    if docs is None or doc_id in docs:
+        return []
+    named = [i for i, name in docs.items() if name and normalize(name) == normalize(doc_id)]
+    if named:
+        return [f"「{_short(doc_id)}」は資料の名前です。資料の一覧の id（「{named[0]}」）を書いてください"]
+    return [f"「{_short(doc_id)}」が、資料の一覧の id にありません（資料の id：{'・'.join(sorted(docs)) or 'なし'}）"]
+
+
+def _without_doc_names(text: str, docs: Optional[Dict[str, str]]) -> str:
+    """文字の値から、資料の呼び名（資料の一覧の id と名前）を除く。根拠の文は資料の中の文なので、
+    「Wordその1・2 の様式」のように値が資料を名指ししていても、その呼び名は根拠の文にない（11/6 のリハーサル）。"""
+    if not docs:
+        return text
+    names = sorted({numeric_form(n) for i, name in docs.items() for n in (i, name) if isinstance(n, str)},
+                   key=len, reverse=True)
+    text = numeric_form(text)  # 数字の間の空白は「|」で残す（数の読み方を変えない）
+    for n in names:
+        if len(n) >= 2:
+            text = text.replace(n, "|")
+    return text
+
+
 def value_problems(value: Any, evidence: str, key: Optional[str] = None, money: bool = False,
-                   steps: Optional[Dict[str, str]] = None) -> List[str]:
+                   steps: Optional[Dict[str, str]] = None, docs: Optional[Dict[str, str]] = None) -> List[str]:
     """値（出典つき値の「値」）が、根拠の文（数を読む形にそろえ、切れ端を「|」でつないだもの）の中にあるか。
 
     money が True なら、値は金額（円）：根拠の文の円の付いた数を円にしたものと同じであることを求める。
     steps は、手続きの段階の id と名前（出来事が段階の id のとき、名前で照らすため）。
+    docs は、資料の一覧の id と名前（元のファイルは id と照らし、文字の値の資料の呼び名は言葉として照らさない）。
     """
     found = scan_numbers(evidence, evidence=True)
     if value is None:
@@ -639,14 +689,15 @@ def value_problems(value: Any, evidence: str, key: Optional[str] = None, money: 
             return iso
         if re.fullmatch(r"\d+/\d+", value.strip()):
             return number_problems(value, found)
-        problems = number_problems(value, found)
-        if key not in SKIP_TEXT_KEYS and not text_found(value, evidence):
+        text = _without_doc_names(value, docs)  # 資料の呼び名は、根拠の文の言葉・数と照らさない
+        problems = number_problems(text, found)
+        if key not in SKIP_TEXT_KEYS and not text_found(text, evidence):
             problems.append(f"「{_short(value)}」に当たる言葉が根拠の文にありません")
         return problems
     if isinstance(value, list):
         problems = []
         for i, item in enumerate(value):
-            problems += [f"{i + 1}つ目：{p}" for p in value_problems(item, evidence, key, money, steps)]
+            problems += [f"{i + 1}つ目：{p}" for p in value_problems(item, evidence, key, money, steps, docs)]
         return problems
     if isinstance(value, dict):
         if set(value) == {"日時"} and isinstance(value["日時"], str):
@@ -676,13 +727,16 @@ def value_problems(value: Any, evidence: str, key: Optional[str] = None, money: 
                 continue
             if k in SKIP_TEXT_KEYS and isinstance(item, str):
                 continue
+            if k in DOC_ID_KEYS and isinstance(item, str):
+                problems += doc_id_problems(item, docs)
+                continue
             if k == "日時" and isinstance(item, str):
                 problems += _iso_problems(item, evidence) or []
                 continue
             if k == "始まりの月" and isinstance(item, int) and not isinstance(item, bool):
                 problems += month_problems(item, evidence)
                 continue
-            problems += value_problems(item, evidence, k, steps=steps)
+            problems += value_problems(item, evidence, k, steps=steps, docs=docs)
         return problems
     return []
 
@@ -710,6 +764,28 @@ class Texts:
 
     def exists(self) -> bool:
         return self.root.is_dir()
+
+    def doc_names(self) -> Optional[Dict[str, str]]:
+        """資料の一覧（今の資料と前の回の資料）の id → 名前。一覧がなければ、本文のある資料のフォルダの名前。
+        どちらもなければ None（元のファイルの id を照らさない）。一覧が会社のフォルダの外なら、読まずに OutsideError。"""
+        if hasattr(self, "_docs"):
+            return self._docs
+        docs: Optional[Dict[str, str]] = None
+        listed = self.root / LIST_FILE
+        self.check_inside(listed)
+        try:
+            data = json.loads(listed.read_text(encoding="utf-8")) if listed.is_file() else None
+        except (OSError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            docs = {}
+            for d in list(data.get("資料") or []) + list(data.get("前の回の資料") or []):
+                if isinstance(d, dict) and isinstance(d.get("id"), str):
+                    docs[d["id"]] = str(d.get("名前") or "")
+        elif self.root.is_dir():
+            docs = {d.name: "" for d in self.root.iterdir() if (d / doc_text.INDEX_FILE).is_file()} or None
+        self._docs = docs
+        return docs
 
     def doc_dir(self, doc_id: str) -> Path:
         return self.root / doc_id
@@ -947,6 +1023,8 @@ def verify(data: Dict, texts: Texts) -> Result:
     # 手続きの段階の id と名前（出来事が段階の id のとき、名前で照らす）
     steps = {s["id"]: s["名前"] for s in data.get("手続きの段階") or []
              if isinstance(s, dict) and isinstance(s.get("id"), str) and isinstance(s.get("名前"), str)}
+    # 資料の id と名前（元のファイルを id と照らし、文字の値の資料の呼び名は言葉として照らさない）
+    docs = texts.doc_names()
 
     def visit(node: Any, path: List[Any], parent: Any) -> None:
         if _is_sourced_value(node):
@@ -955,7 +1033,8 @@ def verify(data: Dict, texts: Texts) -> Result:
                 result.checked += 1
                 problems, evidence = evidence_problems(node, texts)
                 if evidence:
-                    problems += value_problems(node.get("値"), evidence, money=_money_place(path, parent), steps=steps)
+                    problems += value_problems(node.get("値"), evidence, money=_money_place(path, parent), steps=steps,
+                                               docs=docs)
                 if problems:
                     before = node["状態"]
                     node["状態"] = CHECK
@@ -980,7 +1059,7 @@ def verify(data: Dict, texts: Texts) -> Result:
             result.conflict_values += 1
             problems, evidence = evidence_problems(item, texts)
             if evidence:
-                problems += value_problems(item.get("値"), evidence)
+                problems += value_problems(item.get("値"), evidence, docs=docs)
             if problems:
                 where = f"資料どうしの食い違い「{entry.get('項目')}」の{j + 1}つ目の値（{_sources_label(item.get('出典') or [])}）"
                 _add_note(entry, _own_note([f"{j + 1}つ目の値：" + "。".join(problems)]))

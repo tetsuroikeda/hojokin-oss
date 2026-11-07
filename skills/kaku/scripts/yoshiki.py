@@ -14,6 +14,12 @@
                                        [--stage] [--seido] [--source] [--input <書く文のファイル> | --text "<書く文>"]
       `案件/<案件>/<段階>/申請書/その1・2.docx` の、その項目（--field があればその欄）の書いてよい範囲に書く
       （なければ公式資料の様式から写して作る）。
+  python3 -B <この場所>/yoshiki.py cells --input <書く値の JSON> [--source <公式資料の Excel の様式>] [--file <申請書のファイル名>]
+                                       [--case] [--stage] [--soffice <LibreOffice の場所>]
+      Excel の様式（その3・要件確認書など）の書いてよいセルに書き、数式のセルの値を LibreOffice で計算し直して保存する。
+      書き先は --file。省くと --source の様式の名前から決める（その3 の様式なら その3.xlsx、ほかは【】と _第N回 を外した名前）。
+  python3 -B <この場所>/yoshiki.py recalc [--file <申請書の Excel のファイル名>] [--case] [--stage] [--soffice <場所>]
+      申請書の Excel の様式（省くと、申請書/ の保護したシートのある Excel のすべて）の、数式のセルの値だけを計算し直して保存する。
   python3 -B <この場所>/yoshiki.py pdf [--case] [--stage] [--soffice <LibreOffice の場所>]
       申請書の その1・2.docx を LibreOffice で PDF にした写しを、段階の `添付する書類/その1・2.pdf` に作る（元は変えない）。
   python3 -B <この場所>/yoshiki.py sheet --field "<欄の名前>" [--screen "<画面の名前>"] [--case] [--stage] [--seido]
@@ -93,6 +99,13 @@ def parse(argv):
     common(p, stage=True)
     p.add_argument("--input", required=True, help="書く値の JSON（会社のフォルダの中。記録/一時/その3の値.json など）。"
                                                   "{\"値\": [{\"シート\": \"…\", \"セル\": \"C6\", \"値\": …}]} の形")
+    p.add_argument("--file", help="書き先の申請書の Excel のファイル名（申請書/ の中。例：事業場内最低賃金引き上げに係る要件確認書.xlsx）。"
+                                  "省くと --source の様式の名前から決める（--source もなければ その3.xlsx）")
+    p.add_argument("--soffice", help="LibreOffice（soffice）の場所。省くと決まった場所と Spotlight で探す")
+    p = sub.add_parser("recalc", help="申請書の Excel の様式の、数式のセルの値を計算し直して保存する")
+    common(p, stage=True, seido=False, source=False)
+    p.add_argument("--file", help="申請書の Excel のファイル名（申請書/ の中）。省くと、保護したシートのある Excel のすべて")
+    p.add_argument("--soffice", help="LibreOffice（soffice）の場所。省くと決まった場所と Spotlight で探す")
     p = sub.add_parser("map", help="読み取り役の対応づけを確かめて、制度データに書く")
     common(p)
     p.add_argument("--input", help="対応づけの JSON（会社のフォルダの中のファイル）。省くか - なら標準入力")
@@ -116,7 +129,7 @@ def parse(argv):
                                     "{\"値\": [{\"画面\": \"…\", \"欄\": \"…\", \"値\": …}]} の形")
     args = parser.parse_args(argv)
     if args.command is None:
-        raise Refused("outline・map・write・sheet・cells・pdf のどれかを付けてください")
+        raise Refused("outline・map・write・sheet・cells・recalc・pdf のどれかを付けてください")
     if args.command == "sheet":
         if args.values is not None and (args.field or args.value is not None or args.screen):
             raise Refused("--values と、--field・--value・--screen は一緒に使えません")
@@ -503,10 +516,88 @@ def do_write(folder: Path, args, yw) -> int:
 
 
 EXCEL_FILE = "その3.xlsx"
+RECALC_WORK_DIR = f"{company.MARKER_DIR}/{company.TEMP_DIR}/計算し直し"
+_ROUND_SUFFIX = re.compile(r"[_＿\s]*第\s*[0-9０-９]+\s*回$")
+_BRACKET_PREFIX = re.compile(r"^【[^】]*】\s*")
+
+
+def excel_target_name(source: Path, given) -> str:
+    """書き先の申請書の Excel のファイル名。--file、なければ公式資料の様式の名前から決める。
+
+    11/6 のリハーサルで、書き先が その3.xlsx に決め打ちされ、要件確認書の様式を --source に渡しても その3 に書こうと
+    したため、様式ごとに書き先を分ける。
+    """
+    if given:
+        name = places.nfc(str(given)).strip()
+        if not name or "/" in name or name.startswith(".") or not name.lower().endswith((".xlsx", ".xlsm")):
+            raise Refused(f"--file には、申請書/ の中の Excel のファイル名（.xlsx）を渡してください（{given}）")
+        return name
+    stem = places.nfc(source.stem)
+    if "その3" in stem:
+        return EXCEL_FILE
+    stem = _ROUND_SUFFIX.sub("", _BRACKET_PREFIX.sub("", stem)).strip()
+    if not stem:
+        raise Refused("書き先の名前を様式の名前から決められません。--file で申請書のファイル名を渡してください")
+    return stem + source.suffix.lower()
+
+
+def _same_form(a: bytes, b: bytes) -> bool:
+    """2つの Excel が同じ様式か（入力のシートの名前の並びが同じか）。"""
+    from lib import yoshiki_excel
+
+    names = lambda blob: [s.name for s in yoshiki_excel.Book(blob).sheets]  # noqa: E731
+    return names(a) == names(b)
+
+
+def recalc_values(folder: Path, blob: bytes, soffice_arg) -> tuple:
+    """blob（Excel の様式）の数式のセルの値を、LibreOffice で計算し直した写しから写す。
+
+    戻り値は（新しいバイト列、要約か None、できなかった理由）。数式がなければ（blob, None, ""）。
+    """
+    import shutil
+    import uuid
+
+    from lib import libreoffice, yoshiki_excel
+
+    if not yoshiki_excel.formula_cell_count(blob):
+        return blob, None, ""
+    soffice = soffice_arg if soffice_arg else libreoffice.find_soffice()
+    if not soffice or not (os.path.isfile(soffice) and os.access(soffice, os.X_OK)):
+        return blob, None, "LibreOffice が見つかりません"
+    try:
+        places.no_link_on_the_way(folder, RECALC_WORK_DIR)
+    except places.PlaceError as e:
+        return blob, None, f"{e.link} が別名（シンボリックリンク）になっています"
+    work = places.actual(folder, RECALC_WORK_DIR, partial=True) / uuid.uuid4().hex
+    work.mkdir(parents=True)
+    try:
+        src = work / "様式.xlsx"
+        src.write_bytes(blob)
+        data = libreoffice.recalc_xlsx(src, work / "計算", str(soffice)).read_bytes()
+        new_blob, summary = yoshiki_excel.store_formula_values(blob, data)
+    except (libreoffice.LibreOfficeError, OSError, ValueError) as e:
+        return blob, None, str(e)
+    finally:
+        shutil.rmtree(str(work), ignore_errors=True)
+    return new_blob, summary, ""
+
+
+def _recalc_lines(name: str, summary, why: str) -> list:
+    if summary is None and not why:
+        return []
+    if summary is None:
+        return [f"- 数式のセルの値は計算し直せませんでした（{why}）。{name} の数式のセルには前の計算の値が残っています。"
+                "社長に Excel で開いて保存してもらうか、LibreOffice を入れてから recalc を動かしてください。"]
+    lines = [f"- 数式のセル（省力化指数・投資回収期間・伸び率など）の値を、LibreOffice で計算し直して保存しました"
+             f"（値が変わったセル {summary['替えたセル']}個。数式と書式は変えていません）。"]
+    if summary["エラーのセル"]:
+        lines.append("- 計算の結果がエラーのセルがあります（入力の欄の空きや、0 で割る式など）："
+                     + "、".join(summary["エラーのセル"][:10]) + ("…" if len(summary["エラーのセル"]) > 10 else ""))
+    return lines
 
 
 def do_cells(folder: Path, args, yw) -> int:
-    """Excel の様式の書いてよいセルに、まとめて書く。1件でも書けなければ何も書かない。"""
+    """Excel の様式の書いてよいセルに、まとめて書く。1件でも書けなければ何も書かない。書いた後、数式の値を計算し直す。"""
     from lib import yoshiki_excel
     from lib.docx_min import write_replacing
 
@@ -516,33 +607,103 @@ def do_cells(folder: Path, args, yw) -> int:
     items = data.get("値") if isinstance(data, dict) else None
     if not isinstance(items, list) or not items:
         raise Refused("書く値は {\"値\": [{\"シート\": \"…\", \"セル\": \"C6\", \"値\": …}]} の形で渡してください")
-    target = application_file(folder, case, stage, EXCEL_FILE)
+    source = find_excel_source(folder, case, args.source) if args.source else None
+    name = excel_target_name(source if source is not None else Path(EXCEL_FILE), args.file)
+    target = application_file(folder, case, stage, name)
     first = not os.path.lexists(str(target))
     if first:
-        before = yoshiki_excel.first_copy(find_excel_source(folder, case, args.source).read_bytes())
+        if source is None:
+            if name != EXCEL_FILE:
+                raise Refused(f"{name} がまだありません。初めて書くときは --source で公式資料の様式を渡してください")
+            source = find_excel_source(folder, case, None)
+        before = yoshiki_excel.first_copy(source.read_bytes())
     else:
         before = target.read_bytes()
+        if source is not None and not _same_form(before, source.read_bytes()):
+            raise Refused(f"書き先の {name} は、--source の様式（{places.relative_inside(folder, source)}）とシートの構成が"
+                          "違います。--file で書き先を正しく渡してください")
     try:
         new_blob, summary = yoshiki_excel.write_cells(before, items)
     except yw.OutsideChange as e:
-        print(f"保存しませんでした：{EXCEL_FILE} に書くと、書いてよい範囲の外が変わります（{len(e.differences)}か所）。"
+        print(f"保存しませんでした：{name} に書くと、書いてよい範囲の外が変わります（{len(e.differences)}か所）。"
               "前のファイルのままです。道具か様式の想定が違うので、作者に知らせてください。")
         for d in e.differences:
             print(f"- {d}")
         return OUTSIDE
     except yw.FormError as e:
-        print(f"しませんでした（{EXCEL_FILE} は前のままです）。{e}")
+        print(f"しませんでした（{name} は前のままです）。{e}")
         print("書いてよいセルは outline --excel で確かめてください。")
         return REFUSED
-    target = application_file(folder, case, stage, EXCEL_FILE)
+    new_blob, recalc, why = recalc_values(folder, new_blob, getattr(args, "soffice", None))
+    differences = yoshiki_excel.compare_xlsx(before, new_blob)
+    if differences:
+        print(f"保存しませんでした：{name} の数式の値を写すと、書いてよい範囲の外が変わります（{len(differences)}か所）。"
+              "前のファイルのままです。作者に知らせてください。")
+        for d in differences:
+            print(f"- {d}")
+        return OUTSIDE
+    target = application_file(folder, case, stage, name)
     write_replacing(target, new_blob)
     rel = places.relative_inside(folder, target)
     made = "公式資料の様式から写して作り（開いたときに計算し直す設定を付けた）、" if first else ""
     print(f"{rel} に、{made}{summary['書いたセル']}個のセルを書きました（シート：{'・'.join(summary['シート'])}）。")
-    print("- 直前の版と比べ、書いてよい範囲（様式の入力の欄）の外は変わっていません。")
-    print("- 数式のセル（省力化指数・投資回収期間・別紙4 の伸び率など）は、Excel で開いたときに計算されます。"
-          "計画書に書く数字は、財務モデルの道具の出力から取ってください。")
+    print("- 直前の版と比べ、書いてよい範囲（様式の入力の欄）と数式のセルの値の外は変わっていません。")
+    for line in _recalc_lines(name, recalc, why):
+        print(line)
+    print("- 計画書に書く数字は、財務モデルの道具の出力から取ってください。")
     return OK
+
+
+def do_recalc(folder: Path, args, yw) -> int:
+    """申請書の Excel の様式の、数式のセルの値だけを計算し直して保存する（書いてよい範囲の外は変えない）。"""
+    from lib import yoshiki_excel
+    from lib.docx_min import write_replacing
+
+    case = find_case(folder, args.case)
+    stage = find_stage(folder, case, args.stage)
+    if args.file:
+        names = [excel_target_name(Path(EXCEL_FILE), args.file)]
+    else:
+        top = application_file(folder, case, stage, EXCEL_FILE).parent
+        names = []
+        for path in sorted(top.iterdir()):
+            if path.name.startswith((".", "~$")) or path.suffix.lower() not in (".xlsx", ".xlsm") or path.is_symlink():
+                continue
+            try:
+                if any(sh.protected for sh in yoshiki_excel.Book(path.read_bytes()).sheets):
+                    names.append(places.nfc(path.name))
+            except (yw.FormError, ValueError):
+                continue
+        if not names:
+            raise Refused("申請書/ に、保護したシートのある Excel の様式がありません")
+    code = OK
+    for name in names:
+        target = application_file(folder, case, stage, name)
+        if not target.is_file():
+            raise Refused(f"{places.relative_inside(folder, target)} がありません")
+        before = target.read_bytes()
+        new_blob, recalc, why = recalc_values(folder, before, getattr(args, "soffice", None))
+        if recalc is None:
+            if why:
+                print(f"{name}：数式のセルの値は計算し直せませんでした（{why}）。ファイルは前のままです。")
+                code = REFUSED
+            else:
+                print(f"{name}：数式のセルがないので、何もしていません。")
+            continue
+        differences = yoshiki_excel.compare_xlsx(before, new_blob)
+        if differences:
+            print(f"{name}：保存しませんでした（数式の値を写すと、範囲の外が変わります。{len(differences)}か所）。作者に知らせてください。")
+            for d in differences:
+                print(f"- {d}")
+            code = OUTSIDE
+            continue
+        if new_blob != before:
+            write_replacing(application_file(folder, case, stage, name), new_blob)
+        print(f"{places.relative_inside(folder, target)}：数式のセルの値を計算し直しました（値が変わったセル {recalc['替えたセル']}個。"
+              "数式・書式・入力の欄は変えていません）。")
+        for line in _recalc_lines(name, recalc, "")[1:]:
+            print(line)
+    return code
 
 
 ATTACH_DIR = "添付する書類"
@@ -786,7 +947,7 @@ def main(argv) -> int:
               "プラグインを入れ直してから、もう一度試してください。")
         return BROKEN
     handlers = {"outline": do_outline, "map": do_map, "write": do_write, "sheet": do_sheet, "pdf": do_pdf,
-                "cells": do_cells}
+                "cells": do_cells, "recalc": do_recalc}
     try:
         return handlers[args.command](folder, args, yw)
     except Refused as e:

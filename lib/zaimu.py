@@ -25,7 +25,16 @@ LibreOffice で計算し直すのは lib/libreoffice.py。ここでは、どの�
         "導入後": [{"工程": "計量と盛り付けの見守り", "分": 120, "種別": "新たに追加される作業"},
                    {"工程": "検品", "分": 60, "種別": "内容は変化しない作業", "対応する導入前": 4}],
         "投資総額": {"値": 22500000, "根拠": "見積書", "出典": "…"}, "年間稼働日数": …, "人件費単価": …
-      }
+      },
+      # 以下は任意。様式（省力化その3 の別紙4）に写す数字を道具が出すためのもの（11/6 のリハーサルの穴1・穴2）
+      "年度": {"直近期": "2026-03", "補助事業の完了予定": "2028-01", "応募の締切": "2026-12"},
+                                             # 年-月。直近期は決算書の期の終わり（決算月もここから取る）。応募の締切を
+                                             # 省くと、道具（zaimu_model.py）が制度データの「決まった期日」の公募締切日を入れる
+      "直近期の実績": {"給与支給総額": {"値": 41600000, "根拠": "決算書", "出典": "…"}, ...},  # kijun --as 直近期 が書く
+      "基準年度": {"給与支給総額": {"式": "直近_給与支給総額*(1+賃上げ率)^経過年数", "根拠": "…", "出典": "…"}, ...},
+                                             # 基準年度の値は、数のほか、直近期の実績からの式でもよい
+      "売上原価の割合": {"給与支給総額": {"値": 0.8029, "根拠": "決算書", "出典": "…"}, ...},  # kijun が書く
+      "本補助金の設備の減価償却費": {"式": "新設備の取得額/新設備の耐用年数", "根拠": "…", "出典": "…"}
     }
 
 - 式に使えるもの：前提の名前、基準年度の名前（「基準_売上」など）、年（基準年度が0、1年目が1）、同じ事業の行の名前
@@ -46,9 +55,28 @@ LibreOffice で計算し直すのは lib/libreoffice.py。ここでは、どの�
 数量が2割少ない場合（DESIGN 8.3「簡単にしすぎないための工夫」）：名前が「数量_」で始まる前提を0.8倍にした指定で
 同じ計算をし直し、数値の要件（特例を除く）をすべて満たすかを「まとめ」に1行で示す（式ではなく、道具が計算した値）。
 
+  ただし、既存事業の式が年=0 で基準年度の実績になる（今の数量で今の売上を作っている）のに、数量の前提を0.8倍にすると
+  年=0 の値まで変わるなら、今の数量（実績）まで2割減らした判定なので「判定できない」とし、理由と参考の値を示す
+  （DESIGN 8.3 の「計画より2割少ない」は、計画で増やす分のこと。今の数量には「数量_」を付けない）。あわせて、数量を
+  減らすと変わる行と、売上が減っても動かない原材料費を示す。
+
 省力化の指標（様式その3。応募手引8 p.30・p.59）：別紙1 の数式と同じ形で、削減される業務に要していた時間・導入後に
 発生する時間・省力化指数を、別紙3 の数式と同じ形で投資回収期間を計算する。増加した付加価値額は、応募手引8 p.59 の
 例の形（（最後の年の付加価値額−基準年度の付加価値額）÷計画の年数）で、計画の合算から出す。
+
+様式（別紙4）に写す数字（指定に「年度」「直近期の実績」「売上原価の割合」「本補助金の設備の減価償却費」のどれかが
+あるとき）：計画のシートの下に、別紙4 の行の並びで、円に丸めた値を数式で置く。
+- 売上原価 ＝ 区分ごとの合算 × 売上原価の割合、販売費及び一般管理費 ＝ 区分ごとの合算 ×（1 − 割合）。割合は決算書の
+  科目（製造原価報告書か販管費の内訳か）から kijun が出す。丸める前の和が「売上 − 営業利益」と合うかも行に置く。
+- 減価償却費は、本補助金で導入する設備の分（指定の式。1年目から）と、既存設備の分（合算 − 本補助金の分）に分ける。
+- 円に丸めた値から、様式と同じ計算で付加価値額・労働生産性・1人当たり給与支給総額と伸びを出し、財務モデルの値と
+  違えば知らせる（様式には円で写すので、切り捨ての境目では伸びが変わりうる）。
+- 決算期：基準年度は補助事業の完了日を含む事業年度（要領9 p.6（3））、1年目はその翌年度（p.7（8））。締切期は応募の
+  締切を含む期、直近期は締切期の前の期（様式の「応募申請の直近の決算期」。決算が出ていなければ前々期の値を使う注5）。
+  経過年数は直近期から基準年度までの年数（別紙4 の「応募申請の直近から基準年度までの経過年数」）。
+- 足下の賃上げ：直近期（決算書）・締切期・基準年度の給与支給総額と人数から、1人当たり給与支給総額の年平均成長率を
+  別紙4 と同じ計算で出す。締切期の値は、基準年度の式の経過年数を1にしたもの。要件ではなく審査で見る値なので、
+  満たす・満たさないは付けない。
 """
 
 from __future__ import annotations
@@ -100,6 +128,22 @@ LOW_LABEL = "数量が計画より2割少ない場合に、数値の要件（特
 NO_QUANTITY = "数量の前提（名前が「数量_」で始まるもの）がないので、判定していません"
 
 MONTHS = 12
+
+# 様式（別紙4）の決算期（要領9 p.6（3）基準年度・p.7（8）事業計画期間、様式その3 別紙4 の決算期の列）
+TIMELINE_KEY = "年度"
+RECENT_KEY = "直近期の実績"
+RECENT_PREFIX = "直近_"
+ELAPSED = "経過年数"  # 直近期から基準年度までの年数。基準年度の式で使う
+FORMULA_KEY = "式"
+# 様式（別紙4）の売上原価と販売費及び一般管理費（区分ごとの、売上原価に入る割合。残りは販管費）
+COST_SHARE_KEY = "売上原価の割合"
+COST_SHARE_PREFIX = "原価割合_"
+COST_KEYS = ROW_KEYS[1:]
+NEW_DEP_KEY = "本補助金の設備の減価償却費"
+BEPPYO_KEYS = (TIMELINE_KEY, RECENT_KEY, COST_SHARE_KEY, NEW_DEP_KEY)
+# 数量が2割少ない場合：既存事業の式が年=0 で基準年度の実績（との差がこの割合以内）になり、数量を0.8倍にすると
+# 年=0 の値が基準年度のこの割合以上動くなら、今の数量（実績）まで「数量_」にしているとみる
+CURRENT_LEVEL_TOL = 0.01
 
 # 省力化の指標（様式その3 の別紙1・別紙3）
 SHORYOKU_KEY = "省力化"
@@ -157,6 +201,7 @@ class Item:
     basis: str = ""
     source: str = ""
     provisional: bool = False
+    formula: Optional["Expr"] = None  # 基準年度を直近期の実績からの式で置いたとき・本補助金の設備の減価償却費
 
     @property
     def unsupported(self) -> bool:
@@ -191,6 +236,27 @@ class Shoryoku:
 
 
 @dataclass
+class Timeline:
+    """様式（別紙4）の決算期。年は、その期の終わりの年（決算月は、直近期の終わりの月）。"""
+
+    month: int
+    recent: int  # 様式の「応募申請の直近の決算期」の終わりの年
+    recent_actual: int  # 指定の直近期（決算書の期）の終わりの年。注5 のときは recent の前の年
+    deadline: Optional[Tuple[int, int]]
+    deadline_source: str
+    closing: int  # 締切期（応募の締切を含む期）の終わりの年
+    completion: Tuple[int, int]
+    base: int  # 基準年度（補助事業の完了日を含む期）の終わりの年
+    elapsed: int  # 経過年数（直近期から基準年度まで）
+    basis: str = ""
+    source: str = ""
+    notes: List[str] = field(default_factory=list)
+
+    def label(self, year: int) -> str:
+        return f"{year}年{self.month}月期"
+
+
+@dataclass
 class Spec:
     years: int
     assumptions: List[Item]
@@ -199,6 +265,11 @@ class Spec:
     people: Dict[str, "Expr"]
     waves: Optional[List[float]] = None
     shoryoku: Optional[Shoryoku] = None
+    timeline: Optional[Timeline] = None
+    recent: Dict[str, Item] = field(default_factory=dict)  # 直近期の実績（名前は「直近_売上」など）
+    cost_share: Dict[str, Item] = field(default_factory=dict)  # 区分 → 売上原価に入る割合（名前は「原価割合_…」）
+    new_dep: Optional[Item] = None  # 本補助金で導入する設備の減価償却費（式）
+    beppyo: bool = False  # 様式（別紙4）に写す数字を出すか
 
     def values(self) -> Dict[str, float]:
         out = {a.name: a.value for a in self.assumptions}
@@ -235,7 +306,8 @@ def _check_name(name: str, where: str) -> str:
         raise SpecError(f"{where} の名前「{name}」は使えません（文字・数字・「_」だけにし、数字で始めない）")
     if _CELL_LIKE.fullmatch(norm) or norm.upper() in ("TRUE", "FALSE") or norm.upper() in FUNCS:
         raise SpecError(f"{where} の名前「{name}」は、Excel のセルの場所や関数と紛れるので使えません")
-    if norm == YEAR or norm in BASE_KEYS or norm.startswith(BASE_PREFIX):
+    if (norm in (YEAR, ELAPSED) or norm in BASE_KEYS or norm.startswith(BASE_PREFIX) or norm.startswith(RECENT_PREFIX)
+            or norm.startswith(COST_SHARE_PREFIX)):
         raise SpecError(f"{where} の名前「{name}」は、道具が使う名前と重なるので使えません")
     if len(norm) > 200:
         raise SpecError(f"{where} の名前が長すぎます")
@@ -260,7 +332,7 @@ def parse_spec(data: Any) -> Spec:
     """指定の JSON を確かめて読む。正しくなければ SpecError。"""
     if not isinstance(data, dict):
         raise SpecError("指定の形が違います（JSON の { } ではありません）")
-    known = {"計画の年数", "前提", "基準年度", "既存事業", "新事業", "人数", "月次の波", SHORYOKU_KEY}
+    known = {"計画の年数", "前提", "基準年度", "既存事業", "新事業", "人数", "月次の波", SHORYOKU_KEY} | set(BEPPYO_KEYS)
     extra = sorted(set(data) - known)
     if extra:
         raise SpecError("指定に、知らない項目があります：" + "、".join(extra))
@@ -297,10 +369,9 @@ def parse_spec(data: Any) -> Spec:
     extra = sorted(set(raw_base) - set(BASE_KEYS))
     if extra:
         raise SpecError("基準年度の実績に、知らない項目があります：" + "、".join(extra))
-    base = {}
-    for key in BASE_KEYS:
-        unit, desc = BASE_INFO[key]
-        base[key] = _item(BASE_PREFIX + key, raw_base[key], f"基準年度の{key}", unit, desc)
+    timeline = _timeline(data.get(TIMELINE_KEY))
+    recent = _recent(data.get(RECENT_KEY))
+    base = _base_items(raw_base, assumptions, recent, timeline)
 
     names = set(seen.values()) | {BASE_PREFIX + k for k in BASE_KEYS}
     businesses = [Business("既存事業", 0, _exprs(data.get("既存事業", {}), "既存事業", ROW_KEYS, names), True)]
@@ -323,7 +394,214 @@ def parse_spec(data: Any) -> Spec:
     people = _exprs(data.get("人数", {}), "人数", PEOPLE_KEYS, names)
     waves = _waves(data.get("月次の波"))
     shoryoku = _shoryoku(data.get(SHORYOKU_KEY), {n.casefold() for n in seen.values()})
-    return Spec(years, assumptions, base, businesses, people, waves, shoryoku)
+    return Spec(years, assumptions, base, businesses, people, waves, shoryoku, timeline, recent,
+                _cost_share(data.get(COST_SHARE_KEY)), _new_dep(data.get(NEW_DEP_KEY), names),
+                any(data.get(k) is not None for k in BEPPYO_KEYS))
+
+
+# ---------------------------------------------------------------- 様式（別紙4）の年度・直近期・売上原価の割合
+
+
+_YEAR_MONTH = re.compile(r"([0-9]{4})-([0-9]{1,2})(?:-[0-9]{1,2}.*)?")
+
+
+def _year_month(raw: Any, where: str) -> Tuple[Tuple[int, int], str]:
+    """「2026-03」（日付・日時でもよい）か {"値": "2026-03", "出典": …} を、(年, 月) と出典にする。"""
+    source = ""
+    if isinstance(raw, dict):
+        source = _text(raw.get("出典"))
+        raw = raw.get("値")
+    m = _YEAR_MONTH.fullmatch(nfkc(raw).strip()) if isinstance(raw, str) else None
+    if not m or not 1 <= int(m.group(2)) <= 12:
+        raise SpecError(f"{where}は「2026-03」のような年-月で書いてください（{raw!r}）")
+    return (int(m.group(1)), int(m.group(2))), source
+
+
+def fiscal_year_end(year_month: Tuple[int, int], month: int) -> int:
+    """その年月を含む事業年度（決算月が month）の、終わりの年。"""
+    y, m = year_month
+    return y if m <= month else y + 1
+
+
+def _timeline(raw: Any) -> Optional[Timeline]:
+    if raw is None:
+        return None
+    where = TIMELINE_KEY
+    if not isinstance(raw, dict):
+        raise SpecError(f"{where}は {{ }} の形にしてください")
+    extra = sorted(set(raw) - {"直近期", "補助事業の完了予定", "応募の締切", "根拠", "出典"})
+    if extra:
+        raise SpecError(f"{where}に、知らない項目があります：" + "、".join(extra))
+    for key in ("直近期", "補助事業の完了予定"):
+        if raw.get(key) is None:
+            raise SpecError(f"{where}に「{key}」がありません（年-月。例：2026-03）")
+    (recent_actual, month), _src = _year_month(raw["直近期"], f"{where}の直近期")
+    completion, _src = _year_month(raw["補助事業の完了予定"], f"{where}の補助事業の完了予定")
+    base = fiscal_year_end(completion, month)
+
+    def label(year: int) -> str:
+        return f"{year}年{month}月期"
+
+    notes: List[str] = []
+    deadline, deadline_source = None, ""
+    if raw.get("応募の締切") is not None:
+        deadline, deadline_source = _year_month(raw["応募の締切"], f"{where}の応募の締切")
+        if completion < deadline:
+            raise SpecError(f"{where}の補助事業の完了予定（{completion[0]}年{completion[1]}月）が、応募の締切より前です")
+        closing = fiscal_year_end(deadline, month)
+        recent = closing - 1
+        if recent_actual == recent - 1:
+            notes.append(f"直近期を {label(recent_actual)} としています。様式の「応募申請の直近の決算期」は {label(recent)} です"
+                         "（決算が確定していないときは、前々期の値を前期に読み替えて使う。別紙4 の注5）")
+        elif recent_actual != recent:
+            raise SpecError(f"{where}の直近期（{label(recent_actual)}）が、応募の締切（{deadline[0]}年{deadline[1]}月）を含む期"
+                            f"（{label(closing)}）の前の期（{label(recent)}）ではありません。決算書の期と締切を確かめてください")
+    else:
+        recent = recent_actual
+        closing = recent + 1
+        notes.append("応募の締切が分からないので、直近期の次の期を締切期としました")
+    if base < closing:
+        raise SpecError(f"{where}の補助事業の完了予定を含む期（{label(base)}）が、締切期（{label(closing)}）より前です")
+    return Timeline(month, recent, recent_actual, deadline, deadline_source, closing, completion, base, base - recent,
+                    _text(raw.get("根拠")), _text(raw.get("出典")), notes)
+
+
+def _recent(raw: Any) -> Dict[str, Item]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or not raw:
+        raise SpecError(f"{RECENT_KEY}は、{{ }} に決算書の値を入れてください（区分は基準年度と同じ）")
+    extra = sorted(set(raw) - set(BASE_KEYS))
+    if extra:
+        raise SpecError(f"{RECENT_KEY}に、知らない項目があります：" + "、".join(extra))
+    out = {}
+    for key in BASE_KEYS:
+        if key in raw:
+            unit, desc = BASE_INFO[key]
+            out[key] = _item(RECENT_PREFIX + key, raw[key], f"{RECENT_KEY}の{key}", unit, desc.replace("基準年度", "直近期"))
+    return out
+
+
+def _is_formula(raw: Any) -> bool:
+    return isinstance(raw, dict) and FORMULA_KEY in raw
+
+
+def _names_in(node: ast.AST) -> set:
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
+def _formula_item(name: str, raw: dict, where: str, unit: str, desc: str, names: set) -> Item:
+    extra = sorted(set(raw) - {FORMULA_KEY, "根拠", "出典", "仮", "単位", "説明"})
+    if extra:
+        raise SpecError(f"{where}に、知らない項目があります：" + "、".join(extra))
+    text = raw.get(FORMULA_KEY)
+    if isinstance(text, bool) or not isinstance(text, (str, int, float)):
+        raise SpecError(f"{where}の式が、文字でも数でもありません")
+    expr = Expr.parse(str(text), where, names, ())
+    return Item(name=name, value=0.0, unit=_text(raw.get("単位")) or unit, desc=_text(raw.get("説明")) or desc,
+                basis=_text(raw.get("根拠")), source=_text(raw.get("出典")), provisional=raw.get("仮") is True,
+                formula=expr)
+
+
+def _bridge_lookup(assumptions: Sequence[Item], recent: Dict[str, Item], elapsed: float) -> Callable[[str], float]:
+    """基準年度の式の名前の値（前提・直近期の実績・経過年数）。"""
+    values = {a.name: a.value for a in assumptions}
+    values.update({item.name: item.value for item in recent.values()})
+    values[ELAPSED] = float(elapsed)
+    return lambda n: values[n]
+
+
+def _base_items(raw_base: dict, assumptions: List[Item], recent: Dict[str, Item],
+                timeline: Optional[Timeline]) -> Dict[str, Item]:
+    """基準年度の9つ。数か、直近期の実績からの式（{"式": "直近_給与支給総額*(1+賃上げ率)^経過年数", …}）。"""
+    formulas = [k for k in BASE_KEYS if _is_formula(raw_base[k])]
+    if (formulas or recent) and timeline is None:
+        raise SpecError(f"{RECENT_KEY}や基準年度の式を使うときは、「{TIMELINE_KEY}」（直近期・補助事業の完了予定）を書いてください"
+                        "（経過年数を、決算期から道具が決めるため）")
+    names = {a.name for a in assumptions} | {item.name for item in recent.values()} | {ELAPSED}
+    base = {}
+    for key in BASE_KEYS:
+        unit, desc = BASE_INFO[key]
+        where = f"基準年度の{key}"
+        if key not in formulas:
+            base[key] = _item(BASE_PREFIX + key, raw_base[key], where, unit, desc)
+            continue
+        item = _formula_item(BASE_PREFIX + key, raw_base[key], where, unit, desc, names)
+        if YEAR in _names_in(item.formula.node):
+            raise SpecError(f"{where}の式には「{YEAR}」を使えません（直近期からの年数は「{ELAPSED}」）")
+        item.value = item.formula.value(_bridge_lookup(assumptions, recent, timeline.elapsed))
+        base[key] = item
+    return base
+
+
+def _cost_share(raw: Any) -> Dict[str, Item]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or not raw:
+        raise SpecError(f"{COST_SHARE_KEY}は、{{ }} に区分ごとの割合（0〜1）を入れてください")
+    allowed = COST_KEYS + (NEW_DEP_KEY,)  # 本補助金の設備の減価償却費は、既存の減価償却費と別の割合にできる（製造の設備なら1）
+    extra = sorted(set(raw) - set(allowed))
+    if extra:
+        raise SpecError(f"{COST_SHARE_KEY}に、知らない区分があります：" + "、".join(extra) + "（使える区分：" + "、".join(allowed) + "）")
+    out = {}
+    for key in allowed:
+        if key in raw:
+            item = _item(COST_SHARE_PREFIX + key, raw[key], f"{COST_SHARE_KEY}の{key}", "%",
+                         f"{key}のうち、売上原価に入る割合（残りは販売費及び一般管理費）")
+            if not 0 <= item.value <= 1:
+                raise SpecError(f"{COST_SHARE_KEY}の{key}は0〜1にしてください（{item.value!r}）")
+            out[key] = item
+    return out
+
+
+def _new_dep(raw: Any, names: set) -> Optional[Item]:
+    if raw is None:
+        return None
+    if isinstance(raw, (str, int, float)) and not isinstance(raw, bool):
+        raw = {FORMULA_KEY: raw}
+    if not _is_formula(raw):
+        raise SpecError(f"{NEW_DEP_KEY}は {{\"式\": …, \"根拠\": …, \"出典\": …}} の形にしてください")
+    return _formula_item(NEW_DEP_KEY, raw, NEW_DEP_KEY, "円", "本補助金で導入する設備の減価償却費（1年目から）", names)
+
+
+def deadline_from_seido(seido: Any) -> Optional[Dict[str, str]]:
+    """制度データの「決まった期日」から、応募の締切（年-月）と出典。決められなければ None。"""
+    items = seido.get("決まった期日") if isinstance(seido, dict) else None
+    found = []
+    for item in items if isinstance(items, list) else []:
+        name = nfkc(item.get("名前")) if isinstance(item, dict) and isinstance(item.get("名前"), str) else ""
+        if "締切" not in name and "締め切り" not in name:
+            continue
+        when = item.get("日時") if isinstance(item.get("日時"), dict) else {}
+        value = when.get("値") if isinstance(when.get("値"), dict) else {}
+        text = next((value[k] for k in ("日時", "日付", "年月") if isinstance(value.get(k), str)), "")
+        if not _YEAR_MONTH.fullmatch(nfkc(text).strip()):
+            continue
+        state = str(when.get("状態") or "")
+        docs = youken.sources_text(when.get("出典") or [])
+        found.append((("公募" in name or "応募" in name), name, nfkc(text).strip()[:7], state, docs))
+    preferred = [f for f in found if f[0]] or found
+    if len(preferred) != 1:
+        return None
+    _p, name, ym, state, docs = preferred[0]
+    detail = "。".join(x for x in (docs, f"状態 {state}" if state else "") if x)
+    return {"値": ym, "出典": f"制度データ「決まった期日」の{name}" + (f"（{detail}）" if detail else "")}
+
+
+def with_seido_deadline(raw_spec: Any, seido: Any) -> Any:
+    """指定の「年度」に応募の締切がなければ、制度データから入れた写しを返す（指定のファイルは書き換えない）。"""
+    if not isinstance(raw_spec, dict) or not isinstance(raw_spec.get(TIMELINE_KEY), dict):
+        return raw_spec
+    if raw_spec[TIMELINE_KEY].get("応募の締切") is not None:
+        return raw_spec
+    found = deadline_from_seido(seido)
+    if found is None:
+        return raw_spec
+    out = dict(raw_spec)
+    timeline = dict(raw_spec[TIMELINE_KEY])
+    timeline["応募の締切"] = found
+    out[TIMELINE_KEY] = timeline
+    return out
 
 
 def _waves(raw: Any) -> Optional[List[float]]:
@@ -693,7 +971,10 @@ def _assumption_sheet(spec: Spec) -> Tuple[Sheet, Dict[str, Tuple[str, str]], Di
         for n, item in enumerate(items, start=1):
             sh.put(f"A{row}", f"{prefix}-{n:02d}")
             sh.put(f"B{row}", item.name)
-            sh.put(f"C{row}", item.value, fmt=_fmt_for(item), fill=FILL_INPUT)
+            if item.formula is not None:  # 直近期の実績からの式（書き換えるのは直近期の値）
+                sh.formula(f"C{row}", item.formula.excel(lambda name: name), item.value, _fmt_for(item))
+            else:
+                sh.put(f"C{row}", item.value, fmt=_fmt_for(item), fill=FILL_INPUT)
             sh.put(f"D{row}", item.unit)
             sh.put(f"E{row}", item.desc)
             sh.put(f"F{row}", item.basis)
@@ -703,6 +984,7 @@ def _assumption_sheet(spec: Spec) -> Tuple[Sheet, Dict[str, Tuple[str, str]], Di
             names[item.name] = (SHEET_ASSUMPTIONS, f"$C${row}")
             row += 1
         row += 1
+    row = _beppyo_assumption_tables(sh, spec, row, names, headers)
     if spec.shoryoku is not None:
         sh.put(f"A{row}", "省力化の元（様式その3 の別紙1・別紙3 に入れる数）", bold=True)
         row += 1
@@ -743,6 +1025,56 @@ def _assumption_sheet(spec: Spec) -> Tuple[Sheet, Dict[str, Tuple[str, str]], Di
             row += 1
     sh.widths.update({"A": 8, "B": 26, "C": 16, "D": 10, "E": 44, "F": 14, "G": 30, "H": 8})
     return sh, names, steps_at
+
+
+def _beppyo_assumption_tables(sh: Sheet, spec: Spec, row: int, names: Dict[str, Tuple[str, str]],
+                              headers: Sequence[str]) -> int:
+    """前提のシートに、年度・直近期の実績・売上原価の割合の表を置く（様式の別紙4 に写す数字の元）。次の行を返す。"""
+    tl = spec.timeline
+    if tl is not None:
+        sh.put(f"A{row}", "年度（様式の別紙4 の決算期。道具が年月から決めたもので、書き換えない）", bold=True)
+        row += 1
+        for i, h in enumerate(headers[:7], start=1):
+            sh.put(f"{col_name(i)}{row}", h, bold=True)
+        row += 1
+        deadline = f"{tl.deadline[0]}年{tl.deadline[1]}月" if tl.deadline else "（分からない）"
+        lines = (
+            ("直近期", tl.label(tl.recent_actual), "", "直近の決算期（決算書の期）", tl.basis, tl.source),
+            ("応募の締切", deadline, "", "応募申請の締切", "", tl.deadline_source),
+            ("締切期", tl.label(tl.closing), "", "応募の締切を含む決算期", "", ""),
+            ("補助事業の完了予定", f"{tl.completion[0]}年{tl.completion[1]}月", "", "補助事業を完了する予定の年月", tl.basis,
+             tl.source),
+            ("基準年度", tl.label(tl.base), "", "補助事業の完了日を含む決算期", "", ""),
+            (ELAPSED, tl.elapsed, "年", "直近期から基準年度までの年数（基準年度の式で使う）", "", ""),
+            ("計画の期間", f"{tl.label(tl.base + 1)}〜{tl.label(tl.base + spec.years)}", "", "基準年度の翌年度を1年目とする",
+             "", ""),
+        )
+        for n, (name, value, unit, desc, basis, source) in enumerate(lines, start=1):
+            for col, v in zip("ABCDEFG", (f"Y-{n:02d}", name, value, unit, desc, basis, source)):
+                sh.put(f"{col}{row}", v)
+            if name == ELAPSED:
+                names[ELAPSED] = (SHEET_ASSUMPTIONS, f"$C${row}")
+            row += 1
+        row += 1
+    for title, prefix, items in (("直近期の実績（決算書）", "R", list(spec.recent.values())),
+                                 ("売上原価の割合（区分ごと。残りは販売費及び一般管理費）", "G", list(spec.cost_share.values()))):
+        if not items:
+            continue
+        sh.put(f"A{row}", title, bold=True)
+        row += 1
+        for i, h in enumerate(headers, start=1):
+            sh.put(f"{col_name(i)}{row}", h, bold=True)
+        row += 1
+        for n, item in enumerate(items, start=1):
+            for col, v in zip("ABDEFG", (f"{prefix}-{n:02d}", item.name, item.unit, item.desc, item.basis, item.source)):
+                sh.put(f"{col}{row}", v)
+            sh.put(f"C{row}", item.value, fmt=_fmt_for(item), fill=FILL_INPUT)
+            if item.provisional:
+                sh.put(f"H{row}", "仮", fill=FILL_PROVISIONAL)
+            names[item.name] = (SHEET_ASSUMPTIONS, f"$C${row}")
+            row += 1
+        row += 1
+    return row
 
 
 def _lookup_values(values: Dict[str, float], extra: Dict[str, float]) -> Callable[[str], float]:
@@ -1031,6 +1363,12 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
                                           ycell(last), note_col)
         row = shoryoku_summary.pop("_次の行")
 
+    # ---- 様式（別紙4）に写す数字（指定に年度・直近期の実績・売上原価の割合などがあるとき）
+    beppyo = None
+    if spec.beppyo:
+        beppyo = _beppyo4_rows(pl, spec, requirements, py, at, people, people_at, ind, year_cols, ycell, row + 1)
+        row = beppyo.pop("_次の行")
+
     # ---- まとめ（上）
     pl.put("A2", "まとめ", bold=True)
     summary_rows = [
@@ -1065,14 +1403,15 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
         pl.put("B7", "判定できる要件がありません（制度データを確かめてください）")
 
     # 数量が2割少ない場合（式ではなく、道具が数量の前提を0.8倍にして計算し直した値）
-    low = _low_case(spec, requirements, scenario)
+    low = _low_case(spec, requirements, scenario, py)
     pl.put("A8", LOW_LABEL)
     if low is None:
         pl.put("B8", NO_QUANTITY)
     else:
         shown = low["判定"] if low["判定"] is not None else "判定できる要件がありません"
         pl.put("B8", shown, bold=True)
-        pl.put("C8", "数量の前提（" + "・".join(low["数量の前提"]) + "）を0.8倍にして、道具が計算し直した結果（式ではありません）")
+        pl.put("C8", "数量の前提（" + "・".join(low["数量の前提"]) + "）を0.8倍にして、道具が計算し直した結果（式ではありません）"
+               + ("。" + CURRENT_LEVEL_NOTE if low.get("今の数量まで減らしている行") else ""))
     pl.widths.update({"A": 48})
     for col in year_cols:
         pl.widths[col] = 15
@@ -1147,6 +1486,10 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
         "判定しなかった要件": skipped,
         "数量が2割少ない場合": low,
         "省力化": shoryoku_summary,
+        "年度": _timeline_summary(spec),
+        "別紙4": beppyo,
+        "根拠か出典のない、そのほかの値": [item.name for item in _other_items(spec) if item.unsupported],
+        "仮の、そのほかの値": [item.name for item in _other_items(spec) if item.provisional],
         "月次の波": spec.waves,
         "月次": monthly_values,
         "月次の合計と1年目": monthly,
@@ -1159,7 +1502,8 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
     return Book([pa, pl, mo], names, summary)
 
 
-def _low_case(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool) -> Optional[Dict[str, Any]]:
+def _low_case(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool,
+              plan_py: Optional[Dict[Tuple[str, str], List[float]]] = None) -> Optional[Dict[str, Any]]:
     """数量の前提を0.8倍にして計算し直した、数値の要件（特例を除く）の判定。数量の前提がなければ None。"""
     names = spec.quantity_names()
     if not scenario or not names:
@@ -1175,7 +1519,358 @@ def _low_case(spec: Spec, requirements: Sequence[youken.Requirement], scenario: 
                      "年ごと": [{"年": p["年"], "伸び": p["伸び"], "判定": p["判定"]} for p in r["年ごと"]]}
                     for r in low["判定した要件"]]
     out["まとめ"] = low["まとめ"]
+    out.update(_low_case_reading(spec, plan_py, low))
+    if out["今の数量まで減らしている行"]:
+        out["参考の判定（今の数量まで減らした場合）"] = out["判定"]
+        out["判定"] = youken.UNJUDGEABLE
     return out
+
+
+CURRENT_LEVEL_NOTE = ("今の数量（実績）まで「数量_」にしているので、判定しません。今の数量は「数量_」を付けない前提に分け、"
+                      "計画で増やす分だけを「数量_」にしてください")
+
+
+def _row_values_at(b: Business, y: int, values: Dict[str, float]) -> Dict[str, float]:
+    """既存事業の行を、式どおりに年 y で計算した値（年=0 でも式を使う。式のない行は基準年度の値）。"""
+    done: Dict[str, float] = {}
+
+    def value(key: str) -> float:
+        if key not in done:
+            expr = b.exprs.get(key)
+            if expr is None:
+                done[key] = values[BASE_PREFIX + key]
+            else:
+                extra = {YEAR: float(y)}
+                for r in expr.rows:
+                    extra[r] = value(r)
+                done[key] = expr.value(_lookup_values(values, extra))
+        return done[key]
+
+    return {key: value(key) for key in ROW_KEYS}
+
+
+def _current_level_rows(spec: Spec) -> List[Dict[str, Any]]:
+    """既存事業の式のうち、年=0 で基準年度の実績になる（今の数量で今の売上を作っている）のに、数量の前提を0.8倍にすると
+    年=0 の値まで動く行（今の数量まで「数量_」にしている）。"""
+    b = next(x for x in spec.businesses if x.existing)
+    values, low_values = spec.values(), spec.scaled_quantities(LOW_FACTOR).values()
+    try:
+        plain, scaled = _row_values_at(b, 0, values), _row_values_at(b, 0, low_values)
+    except SpecError:
+        return []
+    out = []
+    for key in ROW_KEYS:
+        if key not in b.exprs:
+            continue
+        base = values[BASE_PREFIX + key]
+        scale = max(abs(base), 1.0)
+        if abs(plain[key] - base) <= CURRENT_LEVEL_TOL * scale and abs(scaled[key] - plain[key]) >= CURRENT_LEVEL_TOL * scale:
+            out.append({"事業": b.name, "行": key, "基準年度の値": base, "数量を0.8倍にした年0の値": scaled[key]})
+    return out
+
+
+def _low_case_reading(spec: Spec, plan_py: Optional[Dict[Tuple[str, str], List[float]]],
+                      low: Dict[str, Any]) -> Dict[str, Any]:
+    """数量が2割少ない場合の読み方：今の数量まで減らしていないか、数量を減らすと変わる行、動かない原材料費。"""
+    current = _current_level_rows(spec)
+    out: Dict[str, Any] = {"今の数量まで減らしている行": current, "数量を減らすと変わる行": [], "最後の年": None, "知らせ": []}
+    notes = out["知らせ"]
+    for c in current:
+        notes.append(f"{c['事業']}の{c['行']}の式は、基準年度（年=0）で実績の {c['基準年度の値']:,.0f}円 になります。数量の前提を"
+                     f"0.8倍にすると年=0 でも {c['数量を0.8倍にした年0の値']:,.0f}円 になり、今の数量（実績）まで2割減らした"
+                     "判定になります（1年目にいきなり実績から2割下がるので、伸びが大きく負になる）。" + CURRENT_LEVEL_NOTE)
+    if plan_py is None:
+        return out
+    n = spec.years
+    for b in spec.businesses:
+        moved = []
+        for key in ROW_KEYS:
+            plan, lowered = plan_py[(b.name, key)], low["事業ごと"][b.name][key]
+            if any(abs(p - q) > 1e-9 * max(1.0, abs(p)) for p, q in zip(plan, lowered)):
+                moved.append(key)
+                out["数量を減らすと変わる行"].append({"事業": b.name, "行": key, "計画": plan[n], "2割少ない場合": lowered[n]})
+        material = plan_py[(b.name, "原材料費")]
+        if "売上" in moved and "原材料費" not in moved and any(abs(v) > 0 for v in material[1:]):
+            notes.append(f"{b.name}の売上は数量で減りますが、原材料費は減りません（原材料費の式が数量や売上につながっていない）。"
+                         "原材料費が数量に比例するなら、式を数量か売上につなげてください（つながないと、2割少ない場合を厳しく見積もる）")
+    out["最後の年"] = {
+        "年": n,
+        "売上": [plan_py[("合算", "売上")][n], low["合算"]["売上"][n]],
+        "付加価値額": [sum(plan_py[("合算", k)][n] for k in ("営業利益", "人件費", "減価償却費")), low["指標"]["付加価値額"][n]],
+    }
+    return out
+
+
+# ---------------------------------------------------------------- 様式（別紙4）に写す数字（11/6 のリハーサルの穴1・穴2）
+
+BEPPYO_ROWS = (
+    ("売上高", "売上高"),
+    ("売上原価", "　売上原価（区分ごとの合算 × 売上原価の割合）"),
+    ("売上総利益", "売上総利益"),
+    ("販売費及び一般管理費", "　販売費及び一般管理費（区分ごとの合算 ×（1 − 売上原価の割合））"),
+    ("営業利益", "① 営業利益"),
+    ("人件費", "② 人件費"),
+    ("減価償却費", "③ 減価償却費"),
+    ("既存設備の減価償却費", "　（内訳）既存設備の減価償却費"),
+    ("本補助金で導入する設備の減価償却費", "　本補助金で導入する設備の減価償却費（1年目から）"),
+    ("付加価値額", "④ 付加価値額（①＋②＋③）"),
+    ("付加価値額の伸び", "付加価値額の年平均成長率（％）"),
+    ("役員数", "⑤ 労働者数のうち役員数（人）"),
+    ("常勤従業員数", "⑥ 労働者数のうち常勤従業員数（人）"),
+    ("労働生産性", "労働生産性（④÷（⑤＋⑥））"),
+    ("労働生産性の伸び", "労働生産性の年平均成長率（％）"),
+    ("給与支給総額", "⑦ 全月分の給与等の支給を受けた従業員の給与支給総額"),
+    ("給与を受けた従業員数", "⑧ 全月分の給与等の支給を受けた従業員数（人）"),
+    ("1人当たり給与支給総額", "1人当たり給与支給総額（⑦÷⑧）"),
+    ("1人当たり給与支給総額の伸び", "1人当たり給与支給総額の年平均成長率（％）"),
+)
+CHECK_COST = "照らし：売上原価＋販売費及び一般管理費（丸める前）"
+CHECK_PROFIT = "照らし：売上−営業利益（丸める前。上と同じなら合う）"
+_GROWTH_PAIRS = ((youken.VALUE_ADDED, "付加価値額の伸び", "付加価値額の伸び"),
+                 (youken.PRODUCTIVITY, "労働生産性の伸び", "労働生産性の伸び"),
+                 (youken.PAY, "1人当たり給与支給総額の伸び", "1人当たり給与の伸び"))
+
+
+def _yen(x: float) -> float:
+    return youken.round_half_up(x, 0)
+
+
+def _beppyo4_rows(pl: Sheet, spec: Spec, requirements: Sequence[youken.Requirement],
+                  py: Dict[Tuple[str, str], List[float]], at: Dict[Tuple[str, str], int], people: Dict[str, List[float]],
+                  people_at: Dict[str, int], ind: Dict[str, List[Any]], year_cols: List[str],
+                  ycell: Callable[[str], str], row: int) -> Dict[str, Any]:
+    """計画のシートに、様式（別紙4）の行の並びで、円に丸めた値を数式で置く。Python の値と知らせも返す。"""
+    n = spec.years
+    tl, share, new_dep = spec.timeline, spec.cost_share, spec.new_dep
+    notes: List[str] = []
+    if share:
+        missing = [k for k in COST_KEYS if k not in share and any(abs(v) > 0 for v in py[("合算", k)])]
+        if missing:
+            raise SpecError(f"{COST_SHARE_KEY}に、ない区分があります：" + "、".join(missing) + "（計画に金額がある区分は、すべて割合が要ります）")
+    else:
+        notes.append(f"「{COST_SHARE_KEY}」がないので、売上原価と販売費及び一般管理費は出していません（決算の内訳の行に「損益の区分」を"
+                     "付けて kijun を動かすと、決算書の割合を指定に書きます）")
+    if new_dep is None:
+        notes.append(f"「{NEW_DEP_KEY}」がないので、減価償却費はすべて既存設備の分にしています（指定に式を書くと分けます）")
+    elif share and NEW_DEP_KEY not in share:
+        notes.append(f"{COST_SHARE_KEY}に「{NEW_DEP_KEY}」がないので、新しい設備の減価償却費も、決算書の減価償却費の割合"
+                     f"（{share['減価償却費'].value * 100:.2f}%）で売上原価と販管費に分けています。製造の設備なら、割合に"
+                     f"「{NEW_DEP_KEY}」: 1（根拠と出典つき）を書いてください" if "減価償却費" in share else
+                     f"{COST_SHARE_KEY}に「{NEW_DEP_KEY}」がありません")
+    skip = set() if share else {"売上原価", "売上総利益", "販売費及び一般管理費"}
+    if new_dep is None:
+        skip.add("本補助金で導入する設備の減価償却費")
+    rows = [(k, label) for k, label in BEPPYO_ROWS if k not in skip]
+    if share:
+        rows += [(CHECK_COST, CHECK_COST), (CHECK_PROFIT, CHECK_PROFIT)]
+
+    pl.put(f"A{row}", "【様式（別紙4）に写す数字（円に丸めた値。伸びは、この値から様式と同じ計算で出したもの）】", bold=True)
+    row += 1
+    if tl is not None:
+        pl.put(f"A{row}", "決算期")
+        for y, col in enumerate(year_cols):
+            pl.put(f"{col}{row}", tl.label(tl.base + y))
+        row += 1
+    r: Dict[str, int] = {}
+    for key, label in rows:
+        r[key] = row
+        pl.put(f"A{row}", label)
+        row += 1
+    vals: Dict[str, List[Any]] = {key: [None] * (n + 1) for key, _label in rows}
+    values = spec.values()
+
+    def total(key: str, col: str) -> str:
+        return f"{col}{at[('合算', key)]}"
+
+    def here(key: str, col: str) -> str:
+        return f"{col}{r[key]}"
+
+    def put(key: str, col: str, y: int, formula: str, value: Any, fmt: str) -> Any:
+        vals[key][y] = value
+        pl.formula(here(key, col), formula, value, fmt)
+        return value
+
+    for y, col in enumerate(year_cols):
+        t = {k: py[("合算", k)][y] for k in ROW_KEYS + ("人件費", "営業利益")}
+        sales = put("売上高", col, y, f"=ROUND({total('売上', col)},0)", _yen(t["売上"]), FMT_YEN)
+        dep = t["減価償却費"]
+        new_raw, new_f = None, ""
+        if new_dep is not None and y >= 1:
+            new_raw = new_dep.formula.value(_lookup_values(values, {YEAR: float(y)}))
+            if new_raw < 0 or new_raw > dep + 1e-6 * max(1.0, abs(dep)):
+                raise SpecError(f"{NEW_DEP_KEY}（{y}年目 {new_raw:,.0f}円）が、0より小さいか、合算の減価償却費（{dep:,.0f}円）"
+                                "より大きいです")
+            new_f = new_dep.formula.excel(lambda name, col=col: ycell(col) if name == YEAR else name)[1:]
+        if share:
+            # 区分ごとの（Excel の項, Python の値）。本補助金の設備の分に別の割合があれば、減価償却費を既存と本補助金に分けて掛ける
+            terms = []
+            for k in COST_KEYS:
+                if k not in share:
+                    continue
+                if k == "減価償却費" and new_raw is not None and NEW_DEP_KEY in share:
+                    terms.append((f"({total(k, col)}-{new_f})", t[k] - new_raw, COST_SHARE_PREFIX + k, share[k].value))
+                    terms.append((new_f, new_raw, COST_SHARE_PREFIX + NEW_DEP_KEY, share[NEW_DEP_KEY].value))
+                else:
+                    terms.append((total(k, col), t[k], COST_SHARE_PREFIX + k, share[k].value))
+            cost_raw, sga_raw = 0.0, 0.0
+            for _f, amount, _name, s in terms:
+                cost_raw += amount * s
+            for _f, amount, _name, s in terms:
+                sga_raw += amount * (1 - s)
+            cost_f = "+".join(f"{f}*{name}" for f, _a, name, _s in terms)
+            sga_f = "+".join(f"{f}*(1-{name})" for f, _a, name, _s in terms)
+            cost = put("売上原価", col, y, f"=ROUND({cost_f},0)", _yen(cost_raw), FMT_YEN)
+            gross = put("売上総利益", col, y, f"={here('売上高', col)}-{here('売上原価', col)}", sales - cost, FMT_YEN)
+            sga = put("販売費及び一般管理費", col, y, f"=ROUND({sga_f},0)", _yen(sga_raw), FMT_YEN)
+            put("営業利益", col, y, f"={here('売上総利益', col)}-{here('販売費及び一般管理費', col)}", gross - sga, FMT_YEN)
+            put(CHECK_COST, col, y, f"=({cost_f})+({sga_f})", cost_raw + sga_raw, FMT_YEN)
+            put(CHECK_PROFIT, col, y, f"={total('売上', col)}-{total('営業利益', col)}", t["売上"] - t["営業利益"], FMT_YEN)
+        else:
+            put("営業利益", col, y, f"=ROUND({total('営業利益', col)},0)", _yen(t["営業利益"]), FMT_YEN)
+        put("人件費", col, y, f"=ROUND({total('人件費', col)},0)", _yen(t["人件費"]), FMT_YEN)
+        if new_raw is not None:
+            new = put("本補助金で導入する設備の減価償却費", col, y, f"=ROUND({new_f},0)", _yen(new_raw), FMT_YEN)
+            old = put("既存設備の減価償却費", col, y, f"=ROUND({total('減価償却費', col)}-{new_f},0)", _yen(dep - new_raw), FMT_YEN)
+            put("減価償却費", col, y, f"={here('既存設備の減価償却費', col)}+{here('本補助金で導入する設備の減価償却費', col)}",
+                old + new, FMT_YEN)
+        else:
+            old = put("既存設備の減価償却費", col, y, f"=ROUND({total('減価償却費', col)},0)", _yen(dep), FMT_YEN)
+            put("減価償却費", col, y, f"={here('既存設備の減価償却費', col)}", old, FMT_YEN)
+        va = vals["営業利益"][y] + vals["人件費"][y] + vals["減価償却費"][y]
+        put("付加価値額", col, y, f"={here('営業利益', col)}+{here('人件費', col)}+{here('減価償却費', col)}", va, FMT_YEN)
+        officers = put("役員数", col, y, f"={col}{people_at['役員数']}", people["役員数"][y], FMT_PEOPLE)
+        regular = put("常勤従業員数", col, y, f"={col}{people_at['常勤従業員数']}", people["常勤従業員数"][y], FMT_PEOPLE)
+        v, o, e = here("付加価値額", col), here("役員数", col), here("常勤従業員数", col)
+        put("労働生産性", col, y, f"=IF({v}<0,ROUNDUP(({v}/({o}+{e})),2),ROUNDDOWN(({v}/({o}+{e})),2))",
+            youken.productivity(va, officers + regular), FMT_PER)
+        pay = put("給与支給総額", col, y, f"=ROUND({total('給与支給総額', col)},0)", _yen(t["給与支給総額"]), FMT_YEN)
+        emp = put("給与を受けた従業員数", col, y, f"={col}{people_at['給与を受けた従業員数']}", people["給与を受けた従業員数"][y],
+                  FMT_PEOPLE)
+        put("1人当たり給与支給総額", col, y, f"=ROUNDDOWN({here('給与支給総額', col)}/{here('給与を受けた従業員数', col)},2)",
+            youken.pay_per_person(pay, emp), FMT_PER)
+    for y, col in enumerate(year_cols):
+        if y == 0:
+            continue
+        for key, level in (("付加価値額の伸び", "付加価値額"), ("労働生産性の伸び", "労働生産性")):
+            g = youken.growth_plain(vals[level][y], vals[level][0], y)
+            lr = r[level]
+            put(key, col, y, f'=IFERROR(ROUNDDOWN((({col}{lr}/$B${lr})^(1/{ycell(col)})-1)*100,2),"{youken.CANNOT_CALC}")',
+                youken.CANNOT_CALC if g is None else g, FMT_GROWTH)
+        pr = r["1人当たり給与支給総額"]
+        inner = f"(({col}{pr}/$B${pr})^(1/{ycell(col)})-1)*100"
+        put("1人当たり給与支給総額の伸び", col, y, f"=IFERROR(IF({col}{pr}>=$B${pr},ROUNDDOWN({inner},2),ROUNDUP({inner},2)),0)",
+            youken.growth_pay(vals["1人当たり給与支給総額"][y], vals["1人当たり給与支給総額"][0], y), FMT_GROWTH)
+
+    # 様式に円で写した値の伸びと、財務モデルの伸び（判定に使った値）を比べる
+    diffs = [{"指標": key, "年": y, "財務モデル": ind[model_key][y], "様式に写した値": vals[key][y]}
+             for _i, key, model_key in _GROWTH_PAIRS for y in range(1, n + 1) if vals[key][y] != ind[model_key][y]]
+    changed = []
+    for req in requirements:
+        if not req.judged:
+            continue
+        key, model_key = next((k, m) for i, k, m in _GROWTH_PAIRS if i == req.indicator)
+        for y in req.years(n):
+            form_v, model_v = youken.judge(vals[key][y], req.threshold), youken.judge(ind[model_key][y], req.threshold)
+            if form_v != model_v:
+                changed.append(f"「{req.name}」の{y}年目")
+                notes.append(f"様式（別紙4）に円で写した数字で計算すると、「{req.name}」の{y}年目は {vals[key][y]}（財務モデルは "
+                             f"{ind[model_key][y]}）で、判定が「{model_v}」から「{form_v}」に変わります。様式の値で審査されるので、"
+                             "計画の数字を見直してください")
+    if diffs and not changed:
+        notes.append("様式（別紙4）に円で写した数字で計算すると、伸びが財務モデルと少し違う年があります（判定は変わりません）：" + "、".join(
+            f"{d['指標']} {d['年']}年目 {d['財務モデル']} → {d['様式に写した値']}" for d in diffs))
+
+    check = None
+    if share:
+        gaps = [abs(a - b) for a, b in zip(vals[CHECK_COST], vals[CHECK_PROFIT])]
+        check = {"売上原価＋販管費": vals.pop(CHECK_COST), "売上−営業利益": vals.pop(CHECK_PROFIT), "差の最大": max(gaps),
+                 "合う": max(gaps) < 1}
+    ashimoto = None
+    if tl is not None:
+        ashimoto, row = _ashimoto_rows(pl, spec, vals, r, year_cols[0], row + 1, notes)
+    return {
+        "列": [tl.label(tl.base + y) if tl else ("基準年度" if y == 0 else f"{y}年目") for y in range(n + 1)],
+        "年ごと": vals,
+        "照らし": check,
+        "足下の賃上げ": ashimoto,
+        "様式の値と財務モデルの伸びの違い": diffs,
+        "知らせ": notes,
+        "_次の行": row + 1,
+    }
+
+
+def _ashimoto_rows(pl: Sheet, spec: Spec, vals: Dict[str, List[Any]], r: Dict[str, int], base_col: str, row: int,
+                   notes: List[str]) -> Tuple[Optional[Dict[str, Any]], int]:
+    """足下の賃上げ（別紙4 の、直近期・締切期・基準年度の⑦⑧と、1人当たり給与支給総額の年平均成長率）。"""
+    tl = spec.timeline
+    pay_item, emp_item = spec.recent.get("給与支給総額"), spec.recent.get("給与を受けた従業員数")
+    if pay_item is None or emp_item is None:
+        notes.append(f"{RECENT_KEY}に給与支給総額と給与を受けた従業員数がないので、足下の賃上げは出していません")
+        return None, row
+    pl.put(f"A{row}", "【足下の賃上げ（別紙4 の、直近期から基準年度まで。直近期は決算書の実績。要件ではなく審査で見る値）】",
+           bold=True)
+    row += 1
+    pl.put(f"A{row}", "決算期")
+    labels = [tl.label(tl.recent), tl.label(tl.closing), tl.label(tl.base)]
+    for col, label in zip("BCD", labels):
+        pl.put(f"{col}{row}", label)
+    pr, er, ppr, gr = row + 1, row + 2, row + 3, row + 4
+    for at_row, label in ((pr, "⑦ 全月分の給与等の支給を受けた従業員の給与支給総額"), (er, "⑧ 全月分の給与等の支給を受けた従業員数（人）"),
+                          (ppr, "1人当たり給与支給総額（⑦÷⑧）"), (gr, f"1人当たり給与支給総額の年平均成長率（％。直近期から基準年度まで、{ELAPSED}で）")):
+        pl.put(f"A{at_row}", label)
+    out: Dict[str, Any] = {"列": labels, "給与支給総額": [None] * 3, "給与を受けた従業員数": [None] * 3,
+                           "1人当たり給与支給総額": [None] * 3, "経過年数": tl.elapsed, "伸び": None}
+
+    def put(key: str, at_row: int, i: int, formula: str, value: Any, fmt: str) -> None:
+        out[key][i] = value
+        pl.formula(f"{'BCD'[i]}{at_row}", formula, value, fmt)
+
+    put("給与支給総額", pr, 0, f"=ROUND({pay_item.name},0)", _yen(pay_item.value), FMT_YEN)
+    put("給与を受けた従業員数", er, 0, f"={emp_item.name}", emp_item.value, FMT_PEOPLE)
+    put("給与支給総額", pr, 2, f"={base_col}{r['給与支給総額']}", vals["給与支給総額"][0], FMT_YEN)
+    put("給与を受けた従業員数", er, 2, f"={base_col}{r['給与を受けた従業員数']}", vals["給与を受けた従業員数"][0], FMT_PEOPLE)
+    lookup = _bridge_lookup(spec.assumptions, spec.recent, 1)
+    for key, at_row, fmt, rounding in (("給与支給総額", pr, FMT_YEN, True), ("給与を受けた従業員数", er, FMT_PEOPLE, False)):
+        item = spec.base[key]
+        if tl.elapsed == 1:  # 締切期と基準年度が同じ期
+            put(key, at_row, 1, f"=D{at_row}", out[key][2], fmt)
+        elif item.formula is not None:  # 基準年度の式の経過年数を1にしたもの
+            excel = item.formula.excel(lambda name: "1" if name == ELAPSED else name)[1:]
+            value = item.formula.value(lookup)
+            put(key, at_row, 1, f"=ROUND({excel},0)" if rounding else f"={excel}", _yen(value) if rounding else value, fmt)
+    if out["給与支給総額"][1] is None or out["給与を受けた従業員数"][1] is None:
+        notes.append("締切期の⑦⑧は、基準年度の給与支給総額と給与を受けた従業員数を、直近期の実績からの式（{\"式\": …}）にすると"
+                     "道具が出します（今は空けています）")
+    for i in range(3):
+        if out["給与支給総額"][i] is not None and out["給与を受けた従業員数"][i] is not None:
+            col = "BCD"[i]
+            put("1人当たり給与支給総額", ppr, i, f"=ROUNDDOWN({col}{pr}/{col}{er},2)",
+                youken.pay_per_person(out["給与支給総額"][i], out["給与を受けた従業員数"][i]), FMT_PER)
+    recent_pp, base_pp = out["1人当たり給与支給総額"][0], out["1人当たり給与支給総額"][2]
+    growth = youken.growth_pay(base_pp, recent_pp, tl.elapsed)
+    inner = f"((D{ppr}/B{ppr})^(1/{ELAPSED})-1)*100"
+    pl.formula(f"D{gr}", f"=IFERROR(IF(D{ppr}>=B{ppr},ROUNDDOWN({inner},2),ROUNDUP({inner},2)),0)", growth, FMT_GROWTH)
+    out["伸び"] = growth
+    return out, gr + 1
+
+
+def _timeline_summary(spec: Spec) -> Optional[Dict[str, Any]]:
+    tl = spec.timeline
+    if tl is None:
+        return None
+    return {
+        "決算月": tl.month, "直近期": tl.label(tl.recent_actual), "様式の直近期": tl.label(tl.recent),
+        "応募の締切": f"{tl.deadline[0]}-{tl.deadline[1]:02d}" if tl.deadline else None, "応募の締切の出典": tl.deadline_source,
+        "締切期": tl.label(tl.closing), "補助事業の完了予定": f"{tl.completion[0]}-{tl.completion[1]:02d}",
+        "基準年度": tl.label(tl.base), "経過年数": tl.elapsed,
+        "計画の年": [tl.label(tl.base + y) for y in range(1, spec.years + 1)],
+        "根拠": tl.basis, "出典": tl.source, "知らせ": tl.notes,
+    }
+
+
+def _other_items(spec: Spec) -> List[Item]:
+    """直近期の実績・売上原価の割合・本補助金の設備の減価償却費（根拠と出典を確かめる値）。"""
+    return list(spec.recent.values()) + list(spec.cost_share.values()) + ([spec.new_dep] if spec.new_dep else [])
 
 
 def _shoryoku_rows(pl: Sheet, sh: Shoryoku, steps_at: Dict[Tuple[str, int], str], row: int, years: int,
@@ -1282,10 +1977,14 @@ def numbers_record(spec: Spec, book: Book, seido_rel: Optional[str], when: str) 
     groups = [("P", spec.assumptions), ("J", list(spec.base.values()))]
     if spec.shoryoku is not None:
         groups.append(("S", list(spec.shoryoku.items.values())))
+    groups += [(prefix, items) for prefix, items in (("R", list(spec.recent.values())), ("G", list(spec.cost_share.values())))
+               if items]
     for prefix, items in groups:
         for n, item in enumerate(items, start=1):
             assumptions.append({"番号": f"{prefix}-{n:02d}", "名前": item.name, "値": item.value, "単位": item.unit,
                                 "根拠": item.basis, "出典": item.source, "仮": item.provisional})
+            if item.formula is not None:
+                assumptions[-1]["式"] = item.formula.text
     steps = []
     if spec.shoryoku is not None:
         for side, items in (("導入前", spec.shoryoku.before), ("導入後", spec.shoryoku.after)):

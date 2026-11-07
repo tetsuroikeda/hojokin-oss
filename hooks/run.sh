@@ -4,6 +4,10 @@
 #   guard は、書き込み（Write・Edit・NotebookEdit）、Bash、ブラウザの道具を受け取る PreToolUse に付ける
 #   （hooks.json の matcher で分ける）。会社のフォルダの外を読む道具の PreToolUse には付けない。
 # - 会社のフォルダの目印（.hojokin/）がなければ、Python を動かさず、何も出さずに終える。
+#   ただし、すぐ下のフォルダに目印があるとき（会社のフォルダの親で開いたとき）は、開いたとき（SessionStart）と
+#   社長が送ったとき（UserPromptSubmit）に、会社のフォルダで開き直す案内だけを渡す（Python は動かさない。何も止めず、
+#   何も書かない）。11/6 のリハーサルで、親のフォルダで開いたまま道具に --folder で会社のフォルダを渡して進め、
+#   hooks が黙って動かず、質問の記録・審査役の結果・版の記録が残らなかったため。
 # - 目印があれば Python の hook（main.py）を動かし、終了コードが0のときだけ、その出力を返す。
 # - Python を見張り、hook の時間切れ（hooks.json の timeout）より前に終わらなければ止める。
 #   時間切れになると Claude Code は道具をそのまま通すため（実験 E5）、その前に止めて拒む。
@@ -12,10 +16,49 @@
 # PATH に何もなくても動くよう、外のコマンドは使わない（見張りの /bin/sleep だけは、決まった場所で呼ぶ）。
 
 folder="${CLAUDE_PROJECT_DIR:-$PWD}"
-[ -d "$folder/.hojokin" ] || exit 0
-
 event="$1"
 role="$2"
+
+# JSON の文字列に入れるため、\ と " の前に \ を付ける（外のコマンドを使わない）
+json_text() {
+  rest=$1
+  done_text=
+  while :; do
+    case $rest in
+      *[\\\"]*)
+        head=${rest%%[\\\"]*}
+        rest=${rest#"$head"}
+        char=${rest%"${rest#?}"}
+        rest=${rest#?}
+        done_text="$done_text$head\\$char" ;;
+      *)
+        done_text="$done_text$rest"
+        break ;;
+    esac
+  done
+  printf '%s' "$done_text"
+}
+
+if [ ! -d "$folder/.hojokin" ]; then
+  [ "$event" = SessionStart ] || [ "$event" = UserPromptSubmit ] || exit 0
+  names=
+  for marker in "$folder"/*/.hojokin; do
+    [ -d "$marker" ] || continue
+    child=${marker%/.hojokin}
+    child=${child##*/}
+    case $child in
+      *[[:cntrl:]]*) continue ;;  # 改行などのある名前は案内に入れない
+    esac
+    if [ -z "$names" ]; then names="「$(json_text "$child")」"; else names="$names・「$(json_text "$child")」"; fi
+  done
+  [ -n "$names" ] || exit 0
+  case $folder in
+    *[[:cntrl:]]*) shown=この会話のフォルダ ;;
+    *) shown=$(json_text "$folder") ;;
+  esac
+  printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"$event\",\"additionalContext\":\"【hojokin】開いたフォルダ（${shown}）は会社のフォルダではありません（目印の .hojokin/ がありません）。すぐ下に会社のフォルダ ${names} があります。このまま進めると hojokin の hooks が動かず、質問の記録・審査役の結果・版の記録が残らず、原本と公式資料の守りも効きません（道具に --folder で会社のフォルダを渡しても、hooks は動きません）。申請書の作業を始める前に、社長に、Claude を会社のフォルダで開き直す（デスクトップの Claude なら、会社のフォルダを選んで新しい会話を始める）よう案内してください。\"}}"
+  exit 0
+fi
 hooks_dir="${0%/*}"
 [ "$hooks_dir" = "$0" ] && hooks_dir=.
 

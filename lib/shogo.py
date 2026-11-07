@@ -39,6 +39,7 @@ UNITS = ("千円", "万円", "億円", "円", "%", "ポイント", "人", "名",
 PER_ONE = ("日", "台", "個", "パック", "件", "食", "時間", "か月", "カ月", "ヶ月", "年", "週", "回", "品目")
 _UNIT_RE = "|".join(re.escape(u) for u in sorted(UNITS, key=len, reverse=True))
 _NUM = r"[0-9][0-9,]*(?:\.[0-9]+)?"
+_NEGATIVE_MARK = re.compile(r"(?:^|[^0-9A-Za-z])[-\u2212\u2012\u2013\u25b2\u25b3]\s*$")
 _DATE = re.compile(r"(?:令和|平成)[0-9]{1,2}年(?:[0-9]{1,2}月(?:[0-9]{1,2}日)?)?|[0-9]{4}年(?:[0-9]{1,2}月(?:[0-9]{1,2}日)?)?"
                    r"(?:度|期)?|[0-9]{4}[/-][0-9]{1,2}(?:[/-][0-9]{1,2})?")
 _AMOUNT = re.compile(rf"(?:約|およそ)?{_NUM}\s*(?:{_UNIT_RE})")
@@ -185,6 +186,14 @@ def model_value(numbers: Dict[str, Any], ref: str) -> Optional[Tuple[float, str]
             series = people.get(key)
         elif group == "指標":
             series = indicators.get(key)
+        elif group == "別紙4":
+            # 様式（別紙4）に写す、円に丸めた値（lib/zaimu.py の「様式（別紙4）に写す数字」。11/6 のリハーサルの後）
+            series = ((body.get("別紙4") or {}).get("年ごと") or {}).get(key)
+            people_like = key.endswith("数")
+            v = pick(series)
+            if v is None:
+                return None
+            return v, ("" if people_like else ("%" if key.endswith("の伸び") else "円"))
         elif group in by_business:
             series = by_business[group].get(key)
         v = pick(series)
@@ -205,6 +214,10 @@ def shown_number(description: str) -> Optional[Tuple[float, float, str]]:
         return None
     raw, unit = m.group(1).replace(",", ""), m.group(2) or ""
     value = float(raw)
+    # 数の前の負の印（-・−・▲・△）は、負の数として読む（11/6 のリハーサルで、営業利益の「-169,440円」を
+    # 169,440円と読み、財務モデルの -169,440円と食い違うと数えたため）
+    if _NEGATIVE_MARK.search(t[:m.start()]):
+        value = -value
     decimals = len(raw.split(".", 1)[1]) if "." in raw else 0
     half = 0.5 * (10 ** -decimals)
     if unit in _SCALE:
@@ -275,7 +288,7 @@ def model_number_values(numbers: Dict[str, Any]) -> List[float]:
             if a.get("単位") == "%":
                 out.append(float(a["値"]) * 100)
     body = numbers.get("中身") or {}
-    for key in ("合算", "事業ごと", "指標", "人数", "省力化", "まとめ", "計画の年数"):
+    for key in ("合算", "事業ごと", "指標", "人数", "省力化", "まとめ", "計画の年数", "別紙4"):
         _flat_numbers(body.get(key), out)
     _flat_numbers(numbers.get("省力化の作業"), out)
     return out

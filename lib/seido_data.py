@@ -17,14 +17,22 @@
    - まとめたものを lib/urakadori.run に渡す。全体の形を確かめ、どの値も裏取りし直して、
      `記録/制度データ/<制度の略称>_<公募回>.json` に置く（置き場所は lib/urakadori が決める。DESIGN 9章）。
 1b. 2回の読み取りの突き合わせ（SPEC F3「重要な項目は2回独立に読み取り、食い違えば要確認」・T3-8、DESIGN 9.2）
-   - 重要な項目の値を、名前で決まる場所（決まった期日「締切」の日時、補助額「区分」の上限・補助率・特例の値、
-     申請の段階の期限、数値の要件「名前」の基準、必須書類「名前」、補助の対象にならない経費「名前」の内容・上限）で並べ、
-     2回目の章と、同じ名前の1回目の章とで比べる（同じ章の1回目がなければ、まとめた全体と比べる）。
+   - 重要な項目の値を、件ごとに並べ（決まった期日「締切」の日時、補助額「区分」の上限・補助率・特例の値、
+     申請の段階の期限、数値の要件「名前」の基準、必須書類「名前」、補助の対象にならない経費「名前」の内容・上限）、
+     2回目の章と、同じ名前の1回目の章とで比べる（同じ章の1回目がなければ、まとめた全体と比べる。章の名前は全角・空白をそろえる）。
+   - 件の組み方（pair_items）：件名の形（NFKC・空白・かっこを除く）が同じ件を組にし、残りを件名と中身（根拠の文と値）の近さで組にする。
+     件名の中の数が食い違う件は組にしない。近さで組にした件は、結果の「件名が1回目と違い…同じ件として比べた件」に並べる
+     （黙って同じ件にしない）。同じ件名の件が2つあっても、別の件として比べる。
+     読み取り役に1回目の件名を渡して合わせさせる手は取らない（独立に読ませる意味がなくなり、11/6 のリハーサルでは、
+     1回目の件名に当たらない件を2回目が落とした）。
    - 比べ方：値の中の数（万・億は円に直す。日付と時刻、割合も数として見る）が同じか。文の言い回しの違いは見ない
      （2回の読み取りで言い方が変わるのはふつうなので）。必須書類は、件があるかだけを見る。一方だけが「読み取れない」も食い違い。
    - 食い違った値は、まとめた制度データで「要確認」にし、「2回の読み取り：」の注記に両方の値を書く（状態は下げるだけ。
      裏取りの道具の「裏取り：」の注記とは別なので、裏取りし直しても戻らない）。
    - 1回目にあって、同じ章の2回目にない重要な項目の件も「要確認」にする（2回目が、その項目そのものを読んでいないときは比べない）。
+     2回目の「読んだページ」が、その件の出典のページを1つも含まないときも、2回目がその件を読んでいないので比べず、
+     「2回目が出典のページを読んでいないので、比べていない件」として結果に並べる（11/6 のリハーサルで、2回目に公募要領だけを
+     読ませ、手引きにある必須書類15件が「2回目の読み取りに、この件がありません」になった）。
      2回目にだけある件は、まとめに入れず、結果に並べる（その章を読み直させる）。
 2. 確かめる（check）
    - 形（スキーマ）が合うか。
@@ -110,6 +118,10 @@ class MergeResult:
     double_compared: int = 0                                              # 2回の読み取りで比べた重要な値の数
     double_diffs: List[Tuple[str, str]] = field(default_factory=list)     # 食い違って要確認にした値（場所、わけ）
     second_only: List[str] = field(default_factory=list)                  # 2回目にだけある重要な項目の件
+    # 件名が違い、近さで同じ件として比べた件（章、項目、1回目の件名、2回目の件名、近さ）
+    near_pairs: List[Tuple[str, str, str, str, str]] = field(default_factory=list)
+    # 2回目の読んだページに出典のページがなく、比べなかった1回目の件（章、件、出典のページ）
+    second_unread: List[Tuple[str, str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -286,42 +298,276 @@ def _name_key(text: Any) -> str:
     return _SPACES.sub("", unicodedata.normalize("NFKC", str(text or "")))
 
 
-def important_keyed(part: Dict) -> Dict[Tuple[str, ...], Tuple[List[Any], Any, bool]]:
-    """重要な項目の値を、名前で決まる場所で並べる。（場所の鍵）→（データの中の道、出典つき値、件があるかだけを見るか）。"""
-    out: Dict[Tuple[str, ...], Tuple[List[Any], Any, bool]] = {}
+# ---- 件の突き合わせ（2回の読み取りの突き合わせと、lib/kaitei.py の改訂の差で使う） ----
+#
+# 2つの読み取り（同じ回の1回目と2回目、前の回と今の回）は、同じ件を少し違う件名で書くことがある
+# （「締切」と「公募締切日」、「従業員5人以下」と「中小企業（従業員数5人以下）」。11/6 のリハーサル）。
+# 件名の文字がまったく同じ件で組にできないとき、件名の近さと、件の中身（根拠の文と値）の近さで組にする。
+# 近さで組にした件は、どちらの道具も「近さで同じ件として比べた」と結果に出す（黙って同じ件にしない）。
+# 読み取り役に1回目の件名を渡して合わせさせる手は取らない（2回目が独立でなくなり、11/6 のリハーサルでは
+# 1回目の件名に当たらない件を2回目が落とした。DESIGN 9.2「別の呼び出しで初めから読ませる」）。
+
+NEAR_NAME_MIN = 0.3   # 仮。件名の近さ（下の name_closeness）がこれより低い組は、中身が近くても組にしない
+NEAR_MIN = 0.55       # 仮。件名と中身の近さの平均（中身の文字がなければ件名の近さ）の下限
+NAME_STRONG = 0.7     # 仮。件名がこれ以上近ければ（片方の件名がもう片方にそのまま入るなど）、中身の近さによらず組にしてよい
+#                       （回が違うと根拠の文の切り方が変わり、中身の近さが低く出る：「締切」と「公募締切日」は 0.19）
+NUMBER_GAP = 0.8      # 仮。片方の件名にだけある数があるときに、件名の近さにかける数
+_NAME_PUNCT = re.compile(r"[、。,.・･「」『』()\[\]【】〔〕{}<>〈〉《》:;!?\"'“”‘’※*/\-~|_=+＆&＃#]")
+_NAME_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+def name_form(text: Any) -> str:
+    """件名を比べる形：NFKC（丸数字も数字に）、空白・句読点・かっこを除く。"""
+    return _NAME_PUNCT.sub("", urakadori.normalize(str(text or "")))
+
+
+def _grams(text: str) -> set:
+    return {text[i:i + 2] for i in range(len(text) - 1)} or ({text} if text else set())
+
+
+def _in_order(short: List[str], long_: List[str]) -> bool:
+    """short の並びが、long_ の中に順に（飛び飛びでよい）含まれるか。"""
+    it = iter(long_)
+    return all(any(x == y for y in it) for x in short)
+
+
+def name_closeness(a: Any, b: Any) -> float:
+    """2つの件名の近さ（0〜1）。形をそろえて同じなら 1。
+
+    件名の中の数（「5人以下」の 5、「基本要件①」の 1）の並びが、どちらも他方の並びに（順に）含まれない組は 0
+    （「従業員数5人以下」と「6～20人」、「基本要件①」と「②」、「②…（5年目計画）」と「⑤…（2年目計画）」を組にしない）。
+    片方の数の並びがもう片方に含まれるだけの組（「損益計算書」と「損益計算書（直近2期分）」、「1人当たり…」と
+    「1人当たり…（基本要件②）」）は、外さずに近さを NUMBER_GAP 倍に下げる。
+    ほかは、2字ずつの組の重なり（Dice と、短いほうに対する割合の平均）。短いほうが長いほうにそのまま入っていれば 0.7 以上。
+    """
+    fa, fb = name_form(a), name_form(b)
+    if not fa or not fb:
+        return 0.0
+    if fa == fb:
+        return 1.0
+    # 数は、句読点を除く前の形から拾う（「6～20」を 620 と読まない）
+    na = _NAME_NUMBER.findall(urakadori.normalize(str(a)))
+    nb = _NAME_NUMBER.findall(urakadori.normalize(str(b)))
+    if not (_in_order(na, nb) or _in_order(nb, na)):
+        return 0.0
+    ga, gb = _grams(fa), _grams(fb)
+    common = len(ga & gb)
+    score = (2 * common / (len(ga) + len(gb)) + common / min(len(ga), len(gb))) / 2
+    short, long_ = sorted((fa, fb), key=len)
+    if len(short) >= 2 and short in long_:
+        score = max(score, 0.7)
+    return score if na == nb else score * NUMBER_GAP
+
+
+def content_closeness(a: str, b: str) -> Optional[float]:
+    """2つの件の中身（根拠の文と値の文字）の近さ（0〜1）。2字ずつの組の Dice と、短いほうに対する割合の平均
+    （割合だけだと、中身の短い件が、どの長い件とも近くなる）。どちらかが空なら None（分からない）。"""
+    ga, gb = _grams(name_form(a)), _grams(name_form(b))
+    if not ga or not gb:
+        return None
+    common = len(ga & gb)
+    return (2 * common / (len(ga) + len(gb)) + common / min(len(ga), len(gb))) / 2
+
+
+def content_text(item: Any) -> str:
+    """件の中の出典つき値の、根拠の文と値をつないだ文字（件の中身の近さを見るため）。"""
+    out: List[str] = []
+
+    def visit(node: Any) -> None:
+        if _is_sourced(node):
+            out.append(str(node.get("根拠の文") or ""))
+            if node.get("値") is not None:
+                out.append(json.dumps(node.get("値"), ensure_ascii=False))
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                visit(v)
+        elif isinstance(node, list):
+            for v in node:
+                visit(v)
+
+    visit(item)
+    return "".join(out)
+
+
+@dataclass
+class Pair:
+    old: int          # 前（1回目・前の回）の件の位置
+    new: int          # 後（2回目・今の回）の件の位置
+    near: bool        # 件名がそろわず、近さで組にした
+    score: float      # 近さ（同じ件名なら 1）
+    name_score: float = 1.0               # 件名の近さ
+    content_score: Optional[float] = None  # 中身の近さ（分からなければ None）
+
+    def label(self) -> str:
+        """近さの書き方（報告に出す）：件名 0.70・中身 0.19"""
+        content = "－" if self.content_score is None else f"{self.content_score:.2f}"
+        return f"件名 {self.name_score:.2f}・中身 {content}"
+
+
+def pair_items(olds: List[Tuple[Any, str]], news: List[Tuple[Any, str]]) -> List[Pair]:
+    """（件名、中身の文字）の一覧どうしを、1対1で組にする。
+
+    1. 件名の形（name_form）が同じ件を、前から順に組にする。
+    2. 残った件どうしを、近さ（件名の近さと中身の近さの平均。中身が分からなければ件名の近さ）の高い順に組にする。
+       組にするのは、件名の近さが NAME_STRONG 以上の組か、中身が分かって近さが NEAR_MIN 以上の組（件名の近さは
+       NEAR_NAME_MIN 以上）だけ。組にならない件は、片方にだけある件。
+    """
+    pairs: List[Pair] = []
+    used_old: set = set()
+    used_new: set = set()
+    new_forms = [name_form(n) for n, _c in news]
+    for i, (name, _c) in enumerate(olds):
+        form = name_form(name)
+        if not form:
+            continue
+        j = next((j for j, f in enumerate(new_forms) if j not in used_new and f == form), None)
+        if j is not None:
+            pairs.append(Pair(i, j, False, 1.0))
+            used_old.add(i)
+            used_new.add(j)
+    candidates = []
+    for i, (name_a, text_a) in enumerate(olds):
+        if i in used_old:
+            continue
+        for j, (name_b, text_b) in enumerate(news):
+            if j in used_new:
+                continue
+            n = name_closeness(name_a, name_b)
+            if n < NEAR_NAME_MIN:
+                continue
+            c = content_closeness(text_a, text_b)
+            # 中身が分からない件（出典つき値のない件）は、件名がよほど近いときだけ組にする
+            score = n if c is None else (n + c) / 2
+            if n >= NAME_STRONG or (c is not None and score >= NEAR_MIN):
+                candidates.append((score, i, j, n, c))
+    for score, i, j, n, c in sorted(candidates, key=lambda x: (-x[0], x[1], x[2])):
+        if i in used_old or j in used_new:
+            continue
+        pairs.append(Pair(i, j, True, round(score, 2), round(n, 2), None if c is None else round(c, 2)))
+        used_old.add(i)
+        used_new.add(j)
+    return sorted(pairs, key=lambda p: p.old)
+
+
+# ---- 重要な項目の件 ----
+
+FIRST_STAGE = "いちばん前の段階"
+IMPORTANT_TOPS = ("決まった期日", "補助額", "手続きの段階", "数値の要件", "書類", "補助の対象にならない経費")
+
+
+@dataclass
+class Entry:
+    """重要な項目の1件。leaves は、件の中の場所 →（データの中の道、出典つき値、件があるかだけを見るか）。"""
+    top: str
+    index: int
+    name: str
+    item: Any
+    leaves: Dict[Tuple[str, ...], Tuple[List[Any], Any, bool]] = field(default_factory=dict)
+    subs: List["Entry"] = field(default_factory=list)   # 件の中の名前のある件（補助額の特例）
+    kind: Optional[str] = None                          # 書類の区分（必須・条件付き・任意）
+
+    @property
+    def content(self) -> str:
+        return content_text(self.item)
+
+
+def important_entries(part: Dict) -> Dict[str, List[Entry]]:
+    """重要な項目の件を、項目ごとに並べる（同じ件名の件も、別の件として持つ）。
+
+    書類は、区分によらず全部の件を並べる（組にするため）。値を比べるのは、必須の書類の件だけ。
+    """
+    out: Dict[str, List[Entry]] = {top: [] for top in IMPORTANT_TOPS}
     for i, d in enumerate(part.get("決まった期日") or []):
         if isinstance(d, dict) and DEADLINE_WORD in str(d.get("名前", "")):
-            out[("決まった期日", _name_key(d.get("名前")), "日時")] = (["決まった期日", i, "日時"], d.get("日時"), False)
+            out["決まった期日"].append(Entry("決まった期日", i, str(d.get("名前")), d,
+                                          {("日時",): (["決まった期日", i, "日時"], d.get("日時"), False)}))
     for i, a in enumerate(part.get("補助額") or []):
         if not isinstance(a, dict):
             continue
-        k = _name_key(a.get("区分"))
+        e = Entry("補助額", i, str(a.get("区分") or ""), a)
         for leaf in ("上限", "補助率"):
             if leaf in a:
-                out[("補助額", k, leaf)] = (["補助額", i, leaf], a.get(leaf), False)
+                e.leaves[(leaf,)] = (["補助額", i, leaf], a.get(leaf), False)
         for j, s in enumerate(a.get("特例") or []):
             if isinstance(s, dict) and "値" in s:
-                out[("補助額", k, "特例", _name_key(s.get("名前")))] = (["補助額", i, "特例", j, "値"], s.get("値"), False)
+                e.subs.append(Entry("特例", j, str(s.get("名前") or ""), s,
+                                    {("値",): (["補助額", i, "特例", j, "値"], s.get("値"), False)}))
+        out["補助額"].append(e)
     stages = [(i, s) for i, s in enumerate(part.get("手続きの段階") or []) if isinstance(s, dict)]
     if stages:
         i, first = min(stages, key=lambda x: x[1].get("順番") if isinstance(x[1].get("順番"), int) else 10 ** 6)
-        if "期限" in first:
-            out[("手続きの段階", _name_key(first.get("id") or first.get("名前")), "期限")] = (["手続きの段階", i, "期限"],
-                                                                                    first.get("期限"), False)
+        if "期限" in first:  # いちばん前の段階どうしを比べる（段階の id や名前の違いでは外さない）
+            out["手続きの段階"].append(Entry("手続きの段階", i, FIRST_STAGE, first,
+                                          {("期限",): (["手続きの段階", i, "期限"], first.get("期限"), False)}))
     for i, r in enumerate(part.get("数値の要件") or []):
         if isinstance(r, dict) and "基準" in r:
-            out[("数値の要件", _name_key(r.get("名前")), "基準")] = (["数値の要件", i, "基準"], r.get("基準"), False)
+            out["数値の要件"].append(Entry("数値の要件", i, str(r.get("名前") or ""), r,
+                                         {("基準",): (["数値の要件", i, "基準"], r.get("基準"), False)}))
     for i, d in enumerate(part.get("書類") or []):
-        if isinstance(d, dict) and d.get("区分") == "必須":
-            out[("書類", _name_key(d.get("名前")), "内容")] = (["書類", i, "内容"], d.get("内容"), True)
+        if isinstance(d, dict):
+            leaves = {("内容",): (["書類", i, "内容"], d.get("内容"), True)} if d.get("区分") == "必須" else {}
+            out["書類"].append(Entry("書類", i, str(d.get("名前") or ""), d, leaves, kind=str(d.get("区分") or "")))
     for i, c in enumerate(part.get("補助の対象にならない経費") or []):
         if not isinstance(c, dict):
             continue
-        k = _name_key(c.get("名前") or c.get("区分") or i)
-        out[("補助の対象にならない経費", k, "内容")] = (["補助の対象にならない経費", i, "内容"], c.get("内容"), False)
+        e = Entry("補助の対象にならない経費", i, str(c.get("名前") or c.get("区分") or i), c,
+                  {("内容",): (["補助の対象にならない経費", i, "内容"], c.get("内容"), False)})
         if "上限" in c:
-            out[("補助の対象にならない経費", k, "上限")] = (["補助の対象にならない経費", i, "上限"], c.get("上限"), False)
+            e.leaves[("上限",)] = (["補助の対象にならない経費", i, "上限"], c.get("上限"), False)
+        out["補助の対象にならない経費"].append(e)
     return out
+
+
+def _sources_of(item: Any) -> List[Dict]:
+    out: List[Dict] = []
+
+    def visit(node: Any) -> None:
+        if _is_sourced(node):
+            out.extend(s for s in node.get("出典") or [] if isinstance(s, dict))
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                visit(v)
+        elif isinstance(node, list):
+            for v in node:
+                visit(v)
+
+    visit(item)
+    return out
+
+
+def _span(source: Dict) -> Optional[Tuple[int, int]]:
+    page = source.get("ページ")
+    if not isinstance(page, int):
+        return None
+    end = source.get("終わりのページ") if isinstance(source.get("終わりのページ"), int) else page
+    return page, max(page, end)
+
+
+def read_covers(sources: List[Dict], read: List[Any]) -> bool:
+    """出典のどれかが、読んだページ（資料とページの範囲）に入るか。出典がなければ True（分からないので比べる）。
+    ページのない出典・読んだページは、資料が同じなら入るとする。"""
+    if not sources:
+        return True
+    for s in sources:
+        for r in read:
+            if not isinstance(r, dict) or r.get("資料") != s.get("資料"):
+                continue
+            a, b = _span(s), _span(r)
+            if a is None or b is None or (a[0] <= b[1] and b[0] <= a[1]):
+                return True
+    return False
+
+
+def _pages_label(sources: List[Dict]) -> str:
+    seen: List[str] = []
+    for s in sources:
+        span = _span(s)
+        label = f"{s.get('資料')}" + (f" p.{span[0]}" + (f"–{span[1]}" if span[1] != span[0] else "") if span else "")
+        if label not in seen:
+            seen.append(label)
+    return "、".join(seen[:4]) + ("ほか" if len(seen) > 4 else "")
 
 
 def numbers_in(value: Any) -> set:
@@ -377,38 +623,133 @@ def _downgrade(node: Any, why: str) -> bool:
     return node.get("状態") == CHECK
 
 
+MISSING_ENTRY = "2回目の読み取りに、この件がありません"
+MISSING_VALUE = "2回目の読み取りに、この値がありません"
+
+
+def _walk(root: Any, path: List[Any]) -> Any:
+    node = root
+    for part in path:
+        try:
+            node = node[part]
+        except (KeyError, IndexError, TypeError):
+            return None
+    return node
+
+
+def _full_places(full: Dict, chapters: List[Dict]) -> Dict[Tuple[int, str, int], int]:
+    """（1回目の章、重要な項目、章の中の位置）→ まとめた制度データの中の位置。
+
+    まとめた件は章の件の写し（まったく同じ件は1つ）なので、中身が同じ件を引く。要確認にする前に作る。
+    同じ名前の件が2つあっても、別の件として引ける（名前では引かない）。
+    """
+    out: Dict[Tuple[int, str, int], int] = {}
+    for top in IMPORTANT_TOPS:
+        index: Dict[str, int] = {}
+        for j, item in enumerate(full.get(top) or []):
+            index.setdefault(json.dumps(item, ensure_ascii=False, sort_keys=True), j)
+        for c in chapters:
+            for i, item in enumerate(c["制度データ"].get(top) or []):
+                j = index.get(json.dumps(item, ensure_ascii=False, sort_keys=True))
+                if j is not None:
+                    out[(id(c), top, i)] = j
+    return out
+
+
 def compare_readings(full: Dict, chapters: List[Dict], seconds: List[Dict], result: MergeResult) -> None:
-    """2回目の読み取りと1回目を、重要な項目で比べ、食い違った値をまとめた制度データで要確認にする（その場で直す）。"""
-    by_name = {str(c["読み取り"].get("章")): c for c in chapters}
-    full_keys = important_keyed(full)
+    """2回目の読み取りと1回目を、重要な項目で比べ、食い違った値をまとめた制度データで要確認にする（その場で直す）。
+
+    件は、件名の形が同じ件を組にし、残りを件名と中身の近さで組にする（pair_items）。近さで組にした件は、結果に並べる。
+    1回目にあって2回目にない件は要確認にする。ただし、2回目の「読んだページ」が、その件の出典のページを1つも含まないときは、
+    2回目がその件を読んでいないので比べず、「2回目が読んでいないページの件」として結果に並べる
+    （項目そのものを読んでいないときは比べない、という決まりを、ページの範囲にも当てはめる。11/6 のリハーサル）。
+    """
+    by_name = {_name_key(c["読み取り"].get("章")): c for c in chapters}
+    places = _full_places(full, chapters)
     for second in seconds:
         name = str(second["読み取り"].get("章"))
         result.second_chapters.append(name)
         sec_part = second["制度データ"]
-        first = by_name.get(name)
+        read = [r for r in second["読み取り"].get("読んだページ") or [] if isinstance(r, dict)]
+        first = by_name.get(_name_key(name))
         ref_part = first["制度データ"] if first else full
-        sec_keys = important_keyed(sec_part)
-        ref_keys = important_keyed(ref_part)
-        for key, (path, node2, presence) in sec_keys.items():
-            if key not in ref_keys:
-                result.second_only.append(f"{name}：{urakadori.readable(path, sec_part)}")
-                continue
-            result.double_compared += 1
-            why = readings_differ(ref_keys[key][1], node2, presence)
-            if why and key in full_keys:
-                full_path, full_node, _ = full_keys[key]
-                _downgrade(full_node, why)
-                result.double_diffs.append((urakadori.readable(full_path, full), why))
-        if first is None:
-            continue
-        read_tops = {k for k in sec_part}
-        for key, (path, _node1, _presence) in ref_keys.items():
-            if key in sec_keys or key[0] not in read_tops or key not in full_keys:
-                continue
-            full_path, full_node, _ = full_keys[key]
-            why = "2回目の読み取りに、この件がありません"
-            _downgrade(full_node, why)
-            result.double_diffs.append((urakadori.readable(full_path, full), why))
+
+        def full_path(path: List[Any]) -> Optional[List[Any]]:
+            """1回目の章の中の道を、まとめた制度データの中の道にする。"""
+            if first is None:
+                return list(path)
+            j = places.get((id(first), path[0], path[1]))
+            return None if j is None else [path[0], j] + list(path[2:])
+
+        def flag(path: List[Any], why: str) -> None:
+            fp = full_path(path)
+            node = _walk(full, fp) if fp is not None else None
+            if node is not None and _is_sourced(node):
+                _downgrade(node, why)
+                result.double_diffs.append((urakadori.readable(fp, full), why))
+
+        def compare(ref: Entry, sec: Entry) -> None:
+            if ref.top == "書類" and ref.kind != sec.kind:
+                if ref.leaves or sec.leaves:  # どちらかが必須：区分の食い違い（件があるかだけを見る書類の、ただ1つの比べる所）
+                    result.double_compared += 1
+                    flag(["書類", ref.index, "内容"], f"1回目は「{ref.kind}」、2回目は「{sec.kind}」")
+                return
+            for key, (path2, node2, presence) in sec.leaves.items():
+                if key not in ref.leaves:
+                    result.second_only.append(f"{name}：{urakadori.readable(path2, sec_part)}")
+                    continue
+                result.double_compared += 1
+                path1, node1, _ = ref.leaves[key]
+                why = readings_differ(node1, node2, presence)
+                if why:
+                    flag(path1, why)
+            for key, (path1, _node1, _p) in ref.leaves.items():
+                if key not in sec.leaves:
+                    flag(path1, MISSING_VALUE)
+            sub_pairs = pair_items([(s.name, s.content) for s in ref.subs], [(s.name, s.content) for s in sec.subs])
+            for p in sub_pairs:
+                if p.near:
+                    result.near_pairs.append((name, urakadori.readable([ref.top, ref.index], ref_part) + "の特例",
+                                              ref.subs[p.old].name, sec.subs[p.new].name, p.label()))
+                compare(ref.subs[p.old], sec.subs[p.new])
+            for i, s in enumerate(ref.subs):
+                if i not in {p.old for p in sub_pairs}:
+                    for _k, (path1, _n, _p) in s.leaves.items():
+                        flag(path1, MISSING_ENTRY)
+            for j, s in enumerate(sec.subs):
+                if j not in {p.new for p in sub_pairs}:
+                    for _k, (path2, _n, _p) in s.leaves.items():
+                        result.second_only.append(f"{name}：{urakadori.readable(path2, sec_part)}")
+
+        ref_all, sec_all = important_entries(ref_part), important_entries(sec_part)
+        for top in IMPORTANT_TOPS:
+            refs, secs = ref_all[top], sec_all[top]
+            pairs = pair_items([(e.name, e.content) for e in refs], [(e.name, e.content) for e in secs])
+            for p in pairs:
+                ref, sec = refs[p.old], secs[p.new]
+                if p.near:
+                    result.near_pairs.append((name, top, ref.name, sec.name, p.label()))
+                compare(ref, sec)
+            matched_new = {p.new for p in pairs}
+            for j, sec in enumerate(secs):
+                if j not in matched_new:
+                    for _k, (path2, _n, _p) in sec.leaves.items():
+                        result.second_only.append(f"{name}：{urakadori.readable(path2, sec_part)}")
+            if first is None or top not in sec_part:
+                continue  # 2回目が、その項目そのものを読んでいない
+            matched_old = {p.old for p in pairs}
+            for i, ref in enumerate(refs):
+                if i in matched_old or not (ref.leaves or ref.subs):
+                    continue
+                sources = _sources_of(ref.item)
+                if not read_covers(sources, read):
+                    result.second_unread.append((name, urakadori.readable([top, ref.index], ref_part), _pages_label(sources)))
+                    continue
+                for _k, (path1, _n, _p) in ref.leaves.items():
+                    flag(path1, MISSING_ENTRY)
+                for s in ref.subs:
+                    for _k, (path1, _n, _p) in s.leaves.items():
+                        flag(path1, MISSING_ENTRY)
 
 
 def _same(a: Any, b: Any) -> bool:
@@ -933,6 +1274,20 @@ def merge_report(case: str, merged: MergeResult, verified: urakadori.Result, rel
         for where, why in merged.double_diffs:
             lines.append(f"| {where} | {why} |")
         lines.append("")
+    if merged.near_pairs:
+        lines += ["", f"件名が1回目と違い、件名と中身の近さで同じ件として比べた件：{len(merged.near_pairs)}"
+                  "（値の数が同じなら、要確認にしていません。組が違っていれば、その章の2回目を読み直させる）：", "",
+                  "| 章 | 項目 | 1回目の件名 | 2回目の件名 | 近さ |", "|---|---|---|---|---|"]
+        for chapter, top, a, b, how in merged.near_pairs:
+            lines.append(f"| {chapter} | {top} | {a} | {b} | {how} |")
+        lines.append("")
+    if merged.second_unread:
+        lines.append(f"- 2回目の読み取りが出典のページを読んでいないので、比べていない件：{len(merged.second_unread)}"
+                     "（1回目だけの読み取りです。その章の2回目を、1回目と同じページの範囲で読ませ直す）")
+        for chapter, where, pages in merged.second_unread[:40]:
+            lines.append(f"  - {chapter}：{where}（出典 {pages}）")
+        if len(merged.second_unread) > 40:
+            lines.append(f"  - ほかに {len(merged.second_unread) - 40} 件")
     if merged.second_only:
         lines.append(f"- 2回目の読み取りにだけある件（まとめには入れていません。その章を読み直させる）：{'、'.join(merged.second_only)}")
     lines.append(f"- 裏取りし直した値：{verified.checked}（出典つき値 {verified.values}：{_states_line(verified.states)}）")

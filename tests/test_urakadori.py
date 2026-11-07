@@ -576,6 +576,11 @@ def test_doc_id_cannot_point_outside(company) -> None:
     ({"日時": "2027-01-22T15:00+09:00"}, "2027年1月22日", False),              # 時刻がない
     ({"年月": "2027-04", "旬": "中旬"}, "2027 年 4 月中旬", True),
     ({"年月": "2027-04"}, "2027年5月", False),
+    # 丸数字：①〜⑳ は NFKC で数字になる。黒丸の❶〜❿・⓫〜⓴、二重丸、➀〜➓ も数として読む（11/6 のリハーサル）
+    ("基本情報（2）", "② 基本情報", True),
+    ("基本情報（2）", "❶ 宣誓 ❷ 基本情報", True),
+    ("認証（11）", "❿ アンケート ⓫ メールアドレス認証", True),
+    ("基本情報（3）", "❶ 宣誓 ❷ 基本情報", False),
 ])
 def test_value_forms(company, value, sentence, ok) -> None:
     """値の書き方ごとに、根拠の文の中にあるかを見分ける（文はページにあるものとして、ページに書き足す）。"""
@@ -596,6 +601,30 @@ def test_value_forms(company, value, sentence, ok) -> None:
         assert "出典のページ" not in out and "が根拠の文にありません" in out, out
         if isinstance(value, int):
             assert f"金額「{value}円」" in out
+
+
+@pytest.mark.parametrize("original,listed,code,word", [
+    ("日程表", False, 0, None),                              # 本文のある資料の id（資料の一覧がないとき）
+    ("ひな形X", False, 1, "「ひな形X」が、資料の一覧の id にありません"),
+    ("日程表", True, 0, None),                               # 資料の一覧の id
+    ("日程表のページ", True, 1, "資料の名前です。資料の一覧の id（「日程表」）を書いてください"),
+])
+def test_original_file_is_a_doc_id(company, original, listed, code, word) -> None:
+    """様式の入力先の「元のファイル」は資料の id。根拠の文の言葉とは照らさない（根拠の文に資料の呼び名は入らない。11/6 のリハーサル）。"""
+    sentence = "計画書は PDF の形で出す。"
+    page = company.texts() / "要領T" / "ページ_003.txt"  # 印刷された p.2
+    page.write_text(page.read_text(encoding="utf-8") + sentence + "\n", encoding="utf-8")
+    if listed:
+        doc_list = {"資料": [{"id": "要領T", "名前": "テスト用の公募要領"}, {"id": "日程表", "名前": "日程表のページ"}]}
+        (company.texts() / "資料の一覧.json").write_text(json.dumps(doc_list, ensure_ascii=False), encoding="utf-8")
+    form = {"名前": "計画書", "項目": [],
+            "入力先": sv({"種類": "ファイル", "提出の形式": "PDF", "元のファイル": original}, "要領T", 2, sentence)}
+    data = {"読み取り": {"章": "様式", "読んだページ": [{"資料": "要領T", "ページ": 2}]}, "制度データ": {"様式": [form]}}
+    out = check_code(company.run(data), code)
+    if word:
+        assert word in out, out
+    else:
+        assert "に当たる言葉が根拠の文にありません" not in out, out
 
 
 @pytest.mark.parametrize("place,value,sentence,ok", [
