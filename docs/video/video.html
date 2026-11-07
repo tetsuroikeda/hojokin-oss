@@ -52,7 +52,10 @@
   .file { position: absolute; width: 260px; height: 64px; background: #fff; border-radius: 12px; display: flex; align-items: center; gap: 10px; padding: 0 14px;
           font-size: 17px; font-weight: 600; box-shadow: 0 8px 20px rgba(60,48,20,.18); white-space: nowrap; overflow: hidden; }
   .file .ic { width: 32px; height: 40px; border-radius: 5px; flex: none; color: #fff; font-size: 11px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 4px; font-weight: 800; }
-  .tree { position: absolute; font-size: 17px; line-height: 1.5; white-space: nowrap; }
+  .tree { position: absolute; font-size: 15px; line-height: 1.4; white-space: nowrap; }
+  .fixp { position: absolute; top: 250px; width: 830px; height: 640px; }
+  .fixp .view img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; object-position: 50% 0; }
+  .fixp .cap b { color: var(--ink); }
   .tree .dir { color: var(--teal); font-weight: 800; }
   .check { position: absolute; font-size: 25px; font-weight: 600; display: flex; align-items: center; gap: 16px; }
   .check .box { width: 36px; height: 36px; border-radius: 10px; border: 3px solid var(--line); display: flex; align-items: center; justify-content: center; font-weight: 800; background: #fff; }
@@ -111,8 +114,8 @@
   <!-- 冒頭：社長の道のり -->
   <div class="scene" id="s-road">
     <div class="abs" id="road-lead" style="left:0;right:0;top:150px;text-align:center;">
-      <div id="road-l1" style="font-size:70px;font-weight:800;">人手が足りない惣菜工場。</div>
-      <div id="road-l2" style="font-size:44px;font-weight:700;color:var(--teal);margin-top:18px;">機械を入れたい。補助金を使いたい。</div>
+      <div id="road-l1" style="font-size:70px;font-weight:800;">人手が足りない町工場。</div>
+      <div id="road-l2" style="font-size:44px;font-weight:700;color:var(--teal);margin-top:18px;">見積の仕組みを入れたい。補助金を使いたい。</div>
     </div>
     <svg class="abs" id="road-svg" width="1920" height="1080" style="left:0;top:0"></svg>
     <div id="road-signs"></div>
@@ -131,7 +134,7 @@
   <div class="scene" id="s-s1">
     <div class="step"><div class="no">STEP 1 ・ 探す</div><div class="prob">どれを使えばいいか分からない<span class="strike"></span></div>
       <div class="sol">会社に合う補助金を<br>分けて、比べる</div>
-      <div class="pts"><div class="pt">公募中・公募予定・例年公募あり</div><div class="pt">要件・義務・返還の条件・自己負担</div><div class="pt">すべてに出典</div></div></div>
+      <div class="pts"><div class="pt">公募中・公募予定（発表済み）</div><div class="pt">要件・義務・返還の条件・自己負担</div><div class="pt">すべてに出典</div></div></div>
     <div class="sheet" id="s1-sheet" style="left:900px;top:200px;width:910px;height:720px;"><div class="cap"><span class="ic">W</span>補助金の候補.docx</div>
       <div class="view"><img id="s1-img" src="out/assets/kouho-1.png"><img id="s1-img2" src="out/assets/kouho-2.png"></div><div class="real">実際の出力</div></div>
   </div>
@@ -141,14 +144,14 @@
       <div class="sol">公募要領を読み込み<br>ページつきで整理</div>
       <div class="pts"><div class="pt">要件・特例・必要な書類・締切</div><div class="pt">決まりごとに資料のページ</div><div class="pt">資料にないことは推測しない</div></div></div>
     <div class="sheet" id="s2-sheet" style="left:900px;top:200px;width:910px;height:720px;"><div class="cap"><span class="ic">W</span>概要と流れ.docx</div>
-      <div class="view"><img id="s2-img" src="out/assets/gaiyou-2.png"><div class="mark" id="s2-mark"></div></div><div class="real">実際の出力</div></div>
+      <div class="view"><div id="s2-wrap" style="position:absolute;left:0;top:0;width:910px;transform-origin:0 0"><img id="s2-img" src="out/assets/gaiyou-5.png" style="width:910px"><div class="mark" id="s2-mark"></div></div></div><div class="real">実際の出力</div></div>
   </div>
 
   <div class="scene" id="s-s3">
     <div class="step" style="width:760px"><div class="no">STEP 3 ・ 書類をそろえる</div><div class="prob">何が足りない？何が不備？<span class="strike"></span></div>
       <div class="sol" id="s3-sol">原本を守って整理し<br>不備を見つける</div></div>
     <div id="s3-files"></div>
-    <div class="tree" id="s3-tree" style="left:110px;top:430px;"></div>
+    <div class="tree" id="s3-tree" style="left:110px;top:480px;"></div>
     <div class="abs" id="s3-fubi" style="left:900px;top:200px;width:910px;"></div>
   </div>
 
@@ -165,13 +168,21 @@
     </div>
   </div>
 
+  <!-- 指摘を受けて直す（前と後） -->
+  <div class="scene" id="s-fix">
+    <div class="abs" style="left:110px;top:186px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">社長の指摘を受けて、直す</div>
+    <div class="abs" id="fix-title" style="left:560px;top:174px;font-size:40px;font-weight:800;white-space:nowrap"></div>
+    <div class="sheet fixp" id="fix-before" style="left:110px;"><div class="cap"><span class="ic" style="background:var(--sub)">前</span><span id="fix-bnote"></span></div><div class="view" id="fix-bview"></div></div>
+    <div class="sheet fixp" id="fix-after" style="left:980px;"><div class="cap"><span class="ic">後</span><span id="fix-anote"></span></div><div class="view" id="fix-aview"></div><div class="real">実際の出力</div></div>
+    <div class="abs" id="fix-arrow" style="left:931px;top:540px;width:58px;height:58px;border-radius:50%;background:var(--teal);color:#fff;font-size:34px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 18px rgba(14,110,102,.35)">→</div>
+  </div>
+
   <div class="scene" id="s-s5">
     <div class="step"><div class="no">STEP 5 ・ 採択の後</div><div class="prob">まだ手続きが続く<span class="strike"></span></div>
-      <div class="sol">期限を見張り、<br>指摘を次に生かす</div>
-      <div class="pts"><div class="pt">交付申請・実績報告・効果の報告</div><div class="pt">工程表と期限を、いつでも</div><div class="pt">差し戻しは記録して次へ</div></div></div>
-    <div class="sheet" id="s5-sheet" style="left:900px;top:200px;width:910px;height:440px;"><div class="cap"><span class="ic">H</span>今の状態.html ・ 工程表</div><div class="view"><img id="s5-img" src="out/assets/status_html.png"></div><div class="real">実際の出力</div></div>
-    <div class="sheet" id="s5-sashi" style="left:900px;top:670px;width:520px;height:270px;"><div class="cap"><span class="ic">!</span>差し戻しの通知（模擬の画面）</div><div class="view"><img src="out/assets/sashimodoshi.png" style="top:-60px"></div></div>
-    <div class="card" id="s5-memo" style="left:1450px;top:700px;width:360px;font-size:22px;line-height:1.5;"><b style="color:var(--teal)">会社の記録に残す</b><br>次の手続きで、同じ型を先に確かめる</div>
+      <div class="sol">期限を出し、<br>発注を止める</div>
+      <div class="pts"><div class="pt">通知から期限と出典ページ</div><div class="pt">資料の版の食い違いに気づく</div><div class="pt">指摘にない費用の重なりも</div></div></div>
+    <div class="sheet" id="s5-sheet" style="left:900px;top:200px;width:520px;height:264px;"><div class="cap"><span class="ic">P</span>採択のお知らせ（架空）</div><div class="view"><img src="out/assets/saitaku_tsuuchi.png"></div></div>
+    <div id="s5-quotes"></div>
   </div>
 
   <!-- PM（実際の端末） -->
@@ -179,7 +190,7 @@
     <div class="abs" style="left:110px;top:70px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">聞かれる前に、知らせる</div>
     <div class="abs" style="left:110px;top:110px;font-size:52px;font-weight:800">「今日は何から？」に、段取りで答える</div>
     <div class="term" id="pm-term" style="left:110px;top:210px;width:1160px;height:700px;">
-      <div class="tbar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span style="margin-left:12px">やまぶき惣菜 — claude</span></div>
+      <div class="tbar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span style="margin-left:12px">みずなら精工 — claude</span></div>
       <div class="tbody" id="xterm"></div>
       <div class="real" id="pm-real">実際の Claude Code（待ち時間を詰めて再生）</div>
     </div>
@@ -215,7 +226,7 @@
       <div id="lm-rules"></div>
       <div class="real">実際の記録</div>
     </div>
-    <div class="abs" style="left:1320px;top:220px;font-size:26px;font-weight:800;color:var(--sub)">2件目：開いたときの決まり</div>
+    <div class="abs" style="left:1320px;top:220px;font-size:26px;font-weight:800;color:var(--sub)">2件目（持続化）で、実際に</div>
     <div id="learn-2" class="abs" style="left:1320px;top:270px;width:490px;"></div>
   </div>
 
@@ -379,11 +390,12 @@ scenes.s1 = (l, d) => {
 scenes.s2 = (l, d) => {
   stepHead($('s-s2'), l);
   sheetIn($('s2-sheet'), l, 0.8);
+  // 「満たす要件・当てはまらない要件」の表を出し、判定と出典の列に寄る
   const z = eInOut(prog(l, 3.5, d - 1));
-  $('s2-img').style.transform = `scale(${1 + 0.35 * z}) translate(${-z * 10}px, ${-z * 120}px)`;
-  // 出典の列に印を引く
+  $('s2-wrap').style.transform = `translate(${-z * 90}px, ${-330 - z * 70}px) scale(${1 + 0.18 * z})`;
+  // 判定と理由（出典のページつき）の列に印を引く（画像の上の位置）
   const m = $('s2-mark'); const mx = eOut(prog(l, 2.8, 3.6));
-  m.style.cssText = `left:${58 + z * 18}px;top:${70 + 0 * z}px;width:${(255 + z * 80) * mx}px;height:${560 + z * 40}px;opacity:${mx}`;
+  m.style.cssText = `left:386px;top:420px;width:${458 * mx}px;height:780px;opacity:${mx}`;
 };
 
 // ===== STEP 3 =====
@@ -395,8 +407,10 @@ scenes.s2 = (l, d) => {
   const lines = [...$('s3-tree').children];
   const fubi = $('s3-fubi');
   const head = mk('div', null, `<div style="font-size:28px;font-weight:800;margin-bottom:16px">「${D.shorui.summary}」<span style="color:var(--sub);font-size:19px;font-weight:600">　実際の応答から一部</span></div>`, fubi);
-  const items = D.shorui.fubi.map(([sev, label, text]) => {
-    const e = mk('div', 'card', `<div style="margin-bottom:6px"><span class="sev ${sev === '重大' ? 'big' : 'chk'}">${sev}</span><b style="font-size:21px">${label}</b></div><div style="font-size:21px;line-height:1.5">${text}</div>`, fubi);
+  const items = D.shorui.fubi.map(([sev, label, text, after]) => {
+    // after：社長の答えを聞いた後の応答（見つけて、確かめて、扱いを変えた）
+    const note = after ? `<div style="font-size:18px;line-height:1.45;color:var(--teal);margin-top:6px;font-weight:600">社長が「出していない」と答えた後：${after}</div>` : '';
+    const e = mk('div', 'card', `<div style="margin-bottom:6px"><span class="sev ${sev === '重大' ? 'big' : 'chk'}">${sev}</span><b style="font-size:21px">${label}</b></div><div style="font-size:21px;line-height:1.5">${text}</div>${note}`, fubi);
     e.style.position = 'relative'; e.style.marginBottom = '12px'; e.style.padding = '14px 20px'; return e;
   });
   scenes.s3 = (l, d) => {
@@ -420,6 +434,9 @@ scenes.s2 = (l, d) => {
   const checks = ['聞き取りの答えと、本文の事実が食い違っていないか', '根拠のない数字・固有名詞・日付はないか', '現状 → 課題 → 解決策 → 効果 の筋が通っているか', '審査項目と加点項目を、1つ残らず採点', '投資の効果が、数字で伝わるか', '過去の指摘と、会社の書き方の決まりに沿っているか'];
   const rows = checks.map((c, i) => { const e = mk('div', 'check', `<span class="box"></span><span>${c}</span>`, $('s4-checks')); e.style.top = i * 76 + 'px'; return e; });
   const verdict = mk('div', null, '', $('s4-checks')); verdict.style.cssText = 'position:absolute;top:470px;font-size:27px;font-weight:800;color:var(--teal)';
+  // 実際の記録の数（審査役の結果と完成の記録から）
+  const band = mk('div', null, `<span style="color:var(--sub);font-weight:700">実際の記録：</span>1回目の確かめで要修正 <b style="color:var(--coral)">${D.shinsa.firstFix}件</b> → ${D.shinsa.doneRound}回目で <b style="color:var(--teal)">0件</b>、完成`, $('s4-checks'));
+  band.style.cssText = 'position:absolute;top:530px;font-size:24px;font-weight:700;background:var(--paper);border-radius:12px;padding:10px 18px';
   scenes.s4 = (l, d) => {
     stepHead($('s-s4'), l);
     const out = eInOut(prog(l, 6.2, 7.0));
@@ -438,19 +455,56 @@ scenes.s2 = (l, d) => {
       box.style.color = done ? 'var(--teal)' : 'var(--coral)';
     });
     verdict.textContent = '要修正の指摘を直すまで、完成にしない';
-    show(verdict, eOut(prog(l, 11.4, 11.9)), 15);
+    show(verdict, eOut(prog(l, 10.6, 11.1)), 15);
+    show(band, eOut(prog(l, 11.2, 11.7)), 15);
   };
 })();
 
-// ===== STEP 5 =====
-scenes.s5 = (l, d) => {
-  stepHead($('s-s5'), l);
-  sheetIn($('s5-sheet'), l, 0.8);
-  const z = eInOut(prog(l, 2.5, 6));
-  $('s5-img').style.transform = `scale(${1 + 0.55 * z}) translate(${-z * 20}px, ${-z * 150}px)`;
-  sheetIn($('s5-sashi'), l, 5.2);
-  show($('s5-memo'), eOut(prog(l, 7.0, 7.6)), 20);
-};
+// ===== 指摘を受けて直す：前と後を4組、順に入れ替える =====
+(() => {
+  const bv = $('fix-bview'), av = $('fix-aview');
+  const imgs = D.fix.map(([title, bnote, anote, bimg, aimg]) => [mk('img', null, null, bv), mk('img', null, null, av)].map((e, k) => { e.src = 'out/assets/' + (k ? aimg : bimg); return e; }));
+  scenes.fix = (l, d) => {
+    const x = eOut(prog(l, 0.1, 0.7));
+    ['fix-before', 'fix-after'].forEach((id, k) => { const e = $(id); e.style.opacity = x; e.style.transform = `translateY(${(1 - x) * 50}px)`; });
+    show($('fix-arrow'), eOut(prog(l, 0.5, 1.0)), 0, -20);
+    // 組 i は、字幕の i 番目の文が出る時刻から（台詞の文と組の順をそろえてある）。
+    // その0.25秒前から0.45秒かけて入れ替える（前の組は、その間だけ下に残す）
+    const caps = capsOf('fix');
+    const starts = D.fix.map((_, i) => i === 0 ? 0 : (caps[i] !== undefined ? caps[i] : 0.3 + i * (d - 0.6) / D.fix.length));
+    let cur = 0;
+    starts.forEach((s, i) => { if (l >= s - 0.25) cur = i; });
+    const t0 = starts[cur];
+    const o = cur === 0 ? 1 : eOut(prog(l, t0 - 0.25, t0 + 0.2));
+    imgs.forEach(([b, a], i) => {
+      const vis = i === cur ? o : (i === cur - 1 ? 1 - o : 0);
+      b.style.opacity = vis; a.style.opacity = vis;
+    });
+    const [title, bnote, anote] = D.fix[cur];
+    $('fix-title').textContent = title;
+    $('fix-bnote').innerHTML = `直す前：<b>${bnote}</b>`;
+    $('fix-anote').innerHTML = `直した後：<b>${anote}</b>`;
+    show($('fix-title'), cur === 0 ? eOut(prog(l, 0.2, 0.6)) : o, 8);
+  };
+})();
+
+// ===== STEP 5：採択のお知らせと、実際の応答 =====
+(() => {
+  const host = $('s5-quotes');
+  const pos = [[1450, 205, 360], [900, 500, 910], [900, 690, 910]];
+  const cards = D.saitaku.map(([label, q], i) => {
+    const e = mk('div', 'card', `<div style="font-size:19px;color:var(--teal);font-weight:800;margin-bottom:6px">${label}<span style="color:var(--sub);font-weight:600">　実際の応答から</span></div><div style="font-size:${i ? 23 : 22}px;line-height:1.5">${q}</div>`, host);
+    e.style.left = pos[i][0] + 'px'; e.style.top = pos[i][1] + 'px'; e.style.width = pos[i][2] + 'px'; e.style.padding = '16px 22px';
+    return e;
+  });
+  scenes.s5 = (l, d) => {
+    stepHead($('s-s5'), l);
+    sheetIn($('s5-sheet'), l, 0.8);
+    const caps = capsOf('s5');
+    const at = [1.8, 3.4, (caps[1] !== undefined ? caps[1] : 6.5) - 0.2];
+    cards.forEach((c, i) => show(c, eOut(prog(l, at[i], at[i] + 0.5)), 0, 40));
+  };
+})();
 
 // ===== PM：実際の端末を描き直す =====
 const term = new Terminal({ cols: D.term.cols, rows: D.term.rows, fontFamily: 'Menlo, "Hiragino Sans", monospace', fontSize: 17, lineHeight: 1.12,
@@ -506,7 +560,7 @@ async function seekTerm(local, d) {
 (() => {
   const qEls = D.learn.questions.map((q, i) => { const e = mk('div', 'bubble', q, $('learn-qs')); e.style.top = i * 66 + 'px'; return e; });
   const rEls = D.learn.rules.map(r => mk('div', 'rule', r, $('lm-rules')));
-  const l2 = D.learn.second.map(([kind, quote, note]) => { const e = mk('div', 'card', `<div style="font-size:19px;color:${kind === 'ok' ? 'var(--teal)' : '#a06b00'};font-weight:800;margin-bottom:8px">${kind === 'ok' ? '聞かずに使う' : '変わりうる情報だけ、確かめる'}</div><div style="font-size:23px;line-height:1.5">「${quote}」</div><div style="font-size:19px;color:var(--sub);margin-top:8px">${note}</div>`, $('learn-2')); e.style.position = 'relative'; e.style.marginBottom = '18px'; return e; });
+  const l2 = D.learn.second.map(([kind, label, quote, note]) => { const e = mk('div', 'card', `<div style="font-size:19px;color:${kind === 'ok' ? 'var(--teal)' : '#a06b00'};font-weight:800;margin-bottom:8px">${label}</div><div style="font-size:23px;line-height:1.5">「${quote}」</div><div style="font-size:19px;color:var(--sub);margin-top:8px">${note}（実際の応答から）</div>`, $('learn-2')); e.style.position = 'relative'; e.style.marginBottom = '18px'; return e; });
   scenes.learn = (l, d) => {
     qEls.forEach((e, i) => show(e, eOut(prog(l, 0.3 + i * 0.2, 0.6 + i * 0.2)), 15, -20));
     const m = eOut(prog(l, 2.0, 2.6)); $('learn-mem').style.opacity = m; $('learn-mem').style.transform = `translateY(${(1 - m) * 40}px)`;

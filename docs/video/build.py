@@ -1,10 +1,13 @@
 """デモ動画を組み立てる（台詞の声 → 時刻表 → BGM → 映像 → 音を重ねた mp4）。
 
 使い方（リポの根で）：
-  uv run --with numpy python docs/video/build.py <デモの会社のフォルダ>
+  uv run --with numpy python docs/video/build.py <デモの会社のフォルダ> <材料のフォルダ> [--provider vertex]
 
-- デモの会社のフォルダは、保存した状態「1件目を終えた」を戻したもの（evals/_lib/fukugen.py）。
-  その中の実物の出力（補助金の候補.docx・概要と流れ.docx・計画書・根拠対照表・財務モデル・今の状態.html）を画像にして使う。
+- デモの会社のフォルダは、申請書を書き終えた段階の会社のフォルダ（架空の株式会社みずなら精工）。
+  その中の実物の出力（補助金の候補.docx・計画書・根拠対照表・財務モデル）と、審査役の結果・質問の記録を使う。
+- 材料のフォルダ（リポの外）には、別の段階で作った実物を置く（README の「作り方」）：
+  概要と流れ.docx、指摘の前後の画像（fix_*.png）、採択のお知らせの画像（saitaku_tsuuchi.png）、
+  学習の場面の数を取る会社の記録（会社の記録_練習.json）。
 - 実際の対話の文は docs/video/対話/ に置き、素材.json の引用がその中にそのままあるかを確かめる（作り話を入れないため）。
 - 出来たものは docs/video/out/（Git の外）。最後の mp4 は out/hojokin_demo.mp4。
 - 映像を撮るのは render.mjs（puppeteer-core で、この Mac の Google Chrome を動かす）。
@@ -21,15 +24,13 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent.parent
 OUT = HERE / "out"
 ASSETS = OUT / "assets"
 VOICE = OUT / "voice"
-CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 # 場面ごとの、絵の動きに要る最短の長さ（秒）。台詞が短くても、絵が見終わるまで次へ行かない
-MIN_DUR = {"road": 15.0, "title": 6.5, "s1": 11.5, "s2": 11.5, "s3": 12.5, "s4": 13.0, "s5": 10.5,
-           "pm": 22.0, "how": 13.0, "learn": 11.0, "start": 9.5, "built": 15.0, "end": 6.0}
+MIN_DUR = {"road": 15.0, "title": 6.5, "s1": 11.5, "s2": 11.5, "s3": 12.5, "s4": 13.0, "fix": 13.0, "s5": 11.0,
+           "pm": 18.0, "how": 11.0, "learn": 11.0, "start": 9.5, "built": 14.0, "end": 6.0}
 VOICE_LEAD = {"road": 0.4, "title": 0.6}  # 台詞を場面の頭から何秒遅らせるか（ほかは 0.3 秒）
 
 
@@ -94,7 +95,7 @@ def terminal_text(path: Path) -> str:
 
 def check_quotes(material: dict) -> None:
     # 素材.json の引用が、実際の対話の記録にそのままあるかを確かめる
-    for key in ("pm", "shorui", "learn", "how"):
+    for key in ("pm", "shorui", "learn", "how", "saitaku"):
         src = (HERE / material[key]["source"]).read_text(encoding="utf-8")
         if src.lstrip().startswith("{"):
             src = terminal_text(HERE / material[key]["source"])
@@ -102,9 +103,11 @@ def check_quotes(material: dict) -> None:
         if key == "pm":
             quotes = [c[2] for c in material[key]["callouts"]]
         elif key == "shorui":
-            quotes = [f[-1] for f in material[key]["fubi"]] + [material[key]["summary"]]
+            quotes = [q for f in material[key]["fubi"] for q in f[2:]] + [material[key]["summary"]]
         elif key == "learn":
-            quotes = [s[1] for s in material[key]["second"]]
+            quotes = [s[2] for s in material[key]["second"]]
+        elif key == "saitaku":
+            quotes = [q[1] for q in material[key]["quotes"]]
         else:
             quotes = [material[key]["quote"]]
         for q in quotes:
@@ -112,54 +115,70 @@ def check_quotes(material: dict) -> None:
                 sys.exit(f"引用が対話の記録にありません（{key}）：{q}")
 
 
-def render_assets(company: Path) -> None:
+def render_assets(company: Path, extra: Path, material: dict) -> None:
     pdf = ASSETS / "pdf"
     pdf.mkdir(parents=True, exist_ok=True)
     case1 = company / "案件" / "2026_省力化（一般型）第9回"
+    # 写す元と、画像にするページ（最初・最後）
     sources = {
-        "kouho.docx": company / "補助金の候補.docx",
-        "gaiyou.docx": case1 / "概要と流れ.docx",
-        "keikaku.docx": case1 / "1_申請" / "申請書" / "その1・2.docx",
-        "konkyo.xlsx": case1 / "1_申請" / "申請書" / "根拠対照表.xlsx",
-        "zaimu.xlsx": company / "財務モデル.xlsx",
+        "kouho.docx": (company / "補助金の候補.docx", 1, 2),
+        "gaiyou.docx": (extra / "概要と流れ.docx", 5, 5),
+        "keikaku.docx": (case1 / "1_申請" / "申請書" / "その1・2.docx", 1, 3),
+        "konkyo.xlsx": (case1 / "1_申請" / "申請書" / "根拠対照表.xlsx", 1, 1),
+        "zaimu.xlsx": (company / "財務モデル.xlsx", 1, 1),
     }
-    for name, src in sources.items():
+    for name, (src, _f, _l) in sources.items():
         shutil.copy(src, pdf / name)
     run(["soffice", "--headless", "--convert-to", "pdf", *[n for n in sources]], cwd=pdf, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for name in sources:
+    for name, (_src, first, last) in sources.items():
         stem = name.split(".")[0]
-        run(["pdftoppm", "-r", "110", "-png", "-f", "1", "-l", "3", f"{stem}.pdf", str(ASSETS / stem)], cwd=pdf)
+        run(["pdftoppm", "-r", "110", "-png", "-f", str(first), "-l", str(last), f"{stem}.pdf", str(ASSETS / stem)], cwd=pdf)
     # pdftoppm はページの数で名前の桁を変えるので、-1 と -01 をそろえる
     for p in ASSETS.glob("*-0?.png"):
         p.rename(p.with_name(p.name.replace("-0", "-")))
-    # 普段使いの Chrome と重ならないよう、作業用のプロファイルで開く。たまに終了コードが0でないので、できた画像で判断する
-    shot = ASSETS / "status_html.png"
-    for _ in range(3):
-        shot.unlink(missing_ok=True)
-        subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--window-size=1600,2400",
-                        f"--user-data-dir={OUT / 'chrome-profile'}", f"--screenshot={shot}", (company / "今の状態.html").as_uri()],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if shot.exists():
-            break
-    else:
-        sys.exit("今の状態.html を画像にできませんでした")
-    shutil.copy(ROOT / "testdata" / "計画書" / "材料" / "5_差し戻し" / "差し戻し_5_機械の名称と型番.png", ASSETS / "sashimodoshi.png")
+    # 別の段階で作った画像（指摘の前後、採択のお知らせ）
+    names = [n for pair in material["fix"]["pairs"] for n in pair[3:5]] + ["saitaku_tsuuchi.png"]
+    for n in names:
+        shutil.copy(extra / n, ASSETS / n)
 
 
-def company_data(company: Path) -> dict:
-    rec = json.loads((company / "記録" / "会社の記録.json").read_text(encoding="utf-8"))["項目"]
+def short_question(q: str, limit: int = 22) -> str:
+    # 学習の場面の吹き出しは1行なので、問いの頭の1文だけを短く出す
+    q = re.sub(r"^加点の確かめ（\d/\d）：", "", q.split("（理由：")[0])
+    m = re.search(r"[？。]", q)
+    q = q[: m.end()] if m else q
+    return q if len(q) <= limit else q[: limit - 1] + "…"
+
+
+def company_data(company: Path, extra: Path) -> dict:
+    # 覚えた事実と書き方の決まりの数は、説明の練習で決まりを1つ覚えた後の会社の記録から取る（なければ会社のフォルダ）
+    rec_path = extra / "会社の記録_練習.json"
+    if not rec_path.exists():
+        rec_path = company / "記録" / "会社の記録.json"
+    rec = json.loads(rec_path.read_text(encoding="utf-8"))["項目"]
     qs = json.loads((company / "記録" / "質問の記録.json").read_text(encoding="utf-8"))["質問"]
     rules = [r["内容"] for r in rec if r["種類"] == "書き方の決まり"]
+    # 選択肢の画面の代わりの断り書き（*( で始まるもの）は問いではないので除く
+    questions = [short_question(q["問い"]) for q in qs if not q["問い"].startswith(("*(", "("))][:9]
+    # 審査役：1回目の要修正の数と、初めて完成になった確かめが何回目か
+    reviews = sorted((company / "記録" / "審査役の結果").glob("確かめ-*.json"))
+    first_fix = sum(1 for s in json.loads(reviews[0].read_text(encoding="utf-8"))["結果"]["指摘"] if s.get("重さ") == "要修正")
+    done = json.loads((company / "記録" / "完成の記録.json").read_text(encoding="utf-8"))["記録"][0]["確かめの番号"]
+    done_round = [p.stem for p in reviews].index(done) + 1
     return {
         "facts": sum(1 for r in rec if r["種類"] == "事実"),
         "ruleCount": len(rules),
-        "questions": [q["問い"] for q in qs][:9],
+        "rules": rules,
+        "questions": questions,
+        "shinsa": {"firstFix": first_fix, "doneRound": done_round},
     }
 
 
 def write_data(timeline, captions, total, material, cdata) -> None:
     learn = dict(material["learn"])
-    learn.update({"facts": cdata["facts"], "ruleCount": cdata["ruleCount"], "questions": cdata["questions"]})
+    learn.update({"facts": cdata["facts"], "ruleCount": cdata["ruleCount"], "rules": cdata["rules"], "questions": cdata["questions"]})
+    # ** で囲んだ所は太字にする
+    bold = lambda s: re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
     data = {
         "timeline": timeline, "captions": captions, "total": total,
         "pm": {"callouts": [c[:2] for c in material["pm"]["callouts"]]},
@@ -168,6 +187,9 @@ def write_data(timeline, captions, total, material, cdata) -> None:
         "built": material["built"],
         "shorui": {k: material["shorui"][k] for k in ("inputs", "tree", "fubi", "summary")},
         "learn": learn,
+        "fix": material["fix"]["pairs"],
+        "saitaku": [[label, bold(q)] for label, q in material["saitaku"]["quotes"]],
+        "shinsa": cdata["shinsa"],
     }
     (OUT / "data.js").write_text("window.VIDEO_DATA = " + json.dumps(data, ensure_ascii=False, indent=1) + ";\n", encoding="utf-8")
 
@@ -195,13 +217,14 @@ def mix_audio(timeline, total) -> Path:
 
 def main() -> None:
     company = Path(sys.argv[1]).resolve()
+    extra = Path(sys.argv[2]).resolve()
     skip_render = "--no-video" in sys.argv
     lines = json.loads((HERE / "台詞.json").read_text(encoding="utf-8"))
     material = json.loads((HERE / "素材.json").read_text(encoding="utf-8"))
     check_quotes(material)
     OUT.mkdir(exist_ok=True)
     ASSETS.mkdir(parents=True, exist_ok=True)
-    render_assets(company)
+    render_assets(company, extra, material)
     # --keep-voice：out/voice/ の声（作り直した声・録った人の声など）をそのまま使い、長さだけ測る
     # --provider gemini|vertex|say：声を作る先（既定は 台詞.json の voice.provider）
     if "--keep-voice" not in sys.argv:
@@ -209,7 +232,7 @@ def main() -> None:
         make_voices(provider)
     durs = {s["id"]: duration(VOICE / f"{s['id']}.wav") for s in lines["scenes"]}
     timeline, captions, total = make_timeline(lines, durs)
-    write_data(timeline, captions, total, material, company_data(company))
+    write_data(timeline, captions, total, material, company_data(company, extra))
     print(f"全体 {total:.1f} 秒")
     for s in timeline:
         print(f"  {s['id']:6s} {s['start']:6.1f} 〜 {s['start'] + s['dur']:6.1f}")
