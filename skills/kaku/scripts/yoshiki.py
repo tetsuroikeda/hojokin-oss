@@ -117,6 +117,11 @@ def parse(argv):
     p.add_argument("--text", help="書く文（省くか - なら標準入力）。改行で段落を分ける")
     p.add_argument("--input", help="書く文のファイル（会社のフォルダの中の .txt。記録/一時/書く文.txt など）")
     p.add_argument("--figures", help="図表の指定の JSON（会社のフォルダの中。工程表の行など。記録/一時/図表.json など）")
+    p = sub.add_parser("schedule", help="スケジュールの表を、工程・作業と月の欄の印で作り直す（A4 横1枚に収める）")
+    common(p, stage=True)
+    p.add_argument("--item", required=True, help="スケジュールの表を持つ制度データの様式の項目の名前")
+    p.add_argument("--form", help="制度データの様式の名前（項目の名前が2つの様式にあるとき）")
+    p.add_argument("--input", required=True, help="スケジュールの指定の JSON（会社のフォルダの中。記録/一時/スケジュール.json など）")
     p = sub.add_parser("pdf", help="その1・2.docx を PDF にした写しを、添付する書類に作る（元は変えない）")
     common(p, stage=True, seido=False, source=False)
     p.add_argument("--soffice", help="LibreOffice（soffice）の場所。省くと決まった場所と Spotlight で探す")
@@ -129,7 +134,7 @@ def parse(argv):
                                     "{\"値\": [{\"画面\": \"…\", \"欄\": \"…\", \"値\": …}]} の形")
     args = parser.parse_args(argv)
     if args.command is None:
-        raise Refused("outline・map・write・sheet・cells・recalc・pdf のどれかを付けてください")
+        raise Refused("outline・map・write・schedule・sheet・cells・recalc・pdf のどれかを付けてください")
     if args.command == "sheet":
         if args.values is not None and (args.field or args.value is not None or args.screen):
             raise Refused("--values と、--field・--value・--screen は一緒に使えません")
@@ -515,6 +520,86 @@ def do_write(folder: Path, args, yw) -> int:
     return OK
 
 
+SCHEDULE_FIELD = "スケジュールの表"
+
+
+def schedule_position(entry, root, yw):
+    """項目のスケジュールの表の書き込む位置（範囲「表」）と、制度データを直すときの欄の並び。
+
+    範囲「表」の欄があれば、それを使う。なければ、表の中のセルを欄ごとに対応づけた欄（スケジュール1行目（2列目）など）
+    から表を決め、それらの欄を1つの「表」の欄に置き換えた並びも返す（表を作り直すと行が変わり、セルの欄は使えなくなる）。
+    """
+    subs = [s for s in entry.get("欄") or [] if isinstance(s, dict) and isinstance(s.get("書き込む位置"), dict)]
+    for s in subs:
+        if s["書き込む位置"].get("範囲") == yw.TABLE:
+            return s["書き込む位置"], None
+    groups = {}
+    for s in subs:
+        pos = s["書き込む位置"]
+        m = re.fullmatch(r"(.+\.t[0-9]+)\.r[0-9]+\.c[0-9]+", str(pos.get("場所") or ""))
+        if pos.get("範囲") == yw.CELL and m and "スケジュール" in str(pos.get("見出し") or "") + str(s.get("名前") or ""):
+            groups.setdefault((m.group(1), pos.get("見出し")), []).append(s)
+    if len(groups) != 1:
+        raise Refused(f"項目「{entry.get('名前')}」に、スケジュールの表の書き込む位置が見つかりません。outline の一覧を"
+                      f"読み取り役に渡し、表を範囲「表」の欄（欄の名前「{SCHEDULE_FIELD}」、場所は表の場所）として対応づけてください")
+    (place, heading), inner = next(iter(groups.items()))
+    position = yw.check_position(root, {"見出し": heading, "場所": place, "範囲": yw.TABLE}, SCHEDULE_FIELD)
+    kept = [s for s in entry.get("欄") or [] if not any(s is x for x in inner)]
+    return position, kept + [{"名前": SCHEDULE_FIELD, "書き込む位置": position}]
+
+
+def do_schedule(folder: Path, args, yw) -> int:
+    from lib import xml_spans
+    from lib.docx_min import write_replacing
+
+    case = find_case(folder, args.case)
+    stage = find_stage(folder, case, args.stage)
+    seido, seido_path = find_seido(folder, args.seido)
+    form, entry = forms_with_item(seido, args.item, args.form)
+    spec, _ = read_json(folder, args.input, "スケジュールの指定の JSON")
+    target = application_file(folder, case, stage, WORD_FILE)
+    first = not os.path.lexists(str(target))
+    before = find_source(folder, case, args.source, form).read_bytes() if first else target.read_bytes()
+    root = xml_spans.parse(yw.read_parts(before)[1][yw.DOC])
+    position, new_fields = schedule_position(entry, root, yw)
+    old_fields = entry.get("欄")
+    if new_fields is not None:
+        entry["欄"] = new_fields  # 比べるときも、新しい並び（表の範囲）で比べる
+    label = yw.field_label(args.item, SCHEDULE_FIELD)
+    try:
+        new_blob, summary = yw.write_schedule(before, position, spec, label, mapped_positions(form))
+    except (yw.OutsideChange, yw.ScheduleError) as e:
+        entry["欄"] = old_fields
+        if isinstance(e, yw.ScheduleError):
+            print(f"しませんでした：{e}。")
+            return REFUSED
+        print(f"保存しませんでした：{WORD_FILE} に書くと、書いてよい範囲の外が変わります（{len(e.differences)}か所）。"
+              "前のファイルのままです。道具か様式の想定が違うので、作者に知らせてください。")
+        for d in e.differences:
+            print(f"- {d}")
+        return OUTSIDE
+    if new_fields is not None:
+        # 先に制度データを直す（申請書を書いた後に止まっても、表の範囲は前の申請書でも見つかる。守りの hook が使う）
+        seido_rel = places.relative_inside(folder, seido_path)
+        try:
+            places.no_link_on_the_way(folder, seido_rel)
+        except places.PlaceError as e:
+            raise Refused(f"{e.link} が別名（シンボリックリンク）になっているので、制度データに書きません")
+        write_replacing(seido_path, (json.dumps(seido, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    target = application_file(folder, case, stage, WORD_FILE)
+    write_replacing(target, new_blob)
+    rel = places.relative_inside(folder, target)
+    made = "公式資料の様式から写して作り、" if first else ""
+    print(f"{rel} に、{made}スケジュールの表を作りました（{summary['行']}行。月の欄は {summary['月']}、"
+          f"高さは用紙1枚の約{int(summary['高さの見積もり'] * 100)}%の見積もり）。")
+    if new_fields is not None:
+        print(f"- 表の中のセルを欄ごとに対応づけていたので、制度データの欄を「{SCHEDULE_FIELD}」（範囲「表」）1つにまとめました。")
+    for note in summary["注意"]:
+        print(f"- 注意：{note}")
+    print("- 直前の版と比べ、書いてよい範囲の外は変わっていません。PDF の写しを作って、1枚に収まったかを見てください。")
+    return OK
+
+
 EXCEL_FILE = "その3.xlsx"
 RECALC_WORK_DIR = f"{company.MARKER_DIR}/{company.TEMP_DIR}/計算し直し"
 _ROUND_SUFFIX = re.compile(r"[_＿\s]*第\s*[0-9０-９]+\s*回$")
@@ -741,8 +826,11 @@ def do_pdf(folder: Path, args, yw) -> int:
     work = places.actual(folder, PDF_WORK_DIR, partial=True) / uuid.uuid4().hex
     try:
         work.mkdir(parents=True)
+        # 見た目だけを整えた写しを PDF にする（行の高さの固定と浮いた表。元の Word は変えない）
+        copy = work / "写し.docx"
+        copy.write_bytes(yw.layout_copy(before))
         try:
-            made = libreoffice.convert_to_pdf(src, work, soffice)
+            made = libreoffice.convert_to_pdf(copy, work, soffice)
         except libreoffice.LibreOfficeError as e:
             print(f"しませんでした：{e}。{WORD_FILE} は前のままです。")
             return REFUSED
@@ -947,7 +1035,7 @@ def main(argv) -> int:
               "プラグインを入れ直してから、もう一度試してください。")
         return BROKEN
     handlers = {"outline": do_outline, "map": do_map, "write": do_write, "sheet": do_sheet, "pdf": do_pdf,
-                "cells": do_cells, "recalc": do_recalc}
+                "cells": do_cells, "recalc": do_recalc, "schedule": do_schedule}
     try:
         return handlers[args.command](folder, args, yw)
     except Refused as e:

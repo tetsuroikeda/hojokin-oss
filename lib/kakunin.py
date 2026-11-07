@@ -280,8 +280,27 @@ def _item_ranges(root, seido: Optional[dict]) -> List[Tuple[str, List]]:
             rng = yw.resolve(root, pos, name)
         except ValueError:
             continue  # ほかの Word の様式の項目か、見出しが見つからない
+        if pos.get("範囲") == yw.TABLE:  # 表ごとの範囲（スケジュールの表）は、表の中の段落
+            out.append((name, _TableParagraphs(rng.nodes[0])))
+            continue
         out.append((name, [n for n in rng.nodes if n.is_(yw.W, "p")]))
     return out
+
+
+class _TableParagraphs(list):
+    """表ごとの範囲の段落（表も持つ。文字は工程・作業と印の期間にまとめて渡す）。"""
+
+    def __init__(self, table) -> None:
+        super().__init__(p for p in table.iter() if p.is_(yw.W, "p"))
+        self.table = table
+
+
+def _item_text(ps, periods: bool = True) -> str:
+    """項目の範囲の文字。表ごとの範囲（スケジュールの表）は、工程・作業と印の期間にまとめる。
+    periods が偽なら、工程と作業の名前だけ（根拠対照表との照合用。月の境の日付は、列の見出しから作った文字なので照らさない）。"""
+    if isinstance(ps, _TableParagraphs):
+        return yw.table_text(ps.table, periods)
+    return _non_blue_text(ps)
 
 
 def form_table_notes(blob: bytes, rel: str, seido: Optional[dict]) -> List[str]:
@@ -327,7 +346,12 @@ def word_findings(blob: bytes, rel: str, seido: Optional[dict]) -> List[Finding]
         for kind, snippet in marks(yw.text_of(p)):
             out.append(Finding(kind, rel, labels.get(id(p)) or _place(p), snippet))
     for name, ps in items:
-        written = [p for p in ps if yw.blue_state(p) != "全部" and yw.text_of(p).strip()]
+        if isinstance(ps, _TableParagraphs):
+            # スケジュールの表は、見出しの行の黒い文字では書いたことにせず、月の欄に印があるかで見る
+            written = [p for p in ps if yw.blue_state(p) != "全部" and yw.text_of(p).strip() in yw.MARKS
+                       and yw.text_of(p).strip()]
+        else:
+            written = [p for p in ps if yw.blue_state(p) != "全部" and yw.text_of(p).strip()]
         if not written:
             out.append(Finding(BLANK, rel, name, "（まだ何も書いていない項目）"))
     return out
@@ -452,7 +476,7 @@ def _texts_of(blob: bytes, rel: str, suffix: str, seido: Optional[dict]) -> Tupl
         items = _item_ranges(root, seido)
         if items:
             for item, ps in items:
-                out[item] = _non_blue_text(ps)
+                out[item] = _item_text(ps, periods=False)
         else:
             out[rel] = _non_blue_text(_outer_paragraphs(root))
     elif suffix in EXCEL_SUFFIXES and name == input_sheet.FILE_NAME:
@@ -908,7 +932,7 @@ def _word_sections(blob: bytes, rel: str, seido: Optional[dict]) -> List[str]:
     out = [f"## {rel}", ""]
     if items:
         for name, ps in items:
-            out += [f"### {name}", "", _non_blue_text(ps) or "（まだ何も書いていません）", ""]
+            out += [f"### {name}", "", _item_text(ps) or "（まだ何も書いていません）", ""]
     else:
         out += ["（様式の項目との対応がないので、本文の全体を載せます）", "", _non_blue_text(_outer_paragraphs(root)), ""]
     return out

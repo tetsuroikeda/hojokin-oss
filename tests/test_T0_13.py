@@ -86,6 +86,7 @@ TOOL_CALLS = (
     ("kaku/scripts/yoshiki.py", "outline", ("--excel",)),
     ("kaku/scripts/yoshiki.py", "map", ("--input", "記録/一時/様式の対応.json")),
     ("kaku/scripts/yoshiki.py", "write", ("--item", "1-1 現状分析", "--input", "記録/一時/書く文.txt")),
+    ("kaku/scripts/yoshiki.py", "schedule", ("--item", "5. 事業の実施体制とスケジュール", "--input", "記録/一時/スケジュール.json")),
     ("kaku/scripts/yoshiki.py", "cells", ("--input", "記録/一時/その3の値.json")),
     ("kaku/scripts/yoshiki.py", "recalc", ()),
     ("kaku/scripts/yoshiki.py", "sheet", ("--values", "記録/一時/入力シートの値.json")),

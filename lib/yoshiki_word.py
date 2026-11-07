@@ -23,6 +23,10 @@
 - {"見出し": "（２）事業計画名（３０字程度）", "場所": "t1.r0.c0", "範囲": "セル"}
   そのセルの段落すべて（セルの中に表があれば、その手前まで）。見出しは、同じ行のほかのセルの文字か、そのセルの
   表のすぐ前にある文字のある段落であること。
+- {"見出し": "≪事業計画期間にかかるスケジュール≫", "場所": "t5.r0.c0.t0", "範囲": "表"}
+  表の全体（行・セル・列の幅まで）。月の欄に印を付けるスケジュールの表のように、道具が表ごと作り直す表に使う
+  （write_schedule。11/7 の作者の指摘：工程を細かく並べて4ページになり、月の欄に印がなかった）。見出しは、
+  表のすぐ前にある文字のある段落であること。表の中のセルを別に対応づけた欄は、比べるときに表の範囲が覆う。
 
 書く文の書式：書いてよい範囲の空の段落（なければ最初の段落）の段落の書式を写す。文字の書式は、その段落の印の書式から、
 色（w:color）と変更履歴の印を除いたものにする（実験 E2：印の書式をそのまま写すと、補足事項の行で書いた文字が青になった）。
@@ -59,7 +63,8 @@ CONTENT_TYPES = "[Content_Types].xml"
 
 AFTER_HEADING = "見出しの後"
 CELL = "セル"
-KINDS = (AFTER_HEADING, CELL)
+TABLE = "表"
+KINDS = (AFTER_HEADING, CELL, TABLE)
 
 # 様式の説明の青字（その1・2 の冒頭に「説明の青字は削除の上」とある）
 EXPLANATION_COLORS = ("0070C0",)
@@ -352,11 +357,13 @@ def outline_text(entries: Sequence[Dict]) -> str:
 class Range:
     """container の子の [start, end) が書いてよい範囲。"""
 
-    def __init__(self, container: Node, start: int, end: int, label: str) -> None:
+    def __init__(self, container: Node, start: int, end: int, label: str, signature: bytes = b"") -> None:
         self.container = container
         self.start = start
         self.end = end
         self.label = label
+        # 比べるときに、範囲の印と一緒に比べる中身（範囲「表」では、表の設定と列の数。行と列の幅だけを書いてよいとするため）
+        self.signature = signature
 
     @property
     def nodes(self) -> List[Node]:
@@ -420,6 +427,32 @@ def _heading_near_cell(cell: Node, heading: str) -> bool:
         k = cells.index(cell)
         if len(top) == len(cells) and k < len(top) and any(norm(text_of(p)) == key for p in top[k].findall(W, "p")):
             return True
+    return _heading_before_table(table, heading)
+
+
+def _shape(node: Optional[Node]) -> str:
+    """要素の形（名前・属性・子の並び）。表の設定を、書く前と後で比べるのに使う。"""
+    if node is None:
+        return ""
+    return f"<{node.local} {sorted(node.attrs.items())}>" + "".join(_shape(c) for c in node.children) + f"</{node.local}>"
+
+
+_MONTH_LABEL = re.compile(r"^[0-9０-９]{1,2}月$")
+
+
+def _looks_like_schedule(tbl: Node) -> bool:
+    """月の列（「4月」などの見出しが6つ以上）と、事業計画の年（「〜年目」）の見出しを持つ表か。"""
+    rows = tbl.findall(W, "tr")[:4]
+    years = any("年目" in text_of(tc) for tr in rows for tc in tr.findall(W, "tc"))
+    months = max((sum(1 for tc in tr.findall(W, "tc") if _MONTH_LABEL.match(text_of(tc).strip())) for tr in rows), default=0)
+    return years and months >= 6
+
+
+def _heading_before_table(table: Node, heading: str) -> bool:
+    """表のすぐ前の、文字のある段落が見出しか。"""
+    key = norm(heading)
+    if table.parent is None:
+        return False
     siblings = table.parent.children
     for node in reversed(siblings[:siblings.index(table)]):
         if node.is_(W, "p") and text_of(node).strip():
@@ -443,6 +476,23 @@ def resolve(root: Node, position: Dict, label: str = "") -> Range:
         raise FormError("書き込む位置に「見出し」（様式の文字のまま）がありません")
     if place is not None and not isinstance(place, str):
         raise FormError("書き込む位置の「場所」は文字にしてください（例：t4.r2.c0.p0）")
+    if kind == TABLE:
+        if not place:
+            raise FormError("「表」の書き込む位置には、表の「場所」（例：t5.r0.c0.t0）が要ります")
+        tbl = node_at(body_of(root), place)
+        if tbl is None or not tbl.is_(W, "tbl"):
+            raise FormError(f"場所 {place} は、様式の表ではありません")
+        if not _heading_before_table(tbl, heading):
+            raise FormError(f"場所 {place} の表のすぐ前に、見出し「{heading}」がありません")
+        if not _looks_like_schedule(tbl):
+            raise FormError(f"場所 {place} の表は、月の列と事業計画の年の列を持つスケジュールの表ではありません。"
+                            "範囲「表」は、スケジュールの表だけに使います（ほかの表はセルごとに対応づける）")
+        start = tbl.parent.children.index(tbl)
+        grid = tbl.find(W, "tblGrid")
+        cols = len(grid.findall(W, "gridCol")) if grid is not None else 0
+        tblpr = tbl.find(W, "tblPr")
+        signature = f"列:{cols}|{sorted(tbl.attrs.items())}|{_shape(tblpr)}".encode("utf-8")
+        return Range(tbl.parent, start, start + 1, label, signature)
     if kind == AFTER_HEADING:
         node = find_heading(root, heading, place)
         cell = node.parent
@@ -533,6 +583,24 @@ def _kept_marks(data: bytes, nodes: Sequence[Node]) -> bytes:
     return b"".join(out)
 
 
+_EXACT_LINE = re.compile(rb'(:lineRule=")exact(")')
+_FLOATING_TABLE = re.compile(rb"<(?:\w+:)?tblpPr\b[^>]*/>")
+
+
+def layout_copy(blob: bytes) -> bytes:
+    """PDF にする写しの、見た目だけの直し（元の Word は変えない。DESIGN 5章「PDF にするときは写しを作る」）。
+
+    - 行の高さを固定した段落を最小の高さにする（書体が置き換わると、文字が罫線に重なって切れるため）。
+    - 浮いた表（tblpPr。役割分担の表）を文の流れに置く（前の段落の途中に割り込んで、文が表で切れたため。11/7）。
+    """
+    _infos, parts = read_parts(blob)
+    data = parts.get(DOC)
+    if data is None:
+        return blob
+    fixed = _FLOATING_TABLE.sub(b"", _EXACT_LINE.sub(rb"\1atLeast\2", data))
+    return blob if fixed == data else rebuild_zip(blob, {DOC: fixed})
+
+
 def _run_text(w: str, line: str) -> str:
     pieces = []
     for i, part in enumerate(line.split("\t")):
@@ -581,6 +649,9 @@ def new_paragraphs(data: bytes, rng: Range, text: str, placed: Optional[Dict[str
     w = template.prefix
     ppr = template.find(W, "pPr")
     ppr_bytes = _clean_props(data, ppr, DROP_FROM_PARAGRAPH, DROP_FROM_RUN) if ppr is not None else b""
+    # 行の高さを固定した段落（直近実績の表など）は、書いた文字が罫線に重なって切れるので、最小の高さにする
+    # （11/7 の作者の指摘。PDF で「302,000,000円」に罫線が重なった）
+    ppr_bytes = _EXACT_LINE.sub(rb"\1atLeast\2", ppr_bytes)
     mark = ppr.find(W, "rPr") if ppr is not None else None
     rpr_bytes = _clean_props(data, mark, DROP_FROM_RUN) if mark is not None else b""
     kept = _kept_marks(data, nodes)
@@ -763,7 +834,390 @@ def item_text(blob: bytes, position: Dict) -> str:
     _infos, parts = read_parts(blob)
     root = xml_spans.parse(parts[DOC])
     rng = resolve(root, position)
+    if position.get("範囲") == TABLE:
+        return table_text(rng.nodes[0])
     return "\n".join(text_of(n) or figure_text(n) for n in rng.nodes if n.is_(W, "p"))
+
+
+# ---------------------------------------------------------------- スケジュールの表（表ごと作り直す）
+#
+# 11/7 の作者の指摘：スケジュールが細かい作業の行で4ページになり、月の欄に印がなかった（日付を名前に書いていた）。
+# 印を付ける月の欄は数が多く（13か月＋5年×4）、欄ごとに書くと壊れやすいので、この道具が表ごと作る。
+# 何を行にし、どの月に何の印を付けるかは書き手が決める。道具は、A4 横1枚に収まるかを見積もり、表を組む。
+# 列：工程・作業・月（1年目の前の月）・年ごとの4列（四半期）。列の数は様式の表のまま（列の幅は、作業の列を広げる）。
+
+MARKS = "●○◎◇◆△▲■□★"
+SCHEDULE_FONT_SIZE = 14      # 7pt（半ポイント）
+SCHEDULE_QUARTER_WIDTH = 300  # 四半期の列の幅（twip）。印だけなので狭くし、作業の列に回す
+SCHEDULE_ROOM_ABOVE = 1700    # 表の上の見出しと説明・表の下の注の分（twip。見積もり）
+_MONTH = re.compile(r"^\s*([0-9]{4})\s*[-/年]\s*([0-9]{1,2})\s*月?\s*$")
+# 工程と作業の名前に書いた日付（時期は月の欄の印で示す）
+_DATE_IN_NAME = re.compile(r"[0-9０-９]{4}\s*(年|[/／.．\-－]\s*[0-9０-９]{1,2})|[0-9０-９]{1,2}\s*月|令和|[RＲ]\s*[0-9０-９]{1,2}\s*[.．年]")
+THICK = 18
+
+
+class ScheduleError(FormError):
+    """スケジュールの指定が正しくない、または A4 横1枚に収まらない。"""
+
+
+def _month_index(value, what: str) -> int:
+    m = _MONTH.match(str(value or ""))
+    if m is None or not 1 <= int(m.group(2)) <= 12:
+        raise ScheduleError(f"{what}は「2027-07」の形の年と月にしてください（いまは {value!r}）")
+    return int(m.group(1)) * 12 + int(m.group(2)) - 1
+
+
+def _ym(index: int) -> Tuple[int, int]:
+    return index // 12, index % 12 + 1
+
+
+def _text_units(text: str) -> float:
+    return sum(1.0 if unicodedata.east_asian_width(ch) in "FWA" else 0.55 for ch in text)
+
+
+def _lines(text: str, width: int, size: int = SCHEDULE_FONT_SIZE) -> int:
+    per_line = max(1.0, (width - 2 * CELL_MARGIN) / (size * 10))
+    return max(1, -int(-_text_units(text) // per_line))
+
+
+def _sched_cell(w: str, width: int, text: str, fonts: str, *, span: int = 1, vmerge: Optional[str] = None,
+                borders: Optional[Dict[str, int]] = None, jc: str = "center", size: int = SCHEDULE_FONT_SIZE,
+                bold: bool = False, shade: Optional[str] = None, tight: bool = False, kept: str = "") -> str:
+    pr = [f'<{w}:tcW {w}:w="{width}" {w}:type="dxa"/>']
+    if span > 1:
+        pr.append(f'<{w}:gridSpan {w}:val="{span}"/>')
+    if vmerge == "restart":
+        pr.append(f'<{w}:vMerge {w}:val="restart"/>')
+    elif vmerge == "continue":
+        pr.append(f"<{w}:vMerge/>")
+    if borders:
+        sides = "".join(f'<{w}:{side} {w}:val="single" {w}:sz="{sz}" {w}:space="0" {w}:color="auto"/>'
+                        for side, sz in sorted(borders.items(), key=lambda kv: ("top", "left", "bottom", "right").index(kv[0])))
+        pr.append(f"<{w}:tcBorders>{sides}</{w}:tcBorders>")
+    if shade:
+        pr.append(f'<{w}:shd {w}:val="clear" {w}:color="auto" {w}:fill="{shade}"/>')
+    if tight:  # 月と四半期の狭い列は、左右の余白を詰めて「7月」と印を1行に収める
+        pr.append(f'<{w}:tcMar><{w}:left {w}:w="15" {w}:type="dxa"/><{w}:right {w}:w="15" {w}:type="dxa"/></{w}:tcMar>')
+    pr.append(f'<{w}:vAlign {w}:val="center"/>')
+    rpr = f"<{w}:rPr>{fonts}{f'<{w}:b/>' if bold else ''}<{w}:sz {w}:val=\"{size}\"/><{w}:szCs {w}:val=\"{size}\"/></{w}:rPr>"
+    ppr = (f'<{w}:pPr><{w}:spacing {w}:before="0" {w}:after="0" {w}:line="240" {w}:lineRule="auto"/>'
+           f'<{w}:ind {w}:left="0" {w}:right="0" {w}:firstLine="0"/><{w}:jc {w}:val="{jc}"/>{rpr}</{w}:pPr>')
+    runs = []
+    for i, line in enumerate(text.split("\n")):
+        if i:
+            runs.append(f"<{w}:r>{rpr}<{w}:br/></{w}:r>")
+        if line:
+            runs.append(f'<{w}:r>{rpr}<{w}:t xml:space="preserve">{escape(line)}</{w}:t></{w}:r>')
+    return f"<{w}:tc><{w}:tcPr>{''.join(pr)}</{w}:tcPr><{w}:p>{ppr}{kept}{''.join(runs)}</{w}:p></{w}:tc>"
+
+
+def _row(w: str, cells: Sequence[str], height: int, header: bool = False) -> str:
+    head = f"<{w}:tblHeader/>" if header else ""
+    return (f'<{w}:tr><{w}:trPr><{w}:cantSplit/><{w}:trHeight {w}:val="{height}"/>{head}</{w}:trPr>'
+            + "".join(cells) + f"</{w}:tr>")
+
+
+def _periods(row: Dict, k: int) -> List[Tuple[int, int, str]]:
+    raw = row.get("期間")
+    if raw is None:
+        raw = [{"始め": row.get("始め"), "終わり": row.get("終わり"), "印": row.get("印")}]
+    if not isinstance(raw, list) or not raw:
+        raise ScheduleError(f"{k}行目：「期間」は [{{\"始め\": \"2027-07\", \"終わり\": \"2027-10\", \"印\": \"●\"}}] の形にしてください")
+    out = []
+    for p in raw:
+        if not isinstance(p, dict):
+            raise ScheduleError(f"{k}行目：「期間」の1つが {{ }} の形ではありません")
+        s = _month_index(p.get("始め"), f"{k}行目の始め")
+        e = _month_index(p.get("終わり") or p.get("始め"), f"{k}行目の終わり")
+        if e < s:
+            raise ScheduleError(f"{k}行目：終わり（{p.get('終わり')}）が始め（{p.get('始め')}）より前です")
+        mark = str(p.get("印") or "●").strip()
+        if len(mark) != 1 or mark not in MARKS:
+            raise ScheduleError(f"{k}行目：印は {'・'.join(MARKS)} のどれか1文字にしてください（いまは {mark!r}）")
+        out.append((s, e, mark))
+    return out
+
+
+def _table_years(tbl: Node) -> int:
+    rows = tbl.findall(W, "tr")
+    if len(rows) > 1:
+        found = sum(1 for tc in rows[1].findall(W, "tc") if "年目" in text_of(tc))
+        if found:
+            return found
+    return 5
+
+
+def write_schedule(blob: bytes, position: Dict, spec: Dict, label: str = "",
+                   other_positions: Sequence[Tuple[str, Dict]] = ()) -> Tuple[bytes, Dict]:
+    """position（範囲「表」）のスケジュールの表を、spec のとおりに作り直したファイルと、要約を返す。
+
+    spec：{"1年目の始め": "2028-04", "補助事業実施期間": {"始め": "2027-07", "終わり": "2028-03"}, "凡例": "●：…",
+           "行": [{"工程": "1. 要件定義・設計", "作業": "業務の分析と設計", "始め": "2027-07", "終わり": "2027-10", "印": "●"}]}
+    行の期間が2つ以上なら "期間": [{"始め", "終わり", "印"}, …]。
+    """
+    if position.get("範囲") != TABLE:
+        raise ScheduleError("スケジュールの表は、範囲「表」の書き込む位置に書きます")
+    if not isinstance(spec, dict):
+        raise ScheduleError("スケジュールの指定は { } の形にしてください")
+    _infos, parts = read_parts(blob)
+    data = parts[DOC]
+    root = xml_spans.parse(data)
+    rng = resolve(root, position, label)
+    tbl = rng.nodes[0]
+    w = tbl.prefix
+    grid = [int(g.attr(W, "w") or 0) for g in tbl.find(W, "tblGrid").findall(W, "gridCol")] \
+        if tbl.find(W, "tblGrid") is not None else []
+    years = _table_years(tbl)
+    months = len(grid) - 2 - 4 * years
+    if months < 6:
+        raise ScheduleError(f"様式の表の列（{len(grid)}列）が、工程・作業・月・{years}年×4 の形ではありません")
+    first_year = _month_index(spec.get("1年目の始め"), "「1年目の始め」")
+    window = first_year - months
+    last = first_year + 12 * years - 1
+    impl = spec.get("補助事業実施期間")
+    if not isinstance(impl, dict):
+        raise ScheduleError("「補助事業実施期間」を {\"始め\": \"2027-07\", \"終わり\": \"2028-03\"} の形で渡してください")
+    impl_s = _month_index(impl.get("始め"), "補助事業実施期間の始め")
+    impl_e = _month_index(impl.get("終わり"), "補助事業実施期間の終わり")
+    notes: List[str] = []
+    if impl_e < impl_s:
+        raise ScheduleError("補助事業実施期間の終わりが始めより前です")
+    if impl_e >= first_year:
+        raise ScheduleError(f"補助事業実施期間の終わり（{impl.get('終わり')}）が、事業計画1年目の始め（{spec.get('1年目の始め')}）"
+                            "より後です。1年目は、補助事業を終えた次の決算期から数えます")
+    if impl_s < window:
+        notes.append(f"補助事業実施期間の始め（{impl.get('始め')}）は表の月より前なので、表は{_ym(window)[0]}年{_ym(window)[1]}月から示しました")
+        impl_s = window
+    rows = spec.get("行")
+    if not isinstance(rows, list) or not rows:
+        raise ScheduleError("「行」に、工程と作業を1行ずつ並べてください")
+    legend = str(spec.get("凡例") or "●：実施　○：準備・継続").strip()
+
+    # 列の幅：四半期の列を狭め、作業の列を広げる（合計は様式のまま）
+    widths = list(grid)
+    q0 = 2 + months
+    for c in range(q0, len(widths)):
+        if widths[c] > SCHEDULE_QUARTER_WIDTH:
+            widths[1] += widths[c] - SCHEDULE_QUARTER_WIDTH
+            widths[c] = SCHEDULE_QUARTER_WIDTH
+
+    fonts_node = next((n for n in tbl.iter() if n.is_(W, "rFonts")), None)
+    fonts = fonts_node.raw(data).decode("utf-8") if fonts_node is not None else ""
+    P = impl_s - window                      # 実施期間の前の月の列
+    B = impl_e - impl_s + 1                  # 実施期間の列
+    Q = months - P - B                       # 実施期間の後、1年目の前の月の列
+    impl_cols = set(range(2 + P, 2 + P + B))
+
+    def border(col: int, top: bool = False, bottom: bool = False) -> Dict[str, int]:
+        b: Dict[str, int] = {}
+        if col == 2 + P:
+            b["left"] = THICK
+        if col == 2 + P + B - 1:
+            b["right"] = THICK
+        if col in impl_cols and top:
+            b["top"] = THICK
+        if col in impl_cols and bottom:
+            b["bottom"] = THICK
+        return b
+
+    def span_w(c0: int, n: int) -> int:
+        return sum(widths[c0:c0 + n])
+
+    out_rows: List[str] = []
+    # 1行目：凡例・実施期間・事業計画期間
+    # 表の中のブックマークなどの印は、対になる相手が表の外にあることがあるので、最初のセルに残す
+    kept = _kept_marks(data, [tbl]).decode("utf-8")
+    cells = [_sched_cell(w, span_w(0, 2), legend, fonts, span=2, vmerge="restart", jc="left", size=13, kept=kept)]
+    if P:
+        cells.append(_sched_cell(w, span_w(2, P), "", fonts, span=P))
+    cells.append(_sched_cell(w, span_w(2 + P, B), "補助事業実施期間", fonts, span=B, bold=True,
+                             borders={"top": THICK, "left": THICK, "right": THICK}))
+    cells.append(_sched_cell(w, span_w(2 + P + B, Q + 4 * years), "事業計画期間", fonts, span=Q + 4 * years, bold=True))
+    out_rows.append(_row(w, cells, 300, header=True))
+    # 2行目：暦の年（実施期間の境で分ける）と、事業計画N年目
+    cells = [_sched_cell(w, span_w(0, 2), "", fonts, span=2, vmerge="continue")]
+    c = 0
+    while c < months:
+        seg = 0 if c < P else (1 if c < P + B else 2)
+        y = _ym(window + c)[0]
+        n = 1
+        while c + n < months and _ym(window + c + n)[0] == y and (0 if c + n < P else (1 if c + n < P + B else 2)) == seg:
+            n += 1
+        b = {}
+        if seg == 1 and c == P:
+            b["left"] = THICK
+        if seg == 1 and c + n == P + B:
+            b["right"] = THICK
+        cells.append(_sched_cell(w, span_w(2 + c, n), f"{y}年" if n >= 3 else "", fonts, span=n, borders=b, size=12,
+                                 tight=True))
+        c += n
+    for k in range(years):
+        cells.append(_sched_cell(w, span_w(q0 + 4 * k, 4), f"事業計画{k + 1}年目", fonts, span=4, size=12))
+    out_rows.append(_row(w, cells, 300, header=True))
+    # 3行目：工程・作業・月・各年の期間
+    cells = [_sched_cell(w, widths[0], "工程", fonts, bold=True), _sched_cell(w, widths[1], "作業", fonts, bold=True)]
+    for c in range(months):
+        cells.append(_sched_cell(w, widths[2 + c], f"{_ym(window + c)[1]}月", fonts, borders=border(2 + c), size=12,
+                                 tight=True))
+    year_labels = []
+    for k in range(years):
+        s, e = _ym(first_year + 12 * k), _ym(first_year + 12 * k + 11)
+        text = f"{s[0]}年{s[1]}月〜\n{e[0]}年{e[1]}月"
+        year_labels.append(text)
+        cells.append(_sched_cell(w, span_w(q0 + 4 * k, 4), text, fonts, span=4, size=12))
+    head3 = max(1, max(_lines(t.split("\n")[0], span_w(q0, 4), 12) for t in year_labels)) * 2
+    out_rows.append(_row(w, cells, 160 * head3 + 80, header=True))
+    height = 300 + 300 + 160 * head3 + 80
+
+    # 工程と作業の行
+    prev = None
+    summary_rows = []
+    for k, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            raise ScheduleError(f"{k}行目が {{ }} の形ではありません")
+        stage = str(row.get("工程") or "").strip()
+        task = str(row.get("作業") or "").strip()
+        if not task and not stage:
+            raise ScheduleError(f"{k}行目：「工程」か「作業」を書いてください")
+        if _DATE_IN_NAME.search(stage + task):
+            raise ScheduleError(f"{k}行目（{stage or task}）：工程と作業の名前に日付を書かず、月の欄の印で示してください")
+        periods = _periods(row, k)
+        marked: Dict[int, str] = {}
+        visible = False
+        for s, e, mark in periods:
+            for c in range(months):
+                if s <= window + c <= e:
+                    marked[2 + c] = mark
+                    visible = True
+            for q in range(4 * years):
+                qs = first_year + 3 * q
+                if s <= qs + 2 and e >= qs:
+                    marked[q0 + q] = mark
+                    visible = True
+            if s < window:
+                notes.append(f"{k}行目（{task or stage}）の{_ym(s)[0]}年{_ym(s)[1]}月からの分は、表の月より前なので表に出ません")
+            if e > last:
+                notes.append(f"{k}行目（{task or stage}）の期間は、事業計画{years}年目より後の分を表に出していません")
+        if not visible:
+            raise ScheduleError(f"{k}行目（{task or stage}）の期間が、表の月（{_ym(window)[0]}年{_ym(window)[1]}月〜"
+                                f"{_ym(last)[0]}年{_ym(last)[1]}月）にかかりません。表の前の準備は、本文に書いてください")
+        same = bool(stage) and stage == prev
+        nxt = rows[k] if k < len(rows) and isinstance(rows[k], dict) else {}
+        joined = bool(stage) and str(nxt.get("工程") or "").strip() == stage
+        vm = "continue" if same else ("restart" if joined else None)
+        is_last = k == len(rows)
+        cells = [_sched_cell(w, widths[0], "" if same else stage, fonts, vmerge=vm, jc="left"),
+                 _sched_cell(w, widths[1], task, fonts, jc="left")]
+        for col in range(2, len(widths)):
+            cells.append(_sched_cell(w, widths[col], marked.get(col, ""), fonts, borders=border(col, bottom=is_last),
+                                     tight=True))
+        lines = max(_lines(task, widths[1]), 1 if same else _lines(stage, widths[0]))
+        row_h = max(320, 170 * lines + 80)
+        height += row_h
+        out_rows.append(_row(w, cells, row_h))
+        prev = stage
+        summary_rows.append({"工程": stage, "作業": task, "印": "".join(sorted(set(marked.values())))})
+
+    # A4 横1枚に収まるか（表の入っている節の用紙から見積もる）
+    room = _section_height(root, tbl) - SCHEDULE_ROOM_ABOVE
+    if height > room:
+        raise ScheduleError(f"表の高さが、見積もりで用紙1枚の{height / room:.1f}倍（{len(rows)}行）になり、1枚に収まりません。"
+                            "細かい作業を1つの行にまとめるか、作業の名前を短くしてください（書いていません）")
+    grid_xml = f"<{w}:tblGrid>" + "".join(f'<{w}:gridCol {w}:w="{x}"/>' for x in widths) + f"</{w}:tblGrid>"
+    tblpr = tbl.find(W, "tblPr")
+    new_tbl = (tbl.start_tag(data) + (tblpr.raw(data) if tblpr is not None else b"") + grid_xml.encode("utf-8")
+               + "".join(out_rows).encode("utf-8") + f"</{tbl.name}>".encode("utf-8"))
+    new_data = xml_spans.splice(data, tbl.start, tbl.end, new_tbl)
+    new_blob = rebuild_zip(blob, {DOC: new_data})
+    positions = [(rng.label, position)] + [(lab, pos) for lab, pos in other_positions if lab != rng.label]
+    differences = compare_docx(blob, new_blob, positions)
+    if differences:
+        raise OutsideChange(differences)
+    summary = {"項目": rng.label, "行": len(rows), "月": f"{_ym(window)[0]}年{_ym(window)[1]}月〜{_ym(first_year - 1)[0]}年{_ym(first_year - 1)[1]}月",
+               "高さの見積もり": round(height / room, 2), "注意": notes, "行の一覧": summary_rows}
+    return new_blob, summary
+
+
+def _section_height(root: Node, tbl: Node) -> int:
+    """表の入っている節の、用紙の高さから上下の余白を引いたもの（twip）。分からなければ A4 横。"""
+    body = body_of(root)
+    top = tbl
+    while top.parent is not None and top.parent is not body:
+        top = top.parent
+    sect = None
+    if top.parent is body:
+        for node in body.children[body.children.index(top):]:
+            if node.is_(W, "sectPr"):
+                sect = node
+            elif node.is_(W, "p") and node.find(W, "pPr") is not None:
+                sect = node.find(W, "pPr").find(W, "sectPr")
+            if sect is not None:
+                break
+    h, t, b = 11906, 720, 720
+    if sect is not None:
+        size, mar = sect.find(W, "pgSz"), sect.find(W, "pgMar")
+        if size is not None:
+            h = int(size.attr(W, "h") or h)
+        if mar is not None:
+            t = abs(int(mar.attr(W, "top") or t))
+            b = abs(int(mar.attr(W, "bottom") or b))
+    return h - t - b
+
+
+def table_text(tbl: Node, periods: bool = True) -> str:
+    """表の文字を、審査役と照合が読める形にする。月の欄の印は「2027年7月〜2027年10月●」のように期間にまとめる。"""
+    grid = tbl.find(W, "tblGrid")
+    ncols = len(grid.findall(W, "gridCol")) if grid is not None else 0
+    rows = tbl.findall(W, "tr")
+
+    def spans(tr: Node) -> List[Tuple[str, int, int]]:
+        """列ごとの（セルの文字、結合の中の何列目、結合の列の数）。"""
+        out: List[Tuple[str, int, int]] = []
+        for tc in tr.findall(W, "tc"):
+            pr = tc.find(W, "tcPr")
+            span = pr.find(W, "gridSpan") if pr is not None else None
+            n = int(span.attr(W, "val") or 1) if span is not None else 1
+            shown = "".join(text_of(p) for p in tc.findall(W, "p") if blue_state(p) != "全部")  # 記載例の青字は除く
+            out += [(shown.strip().replace("\n", ""), i, n) for i in range(n)]
+        return out
+
+    def expand(tr: Node) -> List[str]:
+        return [t for t, _i, _n in spans(tr)]
+
+    body_start = next((i for i, tr in enumerate(rows) if len(tr.findall(W, "tc")) == ncols and i >= 1), len(rows))
+    heads = [spans(tr) for tr in rows[:body_start]]
+    labels = []
+    for col in range(ncols):
+        parts = [h[col] for h in heads[1:] if col < len(h) and h[col][0]]
+        if parts and "年目" in parts[0][0] and parts[0][2] == 4:
+            labels.append(f"{parts[0][0]}（第{parts[0][1] + 1}四半期）")
+        else:
+            labels.append("".join(p[0] for p in parts[:2]))
+    lines = []
+    if heads and heads[0] and heads[0][0][0]:
+        if periods:
+            lines.append(f"凡例：{heads[0][0][0]}")
+    stage = ""
+    for tr in rows[body_start:]:
+        cells = expand(tr)
+        if not cells:
+            continue
+        stage = cells[0] or stage
+        runs = []
+        col = 2
+        while col < len(cells):
+            mark = cells[col]
+            if mark and len(mark) == 1 and mark in MARKS:
+                end = col
+                while end + 1 < len(cells) and cells[end + 1] == mark:
+                    end += 1
+                runs.append(f"{labels[col]}{'〜' + labels[end] if end > col else ''}{mark}")
+                col = end + 1
+            else:
+                col += 1
+        name = "｜".join(t for t in (stage, cells[1] if len(cells) > 1 else "") if t)
+        lines.append(f"{name}：{'、'.join(runs) if runs else '（印なし）'}" if periods else name)
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------- 比べる
@@ -841,7 +1295,8 @@ def _units(root: Node, data: bytes, masks: Dict[int, Range]) -> List[Tuple[str, 
         i = 0
         while i <= len(children):
             if mask is not None and i == mask.start:
-                out.append((f"書いてよい範囲「{mask.label}」", None, f"範囲:{mask.label}".encode("utf-8")))
+                out.append((f"書いてよい範囲「{mask.label}」（表の設定と列の数）" if mask.signature else
+                            f"書いてよい範囲「{mask.label}」", None, f"範囲:{mask.label}".encode("utf-8") + mask.signature))
                 if mask.end > i:
                     i = mask.end
                     continue
@@ -861,6 +1316,18 @@ def _units(root: Node, data: bytes, masks: Dict[int, Range]) -> List[Tuple[str, 
     return out
 
 
+def _inside(rng: Optional[Range], tables: Sequence[Node]) -> bool:
+    """範囲 rng の入れ物が、tables のどれかの表の中にあるか。"""
+    if rng is None or not tables:
+        return False
+    n: Optional[Node] = rng.container
+    while n is not None:
+        if any(n is t for t in tables):
+            return True
+        n = n.parent
+    return False
+
+
 def compare_document(before: bytes, after: bytes, positions: Sequence[Tuple[str, Dict]]) -> List[str]:
     """word/document.xml どうしを、書いてよい範囲を覆って比べる。差の説明の一覧を返す。"""
     try:
@@ -876,6 +1343,7 @@ def compare_document(before: bytes, after: bytes, positions: Sequence[Tuple[str,
         out.append("文書の根（名前空間の宣言など）が変わりました")
     masks_b: Dict[int, Range] = {}
     masks_a: Dict[int, Range] = {}
+    resolved = []
     for label, position in positions:
         got = []
         for root in (root_b, root_a):
@@ -883,6 +1351,12 @@ def compare_document(before: bytes, after: bytes, positions: Sequence[Tuple[str,
                 got.append(resolve(root, position, label))
             except FormError:
                 got.append(None)
+        resolved.append((label, position, got))
+    # 表ごと書いてよい範囲（スケジュールの表）の中のセルの欄は、表の範囲が覆う（行を作り直すと、前のセルはなくなる）
+    tables = [[g[k].nodes[0] for _l, p, g in resolved if p.get("範囲") == TABLE and g[k] is not None] for k in (0, 1)]
+    for label, position, got in resolved:
+        if position.get("範囲") != TABLE and any(_inside(got[k], tables[k]) for k in (0, 1)):
+            continue
         if got[0] is None and got[1] is None:
             continue
         if got[0] is None or got[1] is None:
