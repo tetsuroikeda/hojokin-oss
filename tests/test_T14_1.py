@@ -306,7 +306,8 @@ def test_from_downloads_hand_edited_word(tmp_path: Path) -> None:
 
 DEMO2 = TD / "デモの会社_町工場"
 DEMO2_DOCUMENTS = [
-    "決算書_第35期.pdf", "決算書_第36期.pdf", "履歴事項全部証明書.pdf", "納税証明書_その2.pdf", "法人事業概況説明書_第36期.pdf",
+    "決算書_第34期.pdf", "決算書_第35期.pdf", "決算書_第36期.pdf",
+    "履歴事項全部証明書.pdf", "納税証明書_その2.pdf", "法人事業概況説明書_第36期.pdf",
     "役員名簿.docx", "株主名簿.docx", "労働者名簿.xlsx", "見積依頼書.pdf", "要件の概要.pdf",
     "見積書_かすみ野システム工房.pdf", "見積書_しらうめソフト.pdf", "書類の一覧.md",
 ]
@@ -380,7 +381,7 @@ def test_demo2_make_folder(tmp_path: Path) -> None:
                          capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     files = sorted(p.relative_to(target).as_posix() for p in target.rglob("*") if p.is_file())
-    assert len(files) == 17 and not (target / ".hojokin").exists()
+    assert len(files) == 18 and not (target / ".hojokin").exists()
     assert any(f.startswith("入れ口/") for f in files) and any(f.startswith("メールの添付/") for f in files)
     again = subprocess.run([sys.executable, "-B", str(DEMO2 / "make_demo_folder.py"), str(target)],
                            capture_output=True, text=True)

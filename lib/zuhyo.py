@@ -38,7 +38,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from xml.sax.saxutils import escape
 
 FIGURE_LINE = re.compile(r"^\s*【(図|写真)：(.+?)】\s*$")
-KINDS = ("前後比較", "数値計画", "工程表")
+KINDS = ("前後比較", "数値計画", "工程表", "推移")
+# 推移の図（【図：推移｜売上・営業利益】）で並べられる財務モデルの行と、その在りか（数字の控えの「中身」の中）。
+# 制度によって見せたい数字が違う（持続化は売上と客数、省力化は付加価値額と労働生産性など）ので、書き手が選ぶ（11/7）
+TREND_SOURCES = ("合算", "指標", "投資の効果の見え方", "人数")
+TREND_MAX = 3  # 4つ並べると、棒の上の数が隣と重なった
 NUMBERS_FILE = "記録/財務モデルの数字.json"  # lib/zaimu.py の NUMBERS_FILE と同じ
 PHOTO_TYPES = {b"\x89PNG": "png", b"\xff\xd8\xff": "jpeg"}
 
@@ -147,6 +151,17 @@ def _man(v: float) -> str:
 # ---------------------------------------------------------------- 前後比較
 
 
+def _fit_label(text: str, width: float, size: int) -> str:
+    """右揃えの作業名が、図の左の端からはみ出さない長さ（はみ出すなら、後ろを「…」にする。11/7：長い名前の頭が切れた）。"""
+    def units(s: str) -> float:
+        return sum(1.0 if ord(ch) > 0x2000 else 0.55 for ch in s) * size
+    if units(text) <= width:
+        return text
+    while text and units(text + "…") > width:
+        text = text[:-1]
+    return text + "…"
+
+
 def before_after_svg(tasks: Sequence[Dict]) -> Tuple[str, str]:
     """工程ごとの1日の作業時間を、導入前と導入後で比べる横棒（同じ物差し）。（SVG、題）"""
     before = [t for t in tasks if t.get("側") == "導入前" and isinstance(t.get("分"), (int, float))]
@@ -170,7 +185,7 @@ def before_after_svg(tasks: Sequence[Dict]) -> Tuple[str, str]:
         for t in rows:
             y += row_h
             w = bar_w * t["分"] / top
-            body.append(_text(label_w, y - 12, str(t.get("工程") or ""), 26, INK, "end"))
+            body.append(_text(label_w, y - 12, _fit_label(str(t.get("工程") or ""), label_w - 40, 26), 26, INK, "end"))
             body.append(_rect(bar_x, y - 38, w, 30, color))
             body.append(_text(bar_x + w + 12, y - 13, _minutes(t["分"]), 26, INK_2))
         y += 20
@@ -190,6 +205,27 @@ PLAN_PANELS = (("付加価値額", "付加価値額の伸び"), ("労働生産�
 PANEL_TITLES = {"付加価値額": "付加価値額", "労働生産性": "労働生産性", "1人当たり給与": "1人当たり給与支給総額"}
 
 
+def trend_svg(contents: Dict, param: str) -> Tuple[str, str]:
+    """財務モデルの好きな行（売上・営業利益・人数など）の、基準年度と計画の年ごとの棒（行ごとに小さな図を並べる）。"""
+    names = [n.strip() for n in re.split(r"[・、,，/／]", param or "") if n.strip()]
+    if not 1 <= len(names) <= TREND_MAX:
+        raise FigureError(f"推移の図は、財務モデルの行を1〜{TREND_MAX}つ「・」で区切って選んでください（例：【図：推移｜売上・営業利益】）")
+    found: Dict[str, List] = {}
+    for src in TREND_SOURCES:
+        for key, values in (contents.get(src) or {}).items():
+            if isinstance(values, list) and len(values) >= 2 and all(isinstance(v, (int, float)) for v in values):
+                found.setdefault(key, values)
+    panels = []
+    for name in names:
+        if name not in found:
+            raise FigureError(f"財務モデルの数字の控えに「{name}」の年ごとの数字がありません（選べるもの：{'・'.join(found)}）")
+        panels.append((name, found[name], []))
+    title = f"{'・'.join(names)}の推移（基準年度と事業計画の{len(panels[0][1]) - 1}年間）"
+    units = {n: ("人" if n in (contents.get("人数") or {}) else
+                 "率" if n.endswith("率") and max(abs(v) for v in found[n]) < 1.5 else "円") for n in names}
+    return _panels_svg(panels, title, {n: n for n in names}, units, note="財務モデルの数字から")
+
+
 def plan_svg(indicators: Dict) -> Tuple[str, str]:
     """付加価値額・労働生産性・1人当たり給与支給総額の、基準年度と計画の年ごとの棒（指標ごとに小さな図を並べる）。"""
     panels = []
@@ -200,32 +236,48 @@ def plan_svg(indicators: Dict) -> Tuple[str, str]:
         panels.append((key, values, indicators.get(growth) or []))
     years = len(panels[0][1]) - 1
     title = f"数値計画（基準年度と事業計画の{years}年間）"
+    return _panels_svg(panels, title, PANEL_TITLES, {k: "円" for k, _v, _g in panels},
+                       note="年平均は、基準年度から各年までの年平均成長率（様式と同じ切り捨て）。財務モデルの数字から")
+
+
+def _value_label(v: float, unit: str) -> str:
+    if unit == "人":
+        return f"{v:,.0f}人"
+    if unit == "率":
+        return f"{v * 100:.1f}%"
+    return _man(v)
+
+
+def _panels_svg(panels: Sequence[Tuple[str, List, List]], title: str, titles: Dict[str, str], units: Dict[str, str],
+                note: str) -> Tuple[str, str]:
+    """行ごとの小さな棒の図を横に並べる（基準年度は灰色、計画の年は青）。"""
     body = [_text(40, 60, title, 32, INK, bold=True)]
     x = 40
     item, x = _swatch(x, 112, NOW, "基準年度（実績）")
     body.append(item)
     item, x = _swatch(x, 112, PLAN, "計画")
     body.append(item)
-    panel_w, gap, top_y, base_y = 480, 60, 270, 600
+    gap, top_y, base_y = 60, 270, 600
+    panel_w = (WIDTH - 80 - gap * (len(panels) - 1)) / max(1, len(panels))
     for i, (key, values, growth) in enumerate(panels):
         px = 40 + i * (panel_w + gap)
         last = next((g for g in reversed(growth) if isinstance(g, (int, float))), None)
-        body.append(_text(px, 170, PANEL_TITLES[key], 28, INK, bold=True))
+        body.append(_text(px, 170, titles[key], 28, INK, bold=True))
         if last is not None:  # 題の下の行に（長い題と重ならないように）
             body.append(_text(px, 208, f"年平均 {last:+.2f}%（{len(values) - 1}年目）", 24, INK_2))
-        top = max(values) or 1
+        top = max(max(values), 0) or 1
         n = len(values)
         slot = panel_w / n
         bw = slot * 0.56
         body.append(_line(px, base_y, px + panel_w, base_y, INK_2, 2))
         for j, v in enumerate(values):
-            h = (base_y - top_y) * v / top
+            h = max(0.0, (base_y - top_y) * v / top)  # 負の値は棒を描かず、数だけ示す
             bx = px + j * slot + (slot - bw) / 2
             body.append(_rect(bx, base_y - h, bw, h, NOW if j == 0 else PLAN))
-            body.append(_text(bx + bw / 2, base_y - h - 12, _man(v), 22, INK, "middle"))
+            body.append(_text(bx + bw / 2, base_y - h - 12, _value_label(v, units.get(key, "円")),
+                              22 if len(panels) <= 2 else 19, INK, "middle"))
             body.append(_text(bx + bw / 2, base_y + 34, "基準" if j == 0 else f"{j}年目", 24, INK_2, "middle"))
-    body.append(_text(40, base_y + 84, "年平均は、基準年度から各年までの年平均成長率（様式と同じ切り捨て）。"
-                      "財務モデルの数字から", 22, INK_2))
+    body.append(_text(40, base_y + 84, note, 22, INK_2))
     return _svg(base_y + 110, body), title
 
 
@@ -364,9 +416,11 @@ def build(folder: Path, text: str, spec: Optional[Dict], soffice_finder=None) ->
                 raise FigureError(f"{line}：写真（{path_text}）は PNG か JPEG にしてください（PDF のカタログは、ページを画像にしてから）")
             out[line] = Figure(line, title or Path(path_text).stem, data, fmt, w, h, photo=True)
             continue
+        arg, _sep, param = arg.partition("｜")
+        arg = arg.strip()
         if arg not in KINDS:
             raise FigureError(f"{line}：図の種類は {'・'.join(KINDS)} のどれかにしてください")
-        if arg in ("前後比較", "数値計画"):
+        if arg in ("前後比較", "数値計画", "推移"):
             if numbers is None:
                 numbers = load_numbers(folder)
             if numbers is None:
@@ -374,6 +428,11 @@ def build(folder: Path, text: str, spec: Optional[Dict], soffice_finder=None) ->
                                   "先に財務モデルを作ってください（zaimu_model.py）")
             if arg == "前後比較":
                 svgs[line] = before_after_svg(numbers.get("省力化の作業") or [])
+            elif arg == "推移":
+                try:
+                    svgs[line] = trend_svg(numbers.get("中身") or {}, param)
+                except FigureError as e:
+                    raise FigureError(f"{line}：{e}")
             else:
                 svgs[line] = plan_svg((numbers.get("中身") or {}).get("指標") or {})
         else:

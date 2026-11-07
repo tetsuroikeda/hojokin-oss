@@ -34,7 +34,11 @@ LibreOffice で計算し直すのは lib/libreoffice.py。ここでは、どの�
       "基準年度": {"給与支給総額": {"式": "直近_給与支給総額*(1+賃上げ率)^経過年数", "根拠": "…", "出典": "…"}, ...},
                                              # 基準年度の値は、数のほか、直近期の実績からの式でもよい
       "売上原価の割合": {"給与支給総額": {"値": 0.8029, "根拠": "決算書", "出典": "…"}, ...},  # kijun が書く
-      "本補助金の設備の減価償却費": {"式": "新設備の取得額/新設備の耐用年数", "根拠": "…", "出典": "…"}
+      "本補助金の設備の減価償却費": {"式": "新設備の取得額/新設備の耐用年数", "根拠": "…", "出典": "…"},
+      # 以下も任意。計画のシートの下に「損益の内訳」（決算書の科目）を置くためのもの。kijun --into が書く
+      "決算書の科目": {"決算書": "決算書 第18期", "期": "基準年度",      # 期は、決算書がどの期か（基準年度 か 直近期）
+                     "行": [{"科目": "材料費", "区分": "原材料費", "金額": 82600000, "損益の区分": "売上原価",
+                            "出典": "p.3"}, ...]}
     }
 
 - 式に使えるもの：前提の名前、基準年度の名前（「基準_売上」など）、年（基準年度が0、1年目が1）、同じ事業の行の名前
@@ -77,6 +81,21 @@ LibreOffice で計算し直すのは lib/libreoffice.py。ここでは、どの�
 - 足下の賃上げ：直近期（決算書）・締切期・基準年度の給与支給総額と人数から、1人当たり給与支給総額の年平均成長率を
   別紙4 と同じ計算で出す。締切期の値は、基準年度の式の経過年数を1にしたもの。要件ではなく審査で見る値なので、
   満たす・満たさないは付けない。
+
+損益の内訳（指定に「決算書の科目」があるとき。11/7 の作者の指摘「区分にまとめすぎ」）：計画のシートのいちばん下に、
+決算書の科目を、売上高・売上原価・売上総利益・販売費及び一般管理費・営業利益の形で置く（行に損益の区分がなければ、
+区分ごとに並べる）。シートは3つのまま（SPEC F8・T8-12）で、上のセルの位置は変えない。
+- 決算書の列は、決算書の科目の金額そのもの。割合の列は、科目の金額 ÷ 同じ区分の科目の計（数式）。
+- 基準年度と計画の年の科目の値は、根拠のない数字を作らないよう、区分の合算の値 × その割合（按分した見込み）。区分の
+  計と営業利益は【合算】と同じで、売上高と営業利益の行は【合算】の行を指す。照らしの行で、科目の和と営業利益の差が
+  0 かを示す。
+- 本補助金で導入する設備の減価償却費（指定の式）は決算書にないので別の行にし、既存の分だけを科目に分ける。売上原価
+  か販管費かは、別紙4 と同じ「売上原価の割合」で決める。決算書に科目がない区分に計画の値があれば、1行で示す。
+- 内訳は数字の控え（記録/財務モデルの数字.json）に入れない（控えの形は変えない）。Book.accounts に置く。
+
+見た目（lib/zaimu_xlsx.py が書く。値・数式・名前・セルの位置には関わらない）：表の見出しの行は薄い灰色の塗りと太字、
+表の行は細い薄い灰色の罫線、合計・利益の行は上の線と太字。色は、見出しの灰色、社長が書き換えてよい値の薄い黄色、
+「仮」の薄いオレンジの3つだけ。
 """
 
 from __future__ import annotations
@@ -157,8 +176,21 @@ SHORYOKU_ITEMS = {
     "人件費単価": ("円/時", "この事業で働く人の時給の平均（別紙3）"),
 }
 
+# 損益の内訳（決算書の科目。kijun --into が指定に書く）
+ACCOUNTS_KEY = "決算書の科目"
+ACCOUNT_PERIODS = ("基準年度", "直近期")
+SIDE_COST, SIDE_SGA = "売上原価", "販売費及び一般管理費"
+PL_SIDES = {"売上原価": SIDE_COST, "販管費": SIDE_SGA, "販売費及び一般管理費": SIDE_SGA}
+ACCOUNTS_TITLE = "【損益の内訳（決算書の科目。計画の年は、区分の値を決算書の科目の割合で分けた見込み）】"
+ACCOUNTS_CHECK = "照らし：科目の和から出した営業利益 − 上の営業利益（0 なら合う）"
+
 FILL_INPUT = "FFF2CC"  # 社長が書き換えてよい値
 FILL_PROVISIONAL = "FCE4D6"  # 仮の印
+FILL_HEAD = "EDEDED"  # 表の見出しの行（薄い灰色）。塗りの色はこの3つだけ
+LINE_GRID = "BFBFBF"  # 表の罫線（細い、薄い灰色）
+LINE_RULE = "595959"  # 合計・利益の行の上の線（細い、濃い灰色）
+# 行の見た目（Sheet.rows。lib/zaimu_xlsx.py が罫線・塗り・太字にする）
+ROW_TITLE, ROW_SECTION, ROW_HEAD, ROW_BODY, ROW_TOTAL = "title", "section", "head", "body", "total"
 FMT_YEN = "#,##0"
 FMT_PEOPLE = "General"
 FMT_PER = "#,##0.00"
@@ -257,6 +289,34 @@ class Timeline:
 
 
 @dataclass
+class Account:
+    """決算書の科目の1つ（損益の内訳に使う）。"""
+
+    name: str
+    kind: str  # 区分（ROW_KEYS）
+    amount: float
+    side: Optional[str] = None  # 売上原価 か 販売費及び一般管理費（売上の行と、損益の区分を付けていない行は None）
+    source: str = ""
+
+
+@dataclass
+class Accounts:
+    """決算書の科目（kijun --into が指定の「決算書の科目」に書く）。"""
+
+    head: str  # 決算書の名前（「決算書 第18期」など）
+    period: str  # 決算書がどの期か（基準年度 か 直近期）
+    rows: List[Account]
+
+    @property
+    def sided(self) -> bool:
+        """売上のほかの行に、損益の区分（売上原価か販管費）が付いているか。"""
+        return any(a.side for a in self.rows)
+
+    def total(self, kind: str) -> float:
+        return sum(a.amount for a in self.rows if a.kind == kind)
+
+
+@dataclass
 class Spec:
     years: int
     assumptions: List[Item]
@@ -270,6 +330,7 @@ class Spec:
     cost_share: Dict[str, Item] = field(default_factory=dict)  # 区分 → 売上原価に入る割合（名前は「原価割合_…」）
     new_dep: Optional[Item] = None  # 本補助金で導入する設備の減価償却費（式）
     beppyo: bool = False  # 様式（別紙4）に写す数字を出すか
+    accounts: Optional[Accounts] = None  # 決算書の科目（損益の内訳に使う。なければ内訳を置かない）
 
     def values(self) -> Dict[str, float]:
         out = {a.name: a.value for a in self.assumptions}
@@ -332,7 +393,7 @@ def parse_spec(data: Any) -> Spec:
     """指定の JSON を確かめて読む。正しくなければ SpecError。"""
     if not isinstance(data, dict):
         raise SpecError("指定の形が違います（JSON の { } ではありません）")
-    known = {"計画の年数", "前提", "基準年度", "既存事業", "新事業", "人数", "月次の波", SHORYOKU_KEY} | set(BEPPYO_KEYS)
+    known = {"計画の年数", "前提", "基準年度", "既存事業", "新事業", "人数", "月次の波", SHORYOKU_KEY, ACCOUNTS_KEY} | set(BEPPYO_KEYS)
     extra = sorted(set(data) - known)
     if extra:
         raise SpecError("指定に、知らない項目があります：" + "、".join(extra))
@@ -396,7 +457,51 @@ def parse_spec(data: Any) -> Spec:
     shoryoku = _shoryoku(data.get(SHORYOKU_KEY), {n.casefold() for n in seen.values()})
     return Spec(years, assumptions, base, businesses, people, waves, shoryoku, timeline, recent,
                 _cost_share(data.get(COST_SHARE_KEY)), _new_dep(data.get(NEW_DEP_KEY), names),
-                any(data.get(k) is not None for k in BEPPYO_KEYS))
+                any(data.get(k) is not None for k in BEPPYO_KEYS), _accounts(data.get(ACCOUNTS_KEY)))
+
+
+def _accounts(raw: Any) -> Optional[Accounts]:
+    """指定の「決算書の科目」（kijun --into が書く）。なければ None（損益の内訳を置かない。今までどおり）。"""
+    if raw is None:
+        return None
+    where = ACCOUNTS_KEY
+    if not isinstance(raw, dict):
+        raise SpecError(f"{where}は {{ }} の形にしてください（kijun --into が書きます）")
+    extra = sorted(set(raw) - {"決算書", "期", "行", "説明"})
+    if extra:
+        raise SpecError(f"{where}に、知らない項目があります：" + "、".join(extra))
+    period = raw.get("期", ACCOUNT_PERIODS[0])
+    if period not in ACCOUNT_PERIODS:
+        raise SpecError(f"{where}の期は「基準年度」か「直近期」にしてください（{period!r}）")
+    raw_rows = raw.get("行")
+    if not isinstance(raw_rows, list) or not raw_rows:
+        raise SpecError(f"{where}に「行」（科目ごとの金額）がありません")
+    rows: List[Account] = []
+    for i, row in enumerate(raw_rows, start=1):
+        at = f"{where}の行の{i}つ目"
+        if not isinstance(row, dict):
+            raise SpecError(f"{at}の形が違います")
+        extra = sorted(set(row) - {"科目", "区分", "金額", "損益の区分", "出典"})
+        if extra:
+            raise SpecError(f"{at}に、知らない項目があります：" + "、".join(extra))
+        name = _text(row.get("科目"))
+        if not name:
+            raise SpecError(f"{at}に科目の名前がありません")
+        kind = row.get("区分")
+        if kind not in ROW_KEYS:
+            raise SpecError(f"{at}（{name}）の区分「{kind}」は使えません（使える区分：{'、'.join(ROW_KEYS)}）")
+        amount = _number(row.get("金額"), f"{at}（{name}）の金額")
+        side = None
+        if kind != "売上" and row.get("損益の区分") is not None:
+            side = PL_SIDES.get(row["損益の区分"]) if isinstance(row["損益の区分"], str) else None
+            if side is None:
+                raise SpecError(f"{at}（{name}）の損益の区分「{row['損益の区分']}」は使えません（売上原価 か 販管費）")
+        rows.append(Account(name, kind, amount, side, _text(row.get("出典"))))
+    costs = [a for a in rows if a.kind != "売上"]
+    if any(a.side for a in costs) and not all(a.side for a in costs):
+        raise SpecError(f"{where}に、損益の区分（売上原価か販管費）が付いていない行があります："
+                        + "、".join(a.name for a in costs if not a.side) + "。付けるときは、売上のほかのすべての行に付けてください")
+    return Accounts(_text(raw.get("決算書")), period, rows)
 
 
 # ---------------------------------------------------------------- 様式（別紙4）の年度・直近期・売上原価の割合
@@ -908,6 +1013,18 @@ class Cell:
     fmt: Optional[str] = None
     fill: Optional[str] = None
     bold: bool = False
+    wrap: bool = False  # 表の行で、このセルの文を折り返す（隣のセルで切れないように）
+
+
+_REF = re.compile(r"([A-Z]+)([0-9]+)")
+
+
+def col_number(name: str) -> int:
+    """A → 1、B → 2 …（col_name の逆）"""
+    n = 0
+    for ch in name:
+        n = n * 26 + ord(ch) - 64
+    return n
 
 
 @dataclass
@@ -915,6 +1032,12 @@ class Sheet:
     title: str
     cells: Dict[str, Cell] = field(default_factory=dict)
     widths: Dict[str, float] = field(default_factory=dict)
+    # 見た目（lib/zaimu_xlsx.py が使う。値・数式・名前・セルの位置には関わらない）
+    rows: Dict[int, Tuple[str, int]] = field(default_factory=dict)  # 行 → (見た目の種類, 罫線を引く列の数（A から）)
+    tables: List[Tuple[int, int, int, tuple, tuple, tuple]] = field(default_factory=list)  # table() で決めた表
+    wrap: List[str] = field(default_factory=list)  # 表の行で、長い文を折り返す列
+    freeze: Optional[str] = None  # 見出しの固定（このセルの左と上を固定する）
+    print_rows: Optional[str] = None  # 印刷で、どのページにも出す行（"9:10"）
 
     def put(self, ref: str, value: Any = None, **kw: Any) -> Cell:
         cell = Cell(value=value, **kw)
@@ -924,12 +1047,47 @@ class Sheet:
     def formula(self, ref: str, formula: str, py: Any, fmt: Optional[str] = None, bold: bool = False) -> Cell:
         return self.put(ref, formula=formula, py=py, fmt=fmt, bold=bold)
 
+    def used_rows(self) -> Dict[int, set]:
+        """行 → 値のある列の名前。"""
+        used: Dict[int, set] = {}
+        for ref in self.cells:
+            m = _REF.fullmatch(ref)
+            if m:
+                used.setdefault(int(m.group(2)), set()).add(m.group(1))
+        return used
+
+    def table(self, first: int, last: int, ncols: int, heads: Sequence[int] = (), totals: Sequence[int] = (),
+              skip: Sequence[int] = ()) -> None:
+        """first〜last 行を、A から ncols 列の表にする（見出し・合計・本文の行）。行の種類は layout() で決める。"""
+        self.tables.append((first, last, ncols, tuple(heads), tuple(totals), tuple(skip)))
+
+    def layout(self) -> Dict[int, Tuple[str, int]]:
+        """行ごとの見た目の種類と、罫線を引く列の数。空の行と、A 列だけの太字の行（小見出し）には罫線を引かない。"""
+        used = self.used_rows()
+        out = dict(self.rows)
+        for first, last, ncols, heads, totals, skip in self.tables:
+            for r in range(first, last + 1):
+                if r in skip:
+                    continue
+                if r in heads:
+                    out[r] = (ROW_HEAD, ncols)
+                elif r not in used:
+                    continue
+                elif r in totals:
+                    out[r] = (ROW_TOTAL, ncols)
+                elif used[r] == {"A"} and self.cells[f"A{r}"].bold:
+                    out[r] = (ROW_SECTION, ncols)
+                else:
+                    out[r] = (ROW_BODY, ncols)
+        return out
+
 
 @dataclass
 class Book:
     sheets: List[Sheet]
     names: Dict[str, Tuple[str, str]]  # 名前 → (シート, "$C$5")
     summary: Dict[str, Any]
+    accounts: Optional[Dict[str, Any]] = None  # 損益の内訳（決算書の科目）。数字の控えには入れない
 
     def formulas(self) -> Dict[Tuple[str, str], Any]:
         """数式のセルと、その Python の値。"""
@@ -945,9 +1103,10 @@ def _quoted(title: str) -> str:
 
 
 def _fmt_for(item: Item) -> str:
+    """表示の形（値は変えない）。率は %、円と整数は3桁ごとの区切り（52,000円/個・806,400パック/年など）。"""
     if item.unit == "%":
         return FMT_RATE
-    if item.unit == "円":
+    if item.unit == "円" or float(item.value).is_integer():
         return FMT_YEN
     return FMT_NUMBER
 
@@ -967,6 +1126,7 @@ def _assumption_sheet(spec: Spec) -> Tuple[Sheet, Dict[str, Tuple[str, str]], Di
         row += 1
         for i, h in enumerate(headers, start=1):
             sh.put(f"{col_name(i)}{row}", h, bold=True)
+        sh.table(row, row + len(items), len(headers), heads=(row,))
         row += 1
         for n, item in enumerate(items, start=1):
             sh.put(f"A{row}", f"{prefix}-{n:02d}")
@@ -990,11 +1150,12 @@ def _assumption_sheet(spec: Spec) -> Tuple[Sheet, Dict[str, Tuple[str, str]], Di
         row += 1
         for i, h in enumerate(headers, start=1):
             sh.put(f"{col_name(i)}{row}", h, bold=True)
+        sh.table(row, row + len(spec.shoryoku.items), len(headers), heads=(row,))
         row += 1
         for n, item in enumerate(spec.shoryoku.items.values(), start=1):
             sh.put(f"A{row}", f"S-{n:02d}")
             sh.put(f"B{row}", item.name)
-            sh.put(f"C{row}", item.value, fmt=FMT_YEN if item.unit.startswith("円") else FMT_NUMBER, fill=FILL_INPUT)
+            sh.put(f"C{row}", item.value, fmt=FMT_YEN if item.unit.startswith("円") else _fmt_for(item), fill=FILL_INPUT)
             sh.put(f"D{row}", item.unit)
             sh.put(f"E{row}", item.desc)
             sh.put(f"F{row}", item.basis)
@@ -1011,6 +1172,7 @@ def _assumption_sheet(spec: Spec) -> Tuple[Sheet, Dict[str, Tuple[str, str]], Di
             heads = ["No.", "工程名・作業名", "作業時間（分）"] + (["作業種別", "対応する導入前の No."] if side == "後" else [])
             for i, h in enumerate(heads, start=1):
                 sh.put(f"{col_name(i)}{row}", h, bold=True)
+            sh.table(row, row + len(steps), len(heads), heads=(row,))
             row += 1
             for step in steps:
                 sh.put(f"A{row}", step.no)
@@ -1023,7 +1185,10 @@ def _assumption_sheet(spec: Spec) -> Tuple[Sheet, Dict[str, Tuple[str, str]], Di
                 steps_at[(side, step.no)] = f"{_quoted(SHEET_ASSUMPTIONS)}!$C${row}"
                 row += 1
             row += 1
-    sh.widths.update({"A": 8, "B": 26, "C": 16, "D": 10, "E": 44, "F": 14, "G": 30, "H": 8})
+    sh.widths.update({"A": 8, "B": 26, "C": 16, "D": 10, "E": 40, "F": 14, "G": 40, "H": 8})
+    sh.rows[1] = (ROW_TITLE, 1)
+    sh.wrap = ["E", "G"]  # 説明と出典は長いので折り返す（隣の欄で切れないように）
+    sh.freeze = "C3"  # 番号と名前の列、上の2行（題と書き換えの注意）を固定する
     return sh, names, steps_at
 
 
@@ -1036,6 +1201,7 @@ def _beppyo_assumption_tables(sh: Sheet, spec: Spec, row: int, names: Dict[str, 
         row += 1
         for i, h in enumerate(headers[:7], start=1):
             sh.put(f"{col_name(i)}{row}", h, bold=True)
+        sh.table(row, row + 7, 7, heads=(row,))
         row += 1
         deadline = f"{tl.deadline[0]}年{tl.deadline[1]}月" if tl.deadline else "（分からない）"
         lines = (
@@ -1064,6 +1230,7 @@ def _beppyo_assumption_tables(sh: Sheet, spec: Spec, row: int, names: Dict[str, 
         row += 1
         for i, h in enumerate(headers, start=1):
             sh.put(f"{col_name(i)}{row}", h, bold=True)
+        sh.table(row, row + len(items), len(headers), heads=(row,))
         row += 1
         for n, item in enumerate(items, start=1):
             for col, v in zip("ABDEFG", (f"{prefix}-{n:02d}", item.name, item.unit, item.desc, item.basis, item.source)):
@@ -1374,6 +1541,13 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
         beppyo = _beppyo4_rows(pl, spec, requirements, py, at, people, people_at, ind, year_cols, ycell, row + 1)
         row = beppyo.pop("_次の行")
 
+    # ---- 損益の内訳（指定に決算書の科目があるとき。いちばん下に置き、上のセルの位置は変えない）
+    accounts = None
+    if spec.accounts is not None:
+        accounts = _accounts_rows(pl, spec, py, at, year_cols, ycell, row + 1, (judge_col, basis_col, note_col))
+        row = accounts.pop("_次の行")
+    layout = accounts.pop("_見た目") if accounts else {"見出し": (), "合計": (), "飛ばす": ()}
+
     # ---- まとめ（上）
     pl.put("A2", "まとめ", bold=True)
     summary_rows = [
@@ -1401,7 +1575,7 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
         nears = ",".join(f'{c}="境目あり"' for c in near_cells_basic)
         near_any = any(r["境目"] for r in basic)
         near_text = "あり（計画の数字を少し上げることを勧めます）"
-        pl.put("C7", "基準との差が0.01ポイント未満の要件")
+        pl.put("C7", "基準との差が0.01ポイント未満の要件", wrap=True)
         pl.formula("D7", f'=IF(OR({nears}),"{near_text}","なし")', near_text if near_any else "なし")
     else:
         overall = None
@@ -1417,10 +1591,24 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
         pl.put("B8", shown, bold=True)
         pl.put("C8", "数量の前提（" + "・".join(low["数量の前提"]) + "）を0.8倍にして、道具が計算し直した結果（式ではありません）"
                + ("。" + CURRENT_LEVEL_NOTE if low.get("今の数量まで減らしている行") else ""))
-    pl.widths.update({"A": 48})
+    pl.widths.update({"A": 58})
     for col in year_cols:
         pl.widths[col] = 15
-    pl.widths.update({judge_col: 13, basis_col: 22, note_col: 60})
+    pl.widths.update({judge_col: 14, basis_col: 22, note_col: 46})
+    # 見た目：見出しの行（項目と年、別紙4 などの決算期）、合計・利益の行（営業利益・売上総利益・付加価値額）
+    labels_a = {r: c.value for r, c in ((int(ref[1:]), c) for ref, c in pl.cells.items()
+                                         if ref.startswith("A") and ref[1:].isdigit())}
+    beppyo_labels = dict(BEPPYO_ROWS)
+    total_labels = {beppyo_labels[k] for k in ("売上総利益", "営業利益", "付加価値額")}
+    heads = {head_row, year_row} | {r for r, v in labels_a.items() if v == "決算期"} | set(layout["見出し"])
+    totals = ({at[(g, "営業利益")] for g in [b.name for b in spec.businesses] + ["合算"]}
+              | {r for r, v in labels_a.items() if v in total_labels} | set(layout["合計"]))
+    pl.rows[1] = (ROW_TITLE, 1)
+    pl.table(3, 8, 4)  # まとめ
+    pl.table(head_row, row, col_number(note_col), heads=heads, totals=totals, skip=layout["飛ばす"])
+    pl.wrap = ["A", note_col]
+    pl.freeze = f"B{year_row + 1}"  # 項目の列と、まとめ・年の見出しを固定する
+    pl.print_rows = f"{head_row}:{year_row}"
 
     # ---- 月次（1年目）
     mo = Sheet(SHEET_MONTHLY)
@@ -1473,9 +1661,17 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
         mo.formula(f"{total_col}{i}", f"=SUM({month_cols[0]}{i}:{month_cols[-1]}{i})", total, FMT_YEN)
         mo.formula(f"{plan_col}{i}", f"={src}", year1, FMT_YEN)
         monthly[key] = {"合計": total, "1年目": year1}
-    mo.widths.update({"A": 16, total_col: 16, plan_col: 16})
+    mo.widths.update({"A": 22, total_col: 16, plan_col: 16})
     for col in month_cols:
         mo.widths[col] = 13
+    mo.rows[1] = (ROW_TITLE, 1)
+    profit_row = 3 + len(month_keys)
+    mo.table(3, profit_row, col_number(plan_col), heads=(3,), totals=(profit_row,))
+    if spec.waves is not None:
+        mo.table(wave_row, wave_row, col_number(total_col))
+    mo.wrap = ["A"]
+    mo.freeze = "B4"
+    mo.print_rows = "3:3"
 
     summary = {
         "計画の年数": n,
@@ -1505,7 +1701,7 @@ def build(spec: Spec, requirements: Sequence[youken.Requirement], scenario: bool
         "指標": ind,
     }
     summary["投資の効果の見え方"] = investment_effect(py, shoryoku_summary, n)
-    return Book([pa, pl, mo], names, summary)
+    return Book([pa, pl, mo], names, summary, accounts)
 
 
 # 投資の効果の見え方の知らせの目安（審査員が「投資しても利益が増えない」と読むおそれがある形）
@@ -1901,6 +2097,280 @@ def _ashimoto_rows(pl: Sheet, spec: Spec, vals: Dict[str, List[Any]], r: Dict[st
     pl.formula(f"D{gr}", f"=IFERROR(IF(D{ppr}>=B{ppr},ROUNDDOWN({inner},2),ROUNDUP({inner},2)),0)", growth, FMT_GROWTH)
     out["伸び"] = growth
     return out, gr + 1
+
+
+# ---------------------------------------------------------------- 損益の内訳（決算書の科目。11/7 の作者の指摘）
+
+UNDECIDED = "未定"  # 売上原価か販管費かを決められない行（売上原価の割合に、その区分がない）
+ACCOUNT_GROUP_LABELS = {"売上": "売上高", SIDE_COST: "売上原価", SIDE_SGA: "販売費及び一般管理費",
+                        UNDECIDED: "売上原価か販管費か決まっていない分"}
+
+
+def _accounts_rows(pl: Sheet, spec: Spec, py: Dict[Tuple[str, str], List[float]], at: Dict[Tuple[str, str], int],
+                   year_cols: List[str], ycell: Callable[[str], str], row: int,
+                   cols: Tuple[str, str, str]) -> Dict[str, Any]:
+    """計画のシートのいちばん下に、決算書の科目の損益の内訳を数式で置く。Python の値と、行の見た目も返す。
+
+    科目の値 ＝ 区分の合算の値 × 割合（科目の金額 ÷ 同じ区分の科目の計）。区分の計と営業利益は【合算】と同じになる。
+    本補助金の設備の減価償却費は決算書にないので別の行にし、売上原価か販管費かは別紙4 と同じ売上原価の割合で決める。"""
+    acc = spec.accounts
+    n = spec.years
+    amount_col, share_col, note_col = cols
+    values = spec.values()
+    tl = spec.timeline
+    dep = "減価償却費"
+    totals = {k: acc.total(k) for k in ROW_KEYS}
+    notes: List[str] = []
+
+    # 本補助金で導入する設備の減価償却費（1年目から）
+    new_py: List[Optional[float]] = [None] * (n + 1)
+    new_f: Dict[int, str] = {}
+    if spec.new_dep is not None:
+        for y in range(1, n + 1):
+            col = year_cols[y]
+            new_py[y] = spec.new_dep.formula.value(_lookup_values(values, {YEAR: float(y)}))
+            new_f[y] = spec.new_dep.formula.excel(lambda name, col=col: ycell(col) if name == YEAR else name)[1:]
+
+    def alloc(k: str, y: int) -> Tuple[str, float]:
+        """区分 k の、科目に分ける値（Excel の項, Python の値）。減価償却費は本補助金の設備の分を除く。"""
+        ref, v = f"{year_cols[y]}{at[('合算', k)]}", py[("合算", k)][y]
+        if k == dep and new_py[y] is not None:
+            return f"({ref}-{new_f[y]})", v - new_py[y]
+        return ref, v
+
+    def side_split(item: Optional[Item]) -> List[Tuple[Optional[str], Optional[Tuple[str, float]], str]]:
+        """（損益の区分, 掛ける割合（Excel の名前, 値）, 名前の後ろ）。割合が0か1でなければ、売上原価と販管費の2行に分ける。"""
+        if not acc.sided:
+            return [(None, None, "")]
+        if item is None:
+            return [(UNDECIDED, None, "")]
+        if item.value == 1:
+            return [(SIDE_COST, None, "")]
+        if item.value == 0:
+            return [(SIDE_SGA, None, "")]
+        return [(SIDE_COST, (item.name, item.value), "（売上原価の分）"),
+                (SIDE_SGA, (f"(1-{item.name})", 1 - item.value), "（販管費の分）")]
+
+    # 行（並べる前）。種類：科目・本補助金の設備・科目のない区分
+    lines: List[Dict[str, Any]] = [{"種類": "科目", "名前": a.name, "区分": a.kind, "損益の区分": a.side, "科目": a,
+                                    "割合を掛ける": None} for a in acc.rows]
+    if spec.new_dep is not None:
+        share = spec.cost_share.get(NEW_DEP_KEY) or spec.cost_share.get(dep)
+        for side, factor, suffix in side_split(share):
+            lines.append({"種類": "本補助金の設備", "名前": "本補助金で導入する設備の減価償却費" + suffix, "区分": dep,
+                          "損益の区分": side, "割合を掛ける": factor, "割合の名前": share.name if share else ""})
+    for k in ROW_KEYS:
+        if totals[k] == 0 and any(abs(alloc(k, y)[1]) > 0 for y in range(n + 1)):
+            splits = [(None, None, "")] if k == "売上" else side_split(spec.cost_share.get(k))
+            for side, factor, suffix in splits:
+                lines.append({"種類": "科目のない区分", "名前": f"{k}（決算書に科目がない分）{suffix}", "区分": k,
+                              "損益の区分": side, "割合を掛ける": factor})
+            notes.append(f"決算書に{k}の科目がないので、計画の{k}は、科目に分けずに1行で置いています")
+    if acc.sided:
+        groups = [("売上", [x for x in lines if x["区分"] == "売上"])] + [
+            (side, [x for x in lines if x["区分"] != "売上" and x["損益の区分"] == side])
+            for side in (SIDE_COST, SIDE_SGA, UNDECIDED)]
+        groups = [(g, items) for g, items in groups if items or g in ("売上", SIDE_COST, SIDE_SGA)]
+        if any(g == UNDECIDED for g, _items in groups):
+            notes.append("売上原価の割合にない区分の値は、売上原価か販管費かを決めずに別の行にしています"
+                         "（指定の「売上原価の割合」にその区分を書くと分けます）")
+    else:
+        groups = [(k, [x for x in lines if x["区分"] == k]) for k in ROW_KEYS]
+        groups = [(k, items) for k, items in groups if items]
+    if acc.period == "基準年度":
+        for k in ROW_KEYS:
+            if any(a.kind == k for a in acc.rows) and abs(spec.base[k].value - totals[k]) >= 1:
+                notes.append(f"基準年度の{k}（{spec.base[k].value:,.0f}円）が、決算書の科目の計（{totals[k]:,.0f}円）と違います。"
+                             f"科目の値は、基準年度の{k}を割合で分けたものです")
+
+    # ---- 見出しと説明
+    heads, total_rows, skip = [], [], []
+    pl.put(f"A{row}", ACCOUNTS_TITLE, bold=True)
+    row += 1
+    period = "基準年度" if acc.period == "基準年度" else "直近期（決算書）"
+    explain = [
+        f"決算書の列は「{acc.head or '決算書'}」の科目の金額。割合は、科目の金額 ÷ 同じ区分（売上・原材料費・給与支給総額・"
+        "その他の人件費・減価償却費・その他の経費）の科目の計。",
+        f"内訳は{period}の割合で分けた見込みです（基準年度と計画の年の科目の値 ＝ 区分の合算の値 × 割合）。"
+        "区分の計と営業利益は、上の【合算】と同じです。",
+    ]
+    if spec.new_dep is not None:
+        explain.append("本補助金で導入する設備の減価償却費は決算書にないので別の行にし、既存の設備の分だけを科目に分けています。")
+    for text in explain:
+        pl.put(f"A{row}", text)
+        skip.append(row)
+        row += 1
+    row += 1
+    head_r = row
+    pl.put(f"A{row}", "科目", bold=True)
+    for y, col in enumerate(year_cols):
+        pl.put(f"{col}{row}", "基準年度" if y == 0 else f"{y}年目", bold=True)
+    pl.put(f"{amount_col}{row}", "決算書の金額", bold=True)
+    pl.put(f"{share_col}{row}", "割合（科目÷区分の計）", bold=True)
+    pl.put(f"{note_col}{row}", "区分・出典", bold=True)
+    heads.append(row)
+    row += 1
+    if tl is not None:
+        pl.put(f"A{row}", "決算期")
+        for y, col in enumerate(year_cols):
+            pl.put(f"{col}{row}", tl.label(tl.base + y))
+        pl.put(f"{amount_col}{row}", tl.label(tl.recent_actual if acc.period == "直近期" else tl.base))
+        heads.append(row)
+        row += 1
+
+    # ---- 行の場所を決める（区分の行の下に、その区分の科目）
+    group_at: Dict[str, int] = {}
+    for g, items in groups:
+        group_at[g] = row
+        row += 1
+        for x in items:
+            x["行"] = row
+            row += 1
+        if acc.sided and g == SIDE_COST:
+            group_at["売上総利益"] = row
+            row += 1
+    op_r, check_r = row, row + 1
+
+    # ---- 科目などの行
+    same_kind = {k: [x["行"] for x in lines if x["種類"] == "科目" and x["区分"] == k] for k in ROW_KEYS}
+    for x in lines:
+        r, k = x["行"], x["区分"]
+        a: Optional[Account] = x.get("科目")
+        x["年ごと"] = [0.0] * (n + 1)
+        x["割合"] = None
+        if a is not None:
+            pl.put(f"{amount_col}{r}", a.amount, fmt=FMT_YEN)
+            if totals[k] != 0:
+                share = a.amount / totals[k]
+                pl.formula(f"{share_col}{r}", f"={amount_col}{r}/SUM(" + ",".join(f"{amount_col}{q}" for q in same_kind[k]) + ")",
+                           share, FMT_RATE)
+            else:
+                share = 0.0
+                pl.put(f"{share_col}{r}", 0, fmt=FMT_RATE)
+            x["割合"] = share
+            pl.put(f"{note_col}{r}", f"区分：{k}" + (f"。出典：{a.source}" if a.source else ""))
+        elif x["種類"] == "本補助金の設備":
+            pl.put(f"{note_col}{r}", f"区分：{dep}。指定の式で1年目から"
+                   + (f"。{x['割合の名前']} で売上原価と販管費に分けた" if acc.sided and x["割合の名前"] else ""))
+        else:
+            pl.put(f"{note_col}{r}", f"区分：{k}。決算書に科目がないので、科目に分けていない")
+        pl.put(f"A{r}", "　" + x["名前"])
+        for y, col in enumerate(year_cols):
+            factor = x["割合を掛ける"]
+            if a is not None:
+                term, v = alloc(k, y)
+                v = v * x["割合"]
+                formula = f"={term}*${share_col}${r}"
+            elif x["種類"] == "本補助金の設備":
+                if new_py[y] is None:
+                    pl.put(f"{col}{r}", 0, fmt=FMT_YEN)
+                    continue
+                term, v = new_f[y], new_py[y]
+                formula = f"={term}"
+            else:
+                term, v = alloc(k, y)
+                formula = f"={term}"
+            if factor is not None:
+                formula += f"*{factor[0]}"
+                v = v * factor[1]
+            x["年ごと"][y] = v
+            pl.formula(f"{col}{r}", formula, v, FMT_YEN)
+
+    # ---- 区分（損益の区分）の行・売上総利益・営業利益・照らし
+    group_values: Dict[str, List[float]] = {}
+    for g, items in groups:
+        r = group_at[g]
+        label = ACCOUNT_GROUP_LABELS.get(g, g)
+        pl.put(f"A{r}", label)
+        total_rows.append(r)
+        direct = g == "売上" or not acc.sided  # 売上高と区分の行は、【合算】の行を指す（1円も違わない）
+        group_values[label] = [0.0] * (n + 1)
+        for y, col in enumerate(year_cols):
+            if direct:
+                v = py[("合算", g)][y]
+                pl.formula(f"{col}{r}", f"={col}{at[('合算', g)]}", v, FMT_YEN)
+            elif items:
+                v = 0.0
+                for x in items:
+                    v += x["年ごと"][y]
+                pl.formula(f"{col}{r}", f"=SUM({col}{items[0]['行']}:{col}{items[-1]['行']})", v, FMT_YEN)
+            else:
+                v = 0.0
+                pl.put(f"{col}{r}", 0, fmt=FMT_YEN)
+            group_values[label][y] = v
+        amounts = [x["科目"].amount for x in items if x.get("科目") is not None]
+        if items:
+            pl.formula(f"{amount_col}{r}", f"=SUM({amount_col}{items[0]['行']}:{amount_col}{items[-1]['行']})",
+                       sum(amounts), FMT_YEN)
+        else:
+            pl.put(f"{amount_col}{r}", 0, fmt=FMT_YEN)
+        if direct:
+            pl.put(f"{note_col}{r}", f"上の【合算】の{g}と同じ")
+    sales_label = ACCOUNT_GROUP_LABELS["売上"]
+    cost_groups = [g for g, _items in groups if g != "売上"]
+    amount_of = {g: sum(x["科目"].amount for x in items if x.get("科目") is not None) for g, items in groups}
+    if acc.sided:
+        gr = group_at["売上総利益"]
+        cost_label = ACCOUNT_GROUP_LABELS[SIDE_COST]
+        pl.put(f"A{gr}", "売上総利益")
+        total_rows.append(gr)
+        group_values["売上総利益"] = []
+        for col in year_cols + [amount_col]:
+            if col == amount_col:
+                pl.formula(f"{col}{gr}", f"={col}{group_at['売上']}-{col}{group_at[SIDE_COST]}",
+                           amount_of["売上"] - amount_of[SIDE_COST], FMT_YEN)
+                continue
+            y = year_cols.index(col)
+            v = group_values[sales_label][y] - group_values[cost_label][y]
+            group_values["売上総利益"].append(v)
+            pl.formula(f"{col}{gr}", f"={col}{group_at['売上']}-{col}{group_at[SIDE_COST]}", v, FMT_YEN)
+        op_terms = [f"{{c}}{gr}"] + [f"{{c}}{group_at[g]}" for g in cost_groups if g != SIDE_COST]
+    else:
+        op_terms = [f"{{c}}{group_at['売上']}"] if "売上" in group_at else ["0"]
+        op_terms += [f"{{c}}{group_at[g]}" for g in cost_groups]
+    pl.put(f"A{op_r}", "営業利益")
+    pl.put(f"{note_col}{op_r}", "上の【合算】の営業利益と同じ")
+    total_rows.append(op_r)
+    profit = py[("合算", "営業利益")]
+    for y, col in enumerate(year_cols):
+        pl.formula(f"{col}{op_r}", f"={col}{at[('合算', '営業利益')]}", profit[y], FMT_YEN)
+    op_amount = (amount_of.get("売上", 0.0) - sum(amount_of[g] for g in cost_groups))
+    pl.formula(f"{amount_col}{op_r}", "=" + "-".join(t.format(c=amount_col) for t in op_terms), op_amount, FMT_YEN)
+
+    # 照らし：科目の和（売上の科目 − 費用の科目）から出した営業利益と、上の営業利益の差（円未満を四捨五入して0なら合う）
+    pl.put(f"A{check_r}", ACCOUNTS_CHECK)
+    sales_items = next((items for g, items in groups if g == "売上"), [])
+    cost_items = [x for g, items in groups if g != "売上" for x in items]
+    check: List[float] = []
+    for y, col in enumerate(year_cols):
+        parts = []
+        if sales_items:
+            parts.append(f"SUM({col}{sales_items[0]['行']}:{col}{sales_items[-1]['行']})")
+        for g, items in groups:
+            if g != "売上" and items:
+                parts.append(f"-SUM({col}{items[0]['行']}:{col}{items[-1]['行']})")
+        derived = 0.0
+        for x in sales_items:
+            derived += x["年ごと"][y]
+        for x in cost_items:
+            derived -= x["年ごと"][y]
+        v = youken.round_half_up(derived - profit[y], 0)
+        check.append(v)
+        pl.formula(f"{col}{check_r}", f"=ROUND({''.join(parts) or '0'}-{col}{op_r},0)", v, FMT_YEN)
+    row = check_r + 1
+    for text in notes:
+        pl.put(f"A{row}", "知らせ：" + text)
+        skip.append(row)
+        row += 1
+
+    rows_out = [{"名前": x["名前"], "種類": x["種類"], "区分": x["区分"], "損益の区分": x["損益の区分"],
+                 "決算書": x["科目"].amount if x.get("科目") is not None else None, "割合": x["割合"],
+                 "年ごと": x["年ごと"], "行": x["行"]} for x in lines]
+    return {
+        "行": head_r, "決算書": acc.head, "期": acc.period, "損益の区分": acc.sided, "科目の数": len(acc.rows),
+        "行ごと": rows_out, "年ごと": group_values, "営業利益": list(profit), "照らし": check, "知らせ": notes,
+        "_次の行": row + 1, "_見た目": {"見出し": heads, "合計": total_rows, "飛ばす": skip},
+    }
 
 
 def _timeline_summary(spec: Spec) -> Optional[Dict[str, Any]]:

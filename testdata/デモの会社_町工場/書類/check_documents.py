@@ -5,7 +5,7 @@
 """デモの会社（2社目・町工場）の書類の前半を、回答表と照らす。
 
 make_documents.py の中の数字ではなく、できたファイル（PDF・Word・Excel）から取り出した文字を、
-回答表.md の文と照らす。あわせて、決算書の足し算、第35期と第36期のつながり、書類どうしの食い違い、
+回答表.md の文と照らす。あわせて、決算書の足し算、第34期・第35期・第36期のつながり、書類どうしの食い違い、
 名簿と履歴事項全部証明書の一致、どのページ・シートにも「架空のテスト用データ」があることを確かめる。
 合わないものがあれば終了コード1で終わる。
 
@@ -29,6 +29,7 @@ MARK = "架空のテスト用データ"
 AS_OF = dt.date(2026, 11, 1)  # 名簿の日付
 
 DOCUMENTS = [
+    ("決算書_第34期.pdf", "決算書（第34期）"),
     ("決算書_第35期.pdf", "決算書（第35期）"),
     ("決算書_第36期.pdf", "決算書（第36期）"),
     ("履歴事項全部証明書.pdf", "履歴事項全部証明書"),
@@ -238,8 +239,9 @@ def check_statements(period: int) -> dict[str, str]:
         compare("D-03", f"{w} 従業員の給与（賃金給与＋給料手当）", ans("D-03", r"^([\d,]+)千円"), wages)
         compare("D-05", f"{w} 役員報酬", ans("D-05", r"第36期は([\d,]+)千円"), amount(sga, "役員報酬"))
     else:
-        compare("D-04", f"{w} 従業員の給与（賃金給与＋給料手当）", ans("D-04", r"第35期は([\d,]+)千円"), wages)
-        compare("D-05", f"{w} 役員報酬", ans("D-05", r"第35期も([\d,]+)千円"), amount(sga, "役員報酬"))
+        # D-04 は「第35期は…、第34期は…」、D-05 は「第35期も…、第34期は…」
+        compare("D-04", f"{w} 従業員の給与（賃金給与＋給料手当）", ans("D-04", rf"第{period}期は([\d,]+)千円"), wages)
+        compare("D-05", f"{w} 役員報酬", ans("D-05", rf"第{period}期[もは]([\d,]+)千円"), amount(sga, "役員報酬"))
     compare("A-06", f"{w} 資本金", ans("A-06", r"^([\d,]+)千円"), amount(bs, "資本金"))
     shares = ans("A-07", r"発行した株は(\d+)株")
     report(f"普通株式{shares}株" in flat(notes), f"A-07 {w} 個別注記表の発行済株式 {shares}株")
@@ -356,24 +358,30 @@ def check_statements(period: int) -> dict[str, str]:
     return {"bs": bs, "pl": pl, "mfg": mfg, "sga": sga, "eq": eq}
 
 
-def check_across_periods(p35: dict[str, str], p36: dict[str, str]) -> None:
-    print("\n■ 第35期と第36期のつながり")
+def check_across_periods(before: dict[str, str], after: dict[str, str], period: int) -> None:
+    """第(period−1)期末と第period期の期首のつながりを確かめる。"""
+    a, b = f"第{period - 1}期", f"第{period}期"
+    print(f"\n■ {a}と{b}のつながり")
     equals(
-        "第36期の繰越利益剰余金の当期首 ＝ 第35期末",
-        amounts(p36["eq"], "繰越利益剰余金")[0],
-        amount(p35["bs"], "繰越利益剰余金"),
+        f"{b}の繰越利益剰余金の当期首 ＝ {a}末",
+        amounts(after["eq"], "繰越利益剰余金")[0],
+        amount(before["bs"], "繰越利益剰余金"),
     )
-    want = (ans("F-13", r"利益剰余金([\d,]+)千円") - ans_period("F-05", 36)) * 1000
-    equals("第35期末の利益剰余金 ＝ F-13 の 56,000千円 − F-05 の第36期 7,600千円（配当なし）", amount(p35["bs"], "利益剰余金合計"), want)
-    equals("第36期の期首原材料 ＝ 第35期末の原材料", amount(p36["mfg"], "期首原材料棚卸高"), amount(p35["bs"], "原材料"))
-    equals("第36期の期首仕掛品 ＝ 第35期末の仕掛品", amount(p36["mfg"], "期首仕掛品棚卸高"), amount(p35["bs"], "仕掛品"))
-    equals("資本金は変わらない", amount(p36["bs"], "資本金"), amount(p35["bs"], "資本金"))
-    loans35 = amount(p35["bs"], "1年内返済予定の長期借入金") + amount(p35["bs"], "長期借入金")
-    loans36 = amount(p36["bs"], "1年内返済予定の長期借入金") + amount(p36["bs"], "長期借入金")
+    # 第36期末の利益剰余金（F-13）から、第period期〜第36期の当期純利益（F-05）を引くと、第(period−1)期末になる（配当なし）
+    later = range(period, 37)
+    retained36 = ans("F-13", r"利益剰余金([\d,]+)千円")
+    want = (retained36 - sum(ans_period("F-05", n) for n in later)) * 1000
+    minus = "".join(f" − F-05 の第{n}期 {ans_period('F-05', n):,}千円" for n in later)
+    equals(f"{a}末の利益剰余金 ＝ F-13 の {retained36:,}千円{minus}（配当なし）", amount(before["bs"], "利益剰余金合計"), want)
+    equals(f"{b}の期首原材料 ＝ {a}末の原材料", amount(after["mfg"], "期首原材料棚卸高"), amount(before["bs"], "原材料"))
+    equals(f"{b}の期首仕掛品 ＝ {a}末の仕掛品", amount(after["mfg"], "期首仕掛品棚卸高"), amount(before["bs"], "仕掛品"))
+    equals("資本金は変わらない", amount(after["bs"], "資本金"), amount(before["bs"], "資本金"))
+    loans_before = amount(before["bs"], "1年内返済予定の長期借入金") + amount(before["bs"], "長期借入金")
+    loans_after = amount(after["bs"], "1年内返済予定の長期借入金") + amount(after["bs"], "長期借入金")
     equals(
-        "借入金の減り ＝ 第35期末の1年内返済予定（第36期に新しい借入なし）",
-        loans35 - loans36,
-        amount(p35["bs"], "1年内返済予定の長期借入金"),
+        f"借入金の減り ＝ {a}末の1年内返済予定（{b}に新しい借入なし）",
+        loans_before - loans_after,
+        amount(before["bs"], "1年内返済予定の長期借入金"),
     )
 
 
@@ -673,9 +681,11 @@ def main() -> int:
             f"{kind}｜PDF｜{len(pages)}ページ｜{name}（頭と足に印のあるページ {len(marked)}/{len(pages)}）",
         )
 
+    p34 = check_statements(34)
     p35 = check_statements(35)
     p36 = check_statements(36)
-    check_across_periods(p35, p36)
+    check_across_periods(p34, p35, 35)
+    check_across_periods(p35, p36, 36)
     check_registry()
     check_tax_certificate()
     check_overview(p36)

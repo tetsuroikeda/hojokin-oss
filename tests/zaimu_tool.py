@@ -141,9 +141,9 @@ warnings.simplefilter("ignore")
 path, data_only = sys.argv[2], sys.argv[3] == "1"
 wb = openpyxl.load_workbook(path, data_only=data_only)
 out = {"sheets": wb.sheetnames, "names": {n: d.attr_text for n, d in wb.defined_names.items()}, "cells": {}, "fills": {},
-       "formats": {}}
+       "formats": {}, "bold": {}, "tops": {}, "grid": {}, "props": {}}
 for ws in wb.worksheets:
-    cells, fills, formats = {}, {}, {}
+    cells, fills, formats, bold, tops, grid = {}, {}, {}, [], {}, []
     for row in ws.iter_rows():
         for c in row:
             if c.value is not None:
@@ -152,15 +152,30 @@ for ws in wb.worksheets:
                 fills[c.coordinate] = str(c.fill.start_color.rgb)[-6:]
             if c.value is not None:
                 formats[c.coordinate] = c.number_format
+                if c.font is not None and c.font.b:
+                    bold.append(c.coordinate)
+                if c.border.top is not None and c.border.top.style:
+                    color = c.border.top.color
+                    tops[c.coordinate] = str(color.rgb)[-6:] if color is not None else ""
+                if c.border.left is not None and c.border.left.style:
+                    grid.append(c.coordinate)
+    ps = ws.page_setup
+    out["props"][ws.title] = {"freeze": ws.freeze_panes, "orientation": ps.orientation, "fitToWidth": ps.fitToWidth,
+                              "fitToHeight": ps.fitToHeight, "fitToPage": ws.sheet_properties.pageSetUpPr.fitToPage,
+                              "gridlines": ws.sheet_view.showGridLines, "print_rows": ws.print_title_rows}
     out["cells"][ws.title] = cells
     out["fills"][ws.title] = fills
     out["formats"][ws.title] = formats
+    out["bold"][ws.title] = bold
+    out["tops"][ws.title] = tops
+    out["grid"][ws.title] = grid
 print(json.dumps(out, ensure_ascii=False, default=str))
 """
 
 
 def dump_xlsx(path: Path, data_only: bool = False) -> dict:
-    """Excel のファイルの中身（シート、名前、セルの値か数式、塗り、表示形式）。"""
+    """Excel のファイルの中身（シート、名前、セルの値か数式、塗り、表示形式。値のあるセルの太字・上の罫線の色・罫線の有無。
+    シートごとの見出しの固定・印刷の向きと幅・画面の目盛りの線・印刷で繰り返す行）。"""
     r = subprocess.run(
         [hr.real_python(), "-I", "-B", "-c", DUMP_CODE, str(REPO_ROOT / "lib" / "vendor"), str(path),
          "1" if data_only else "0"],

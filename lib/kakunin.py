@@ -280,8 +280,27 @@ def _item_ranges(root, seido: Optional[dict]) -> List[Tuple[str, List]]:
             rng = yw.resolve(root, pos, name)
         except ValueError:
             continue  # ほかの Word の様式の項目か、見出しが見つからない
-        out.append((name, [n for n in rng.nodes if n.is_(yw.W, "p")]))
+        if pos.get("範囲") == yw.TABLE:  # 表ごとの範囲（スケジュールの表）は、表の中の段落
+            out.append((name, _TableParagraphs(rng.nodes[0])))
+            continue
+        out.append((name, yw.range_paragraphs(rng)))  # 本文の中に作った表の段落も含める
     return out
+
+
+class _TableParagraphs(list):
+    """表ごとの範囲の段落（表も持つ。文字は工程・作業と印の期間にまとめて渡す）。"""
+
+    def __init__(self, table) -> None:
+        super().__init__(p for p in table.iter() if p.is_(yw.W, "p"))
+        self.table = table
+
+
+def _item_text(ps, periods: bool = True) -> str:
+    """項目の範囲の文字。表ごとの範囲（スケジュールの表）は、工程・作業と印の期間にまとめる。
+    periods が偽なら、工程と作業の名前だけ（根拠対照表との照合用。月の境の日付は、列の見出しから作った文字なので照らさない）。"""
+    if isinstance(ps, _TableParagraphs):
+        return yw.table_text(ps.table, periods)
+    return _non_blue_text(ps)
 
 
 def form_table_notes(blob: bytes, rel: str, seido: Optional[dict]) -> List[str]:
@@ -318,6 +337,63 @@ def form_table_notes(blob: bytes, rel: str, seido: Optional[dict]) -> List[str]:
     return out
 
 
+def empty_form_boxes(blob: bytes, rel: str, seido: Optional[dict]) -> List[str]:
+    """様式の Word の入力の欄のうち、どの項目にも対応づけていない空の欄の名前（11/7 の作者の指摘：（１）事業者情報・
+    （２）事業計画名・（３）事業計画の概要が、申請画面に入れる欄として制度データの様式の項目になく、空のまま出た）。
+
+    入力の欄とみなすのは、本文のすぐ下の表の、ラベルのセルの右の空のセルと、見出しの下の1つだけのセルの枠。
+    説明の青字だけのセルは空とみなす。対応づけた項目が1つもない Word（様式でない文書）は見ない。
+    """
+    root = _word_root(blob, rel)
+    body = yw.body_of(root)
+    covered = set()
+    for name, pos in _mapped_items(seido):
+        try:
+            rng = yw.resolve(root, pos, name)
+        except ValueError:
+            continue
+        covered.add(id(rng.nodes[0] if pos.get("範囲") == yw.TABLE else rng.container))
+    if not covered:
+        return []
+
+    def shown(node) -> str:
+        return "".join(yw.text_of(p) for p in node.iter() if p.is_(yw.W, "p") and yw.blue_state(p) != "全部").strip()
+
+    def inside_covered(node) -> bool:
+        n = node
+        while n is not None:
+            if id(n) in covered:
+                return True
+            n = n.parent
+        return False
+
+    out: List[str] = []
+    for tbl in [c for c in body.children if c.is_(yw.W, "tbl")]:
+        rows = tbl.findall(yw.W, "tr")
+        cells = [tc for tr in rows for tc in tr.findall(yw.W, "tc")]
+        for tr in rows:
+            tcs = tr.findall(yw.W, "tc")
+            for k, tc in enumerate(tcs):
+                pr = tc.find(yw.W, "tcPr")
+                vmerge = pr.find(yw.W, "vMerge") if pr is not None else None
+                if (shown(tc) or inside_covered(tc) or tc.find(yw.W, "tbl") is not None
+                        or (vmerge is not None and vmerge.attr(yw.W, "val") != "restart")):
+                    continue
+                label = next((shown(o) for o in reversed(tcs[:k]) if shown(o)), "")
+                if not label and len(cells) == 1:
+                    siblings = body.children
+                    before = [n for n in siblings[:siblings.index(tbl)] if n.is_(yw.W, "p") or n.is_(yw.W, "tbl")]
+                    for n in reversed(before):
+                        if n.is_(yw.W, "tbl"):
+                            break
+                        if shown(n):
+                            label = shown(n)
+                            break
+                if label:
+                    out.append(label[:30])
+    return out
+
+
 def word_findings(blob: bytes, rel: str, seido: Optional[dict]) -> List[Finding]:
     root = _word_root(blob, rel)
     items = _item_ranges(root, seido)
@@ -327,7 +403,12 @@ def word_findings(blob: bytes, rel: str, seido: Optional[dict]) -> List[Finding]
         for kind, snippet in marks(yw.text_of(p)):
             out.append(Finding(kind, rel, labels.get(id(p)) or _place(p), snippet))
     for name, ps in items:
-        written = [p for p in ps if yw.blue_state(p) != "全部" and yw.text_of(p).strip()]
+        if isinstance(ps, _TableParagraphs):
+            # スケジュールの表は、見出しの行の黒い文字では書いたことにせず、月の欄に印があるかで見る
+            written = [p for p in ps if yw.blue_state(p) != "全部" and yw.text_of(p).strip() in yw.MARKS
+                       and yw.text_of(p).strip()]
+        else:
+            written = [p for p in ps if yw.blue_state(p) != "全部" and yw.text_of(p).strip()]
         if not written:
             out.append(Finding(BLANK, rel, name, "（まだ何も書いていない項目）"))
     return out
@@ -452,7 +533,7 @@ def _texts_of(blob: bytes, rel: str, suffix: str, seido: Optional[dict]) -> Tupl
         items = _item_ranges(root, seido)
         if items:
             for item, ps in items:
-                out[item] = _non_blue_text(ps)
+                out[item] = _item_text(ps, periods=False)
         else:
             out[rel] = _non_blue_text(_outer_paragraphs(root))
     elif suffix in EXCEL_SUFFIXES and name == input_sheet.FILE_NAME:
@@ -724,6 +805,10 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
                 cells.update(got_cells)
             if suffix in WORD_SUFFIXES:
                 findings += word_findings(_read_bytes(path, rel), rel, seido)
+                boxes = empty_form_boxes(_read_bytes(path, rel), rel, seido)
+                if boxes:  # 完成は止めない注意（様式の項目の対応づけは制度データ次第なので、止めると誤って止まることがある）
+                    notes.append("様式の入力の欄が空のままです（どの項目にも対応づけていない欄。申請画面に入れる欄でも、"
+                                 "様式にあれば map で対応づけて書く）：" + "、".join(boxes))
                 tables = form_table_notes(_read_bytes(path, rel), rel, seido)
                 if tables:
                     notes.append("様式の表に書いていない項目があります（表を文章や図で代えず、表の欄として対応づけて書く）："
@@ -908,7 +993,7 @@ def _word_sections(blob: bytes, rel: str, seido: Optional[dict]) -> List[str]:
     out = [f"## {rel}", ""]
     if items:
         for name, ps in items:
-            out += [f"### {name}", "", _non_blue_text(ps) or "（まだ何も書いていません）", ""]
+            out += [f"### {name}", "", _item_text(ps) or "（まだ何も書いていません）", ""]
     else:
         out += ["（様式の項目との対応がないので、本文の全体を載せます）", "", _non_blue_text(_outer_paragraphs(root)), ""]
     return out

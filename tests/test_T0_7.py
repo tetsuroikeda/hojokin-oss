@@ -919,7 +919,7 @@ SAVED_BEFORE_WRITING = hr.REPO_ROOT / "evals" / "状態" / "書く前"  # 保存
 SWEEP_TEXT = "機械を入れる前の盛り付けと包装の作業の流れを、工程ごとに書きます。"
 SWEEP_EMPTY_INPUTS = ("概要と流れ.json", "読み直し.json", "読み取り.json", "根拠.json", "経費明細.json", "様式の対応.json",
                       "その3の値.json", "入力シートの値.json", "決算の内訳.json", "実績.json", "二重受給.json",
-                      "補助金の候補.json", "書類の読み取り.json", "不備.json")
+                      "補助金の候補.json", "書類の読み取り.json", "不備.json", "スケジュール.json")
 # 差し戻しの道具は提出版を照らすので、提出版を記録した後に動かす
 SWEEP_LAST = {"kaku/scripts/sashimodoshi.py"}
 # 中身のある入力で、実際に原本・公式資料を読む・写す・並べ替える処理まで進む呼び方（断らずに終わることも確かめる）

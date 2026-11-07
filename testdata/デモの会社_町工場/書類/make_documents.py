@@ -4,7 +4,7 @@
 # ///
 """デモの会社（2社目・町工場）の書類の前半を作る。
 
-作るもの：決算書（第35期・第36期）、履歴事項全部証明書、納税証明書（その2）、法人事業概況説明書（第36期）
+作るもの：決算書（第34期・第35期・第36期）、履歴事項全部証明書、納税証明書（その2）、法人事業概況説明書（第36期）
 （ここまで PDF）と、役員名簿・株主名簿（Word）、労働者名簿（Excel）。
 数字と事実は testdata/デモの会社_町工場/回答表.md に合わせる（行ごとに回答表の ID を添えた）。
 ID のない数字は回答表にないもので、書類の一覧.md の「回答表にない数字と事実」に挙げた。
@@ -83,6 +83,77 @@ REAPPOINTED_REGISTERED = "令和8年7月3日"
 # ---------------------------------------------------------------------------
 
 PERIODS = {
+    34: {
+        "start": "令和5年4月1日",
+        "end": "令和6年3月31日",
+        # 損益：F-01〜F-05（第34期）に合うよう、内訳は回答表にない数字で組んだ
+        # （給与の合計 D-04、役員報酬 D-05、減価償却費 F-06、法定福利費 F-07 には合わせた）
+        "sales": 290_000,  # F-01
+        # 材料費 63,000 ＝ 期首の原材料 3,900 ＋ 仕入 63,200 − 期末の原材料 4,100（第35期の期首）
+        "materials_opening": 3_900,
+        "materials_purchased": 63_200,
+        # 仕掛品は期首 6,800、期末 7,200（第35期の期首）
+        "wip_opening": 6_800,
+        "labor": [("賃金給与", 60_900), ("法定福利費", 9_100)],
+        "outsourcing": [("外注加工費", 45_500)],
+        "overhead": [
+            ("電力費", 10_300),
+            ("工具・消耗品費", 13_900),
+            ("地代家賃", 9_600),
+            ("減価償却費", 16_600),
+            ("修繕費", 2_900),
+            ("その他製造経費", 1_500),
+        ],
+        "sga": [
+            ("役員報酬", 13_800),  # D-05
+            ("給料手当", 10_200),
+            ("法定福利費", 3_400),
+            ("福利厚生費", 1_100),
+            ("荷造運賃", 3_200),
+            ("旅費交通費", 1_400),
+            ("通信費", 900),
+            ("広告宣伝費", 400),
+            ("支払手数料", 1_900),
+            ("租税公課", 1_600),
+            ("保険料", 1_400),
+            ("減価償却費", 1_500),
+            ("リース料", 2_200),
+            ("消耗品費", 1_400),
+            ("交際費", 700),
+            ("その他", 3_100),
+        ],
+        "non_operating_income": [("雑収入", 300)],
+        "non_operating_expenses": [("支払利息", 1_500)],
+        "income_taxes": 2_500,
+        # 貸借：回答表にない数字。第35期に減価償却 16,800、設備の取得 5,000（CAPEX_35）、借入金の返済 14,400 で
+        # 第35期末になり、第35期の現金の増減とも合うようにした（現金は、ほかの科目を決めてから逆算した）
+        "current_assets": [
+            ("現金及び預金", 42_400),
+            ("受取手形", 5_800),
+            ("売掛金", 49_200),
+            ("原材料", 4_100),
+            ("仕掛品", 7_200),
+            ("その他流動資産", 1_800),
+        ],
+        "tangible_assets": [
+            ("建物附属設備", 4_600),
+            ("機械及び装置", 75_900),
+            ("車両運搬具", 2_800),
+            ("工具、器具及び備品", 6_100),
+        ],
+        "intangible_assets": [("ソフトウエア", 1_900)],
+        "investments": [("敷金及び保証金", 4_800), ("その他の投資", 1_200)],
+        "current_liabilities": [
+            ("買掛金", 26_500),
+            ("1年内返済予定の長期借入金", 14_400),
+            ("未払金及び未払費用", 9_200),
+            ("未払法人税等", 1_600),
+            ("その他流動負債", 3_400),
+        ],
+        "fixed_liabilities": [("長期借入金", 90_800)],
+        "capital": 20_000,  # A-06
+        "retained_opening": 36_700,  # 第34期末 41,900 − 当期純利益 5,200
+    },
     35: {
         "start": "令和6年4月1日",
         "end": "令和7年3月31日",
@@ -221,8 +292,10 @@ PERIODS = {
     },
 }
 
-# 第36期に取得した設備（千円。回答表にない）。第35期末の貸借を逆算するのに使う
+# 期の中で取得した設備（千円。回答表にない）。前の期末の貸借を逆算するのに使う
+CAPEX_35 = {"機械及び装置": 4_000, "工具、器具及び備品": 1_000}
 CAPEX_36 = {"機械及び装置": 5_000, "工具、器具及び備品": 1_000}
+CAPEX = {35: CAPEX_35, 36: CAPEX_36}
 
 # 課税所得（F-08）。納税証明書（その2）の所得金額
 TAXABLE_INCOME = [
@@ -292,27 +365,28 @@ def figures(p: dict) -> dict:
     return f
 
 
-def check_cash_flow() -> None:
-    """第36期の現金の増減を間接法で出し、第35期末と第36期末の現金の差と合うかを確かめる。"""
-    p35, p36 = PERIODS[35], PERIODS[36]
-    f36 = figures(p36)
-    a35, a36 = dict(p35["current_assets"]), dict(p36["current_assets"])
-    l35, l36 = dict(p35["current_liabilities"]), dict(p36["current_liabilities"])
-    depreciation = dict(p36["overhead"])["減価償却費"] + dict(p36["sga"])["減価償却費"]
-    working = sum(a35[k] - a36[k] for k in a35 if k != "現金及び預金")
-    working += sum(l36[k] - l35[k] for k in l35 if k != "1年内返済予定の長期借入金")
-    operating = f36["net_income"] + depreciation + working
-    investing = -sum(CAPEX_36.values()) - (total(p36["investments"]) - total(p35["investments"]))
-    loans35 = l35["1年内返済予定の長期借入金"] + total(p35["fixed_liabilities"])
-    loans36 = l36["1年内返済予定の長期借入金"] + total(p36["fixed_liabilities"])
-    financing = loans36 - loans35
-    change = a36["現金及び預金"] - a35["現金及び預金"]
+def check_cash_flow(no: int) -> None:
+    """第no期の現金の増減を間接法で出し、前の期末と第no期末の現金の差と合うかを確かめる。"""
+    prev, cur = PERIODS[no - 1], PERIODS[no]
+    capex = sum(CAPEX[no].values())
+    f = figures(cur)
+    a_prev, a_cur = dict(prev["current_assets"]), dict(cur["current_assets"])
+    l_prev, l_cur = dict(prev["current_liabilities"]), dict(cur["current_liabilities"])
+    depreciation = dict(cur["overhead"])["減価償却費"] + dict(cur["sga"])["減価償却費"]
+    working = sum(a_prev[k] - a_cur[k] for k in a_prev if k != "現金及び預金")
+    working += sum(l_cur[k] - l_prev[k] for k in l_prev if k != "1年内返済予定の長期借入金")
+    operating = f["net_income"] + depreciation + working
+    investing = -capex - (total(cur["investments"]) - total(prev["investments"]))
+    loans_prev = l_prev["1年内返済予定の長期借入金"] + total(prev["fixed_liabilities"])
+    loans_cur = l_cur["1年内返済予定の長期借入金"] + total(cur["fixed_liabilities"])
+    financing = loans_cur - loans_prev
+    change = a_cur["現金及び預金"] - a_prev["現金及び預金"]
     if operating + investing + financing != change:
-        raise ValueError(f"第36期の現金の増減が合いません：{operating + investing + financing} ／ {change}")
-    fixed35 = total(p35["tangible_assets"]) + total(p35["intangible_assets"])
-    fixed36 = total(p36["tangible_assets"]) + total(p36["intangible_assets"])
-    if fixed35 + sum(CAPEX_36.values()) - depreciation != fixed36:
-        raise ValueError("第35期末の固定資産 ＋ 取得 − 減価償却費 が、第36期末と合いません")
+        raise ValueError(f"第{no}期の現金の増減が合いません：{operating + investing + financing} ／ {change}")
+    fixed_prev = total(prev["tangible_assets"]) + total(prev["intangible_assets"])
+    fixed_cur = total(cur["tangible_assets"]) + total(cur["intangible_assets"])
+    if fixed_prev + capex - depreciation != fixed_cur:
+        raise ValueError(f"第{no - 1}期末の固定資産 ＋ 取得 − 減価償却費 が、第{no}期末と合いません")
 
 
 def yen(thousand: int) -> str:
@@ -1082,6 +1156,7 @@ def worker_list(path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 DOCUMENTS = [
+    ("決算書_第34期.pdf", "第34期 決算報告書", lambda: financial_statements(34)),
     ("決算書_第35期.pdf", "第35期 決算報告書", lambda: financial_statements(35)),
     ("決算書_第36期.pdf", "第36期 決算報告書", lambda: financial_statements(36)),
     ("履歴事項全部証明書.pdf", "履歴事項全部証明書", registry_certificate),
@@ -1091,15 +1166,16 @@ DOCUMENTS = [
 
 
 def main() -> None:
-    # 期をまたぐつながり：第36期の期首は第35期末と同じ
-    f35 = figures(PERIODS[35])
-    if PERIODS[36]["retained_opening"] != f35["retained_closing"]:
-        raise ValueError("第36期の期首の繰越利益剰余金が、第35期末と合いません")
-    if PERIODS[36]["materials_opening"] != f35["materials_closing"]:
-        raise ValueError("第36期の期首の原材料が、第35期末と合いません")
-    if PERIODS[36]["wip_opening"] != f35["wip_closing"]:
-        raise ValueError("第36期の期首の仕掛品が、第35期末と合いません")
-    check_cash_flow()
+    # 期をまたぐつながり：第35期・第36期の期首は、前の期末と同じ
+    for no in (35, 36):
+        before = figures(PERIODS[no - 1])
+        if PERIODS[no]["retained_opening"] != before["retained_closing"]:
+            raise ValueError(f"第{no}期の期首の繰越利益剰余金が、第{no - 1}期末と合いません")
+        if PERIODS[no]["materials_opening"] != before["materials_closing"]:
+            raise ValueError(f"第{no}期の期首の原材料が、第{no - 1}期末と合いません")
+        if PERIODS[no]["wip_opening"] != before["wip_closing"]:
+            raise ValueError(f"第{no}期の期首の仕掛品が、第{no - 1}期末と合いません")
+        check_cash_flow(no)
     for name, doc_name, build in DOCUMENTS:
         render(OUT_DIR / name, doc_name, build())
         print(f"作った：{name}")

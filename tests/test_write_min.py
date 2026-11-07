@@ -260,8 +260,11 @@ def test_write_one_item_keeps_everything_outside_the_range(env: Env, form_bytes:
     assert list(before_parts) == list(after_parts)
     changed = [n for n in before_parts if before_parts[n] != after_parts[n]]
     assert changed == [yw.DOC]
-    # 本文も、範囲の外は1バイトも変わらない（範囲の前と後ろがそのまま）
-    data_b, root_b = doc_root(form_bytes)
+    # 本文も、範囲の外は、説明の青字を消したほかは1バイトも変わらない（範囲の前と後ろがそのまま）。
+    # 様式は「説明の青字は削除の上」と求めるので、範囲の外の青字（題の「記載例」など）も消す（11/7 の作者の指摘）
+    data_b0, root_b0 = doc_root(form_bytes)
+    data_b = yw.strip_outside(data_b0, [("1-2 経営課題", KEIEI)])
+    root_b = __import__("lib.xml_spans", fromlist=["parse"]).parse(data_b)
     data_a, root_a = doc_root(written)
     rng_b, rng_a = yw.resolve(root_b, KEIEI), yw.resolve(root_a, KEIEI)
     start_b, end_b = rng_b.nodes[0].start, rng_b.nodes[-1].end
@@ -277,13 +280,14 @@ def test_write_one_item_keeps_everything_outside_the_range(env: Env, form_bytes:
     # 道具の比べ方でも、範囲の外の差は0件。範囲を覆わなければ差が出る（比べ方が範囲の中も見ている）
     assert yw.compare_docx(form_bytes, written, [("1-2 経営課題", KEIEI)]) == []
     assert yw.compare_docx(form_bytes, written, []) != []
-    # 説明の青字：範囲の中の2段落は消え、ほかの項目の青字は残る。書いた文字にも、段落の印にも色はない
-    assert blue_paragraphs(root_a) == blue_paragraphs(root_b) - 2
+    # 説明の青字：範囲の中も外も消える（見出しの段落は残す）。書いた文字にも、段落の印にも色はない
+    assert blue_paragraphs(root_a) == 0 < blue_paragraphs(root_b0)
     for node in rng_a.nodes:
         assert not yw.blue_state(node)
         assert not any(n.is_(W, "color") for n in node.iter())
         assert b"paraId" not in node.start_tag(data_a)  # 新しい段落に Word の段落の番号を付けない
-    assert any(yw.blue_state(p) for p in yw.resolve(root_a, {"見出し": "１‐１現状分析", "範囲": "見出しの後"}).nodes)
+    # まだ書いていない項目の説明の青字も消える（見出しは残る）
+    assert not any(yw.blue_state(p) for p in yw.resolve(root_a, {"見出し": "１‐１現状分析", "範囲": "見出しの後"}).nodes)
     # 書いた段落の書式は、範囲の空の段落の書式を写したもの
     template = next(n for n in rng_b.nodes if n.is_(W, "p") and not yw.text_of(n).strip())
     ppr_b = template.find(W, "pPr")
@@ -392,7 +396,8 @@ TAMPERS = {
     "余白": lambda b: _edit_doc(b, b'w:left="720" w:header="227"', b'w:left="900" w:header="227"'),
     "表に行を足す": _add_row,
     "□の選択肢のセルに書く": _write_in_checkbox_cell,
-    "ほかの項目の説明の青字": lambda b: _edit_doc(b, "必要性を記載".encode("utf-8"), "必要を記載".encode("utf-8")),
+    # 説明の青字は様式が消すよう求めるので、青字の変化は数えない（11/7）。青字でない、ほかの項目の見出しの変化を見つける
+    "ほかの項目の見出し": lambda b: _edit_doc(b, "現状分析".encode("utf-8"), "現況分析".encode("utf-8")),
     "スタイルの文字の大きさ": lambda b: _edit_part(b, "word/styles.xml", b'<w:sz w:val="21"/>', b'<w:sz w:val="22"/>'),
     "ヘッダー": lambda b: _edit_part(b, "word/header1.xml", b"<w:p ", b'<w:p w:rsidR="00ABCDEF" '),
     "名前空間の宣言": _drop_declaration,
