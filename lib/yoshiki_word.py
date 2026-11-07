@@ -597,6 +597,21 @@ def _kept_marks(data: bytes, nodes: Sequence[Node]) -> bytes:
 
 
 _EXACT_LINE = re.compile(rb'(:lineRule=")exact(")')
+_SPACING = re.compile(rb"<(\w+:)?spacing\b[^>]*/>")
+_LINE_GRID = re.compile(rb'(<(?:\w+:)?docGrid\b[^>]*?)\s(?:\w+:)?type="lines(?:AndChars)?"')
+
+
+def _single_lines(xml: bytes, rules: Sequence[bytes] = (b"exact",)) -> bytes:
+    """行の高さを固定した段落の行の間隔を「1行」にする（文字が罫線に重なって切れないように）。
+    最小の高さ（atLeast）にすると、文書が行のグリッドにそろえる設定のとき、1行が2行分に広がった（11/7）。"""
+    def fix(m: "re.Match") -> bytes:
+        tag = m.group(0)
+        rule = re.search(rb':lineRule="(\w+)"', tag)
+        if rule is None or rule.group(1) not in rules:
+            return tag
+        tag = re.sub(rb'(:line=")\d+(")', rb"\g<1>240\2", tag)
+        return re.sub(rb'(:lineRule=")\w+(")', rb"\1auto\2", tag)
+    return _SPACING.sub(fix, xml)
 _FLOATING_TABLE = re.compile(rb"<(?:\w+:)?tblpPr\b[^>]*/>")
 
 
@@ -684,14 +699,18 @@ def _ancestors(node: Node) -> Iterator[Node]:
 def layout_copy(blob: bytes) -> bytes:
     """PDF にする写しの、見た目だけの直し（元の Word は変えない。DESIGN 5章「PDF にするときは写しを作る」）。
 
-    - 行の高さを固定した段落を最小の高さにする（書体が置き換わると、文字が罫線に重なって切れるため）。
+    - 行の高さを固定した段落と最小の高さの段落を、1行の間隔にする（書体が置き換わると、文字が罫線に重なって切れるため。
+      最小の高さは、行のグリッドにそろえる文書で1行が2行分に広がるため）。
     - 浮いた表（tblpPr。役割分担の表）を文の流れに置く（前の段落の途中に割り込んで、文が表で切れたため。11/7）。
     """
     _infos, parts = read_parts(blob)
     data = parts.get(DOC)
     if data is None:
         return blob
-    fixed = _FLOATING_TABLE.sub(b"", _EXACT_LINE.sub(rb"\1atLeast\2", data))
+    # 前の版で最小の高さ（atLeast）にして書いた段落も、1行の間隔にそろえる。行のグリッドにそろえる設定は外す
+    # （様式の書体がないパソコンでは、代わりの書体の行の高さがグリッドの1行を超え、1行が2行分に広がった。11/7）
+    fixed = _FLOATING_TABLE.sub(b"", _single_lines(data, (b"exact", b"atLeast")))
+    fixed = _LINE_GRID.sub(rb"\1", fixed)
     return blob if fixed == data else rebuild_zip(blob, {DOC: fixed})
 
 
@@ -774,7 +793,7 @@ def _ppr_with(data: bytes, ppr: Optional[Node], w: str, numid: Optional[str] = N
         parts.append((PPR_ORDER.index("jc"), f'<{w}:jc {w}:val="{jc}"/>'.encode("utf-8")))
     parts.sort(key=lambda t: t[0])
     out = f"<{w}:pPr>".encode("utf-8") + b"".join(p for _o, p in parts) + f"</{w}:pPr>".encode("utf-8")
-    return _EXACT_LINE.sub(rb"\1atLeast\2", out)
+    return _single_lines(out)
 
 
 def _jc_of(ppr: Optional[Node]) -> str:
@@ -844,9 +863,9 @@ def new_paragraphs(data: bytes, rng: Range, text: str, placed: Optional[Dict[str
     w = template.prefix
     ppr = template.find(W, "pPr")
     ppr_bytes = _clean_props(data, ppr, DROP_FROM_PARAGRAPH, DROP_FROM_RUN) if ppr is not None else b""
-    # 行の高さを固定した段落（直近実績の表など）は、書いた文字が罫線に重なって切れるので、最小の高さにする
+    # 行の高さを固定した段落（直近実績の表など）は、書いた文字が罫線に重なって切れるので、1行の間隔にする
     # （11/7 の作者の指摘。PDF で「302,000,000円」に罫線が重なった）
-    ppr_bytes = _EXACT_LINE.sub(rb"\1atLeast\2", ppr_bytes)
+    ppr_bytes = _single_lines(ppr_bytes)
     centered = _jc_of(ppr) == "center"
     mark = ppr.find(W, "rPr") if ppr is not None else None
     rpr_bytes = _clean_props(data, mark, DROP_FROM_RUN) if mark is not None else b""
@@ -940,28 +959,65 @@ def _twips(node: Optional[Node], name: str) -> Optional[int]:
         return None
 
 
-def available_width(root: Node, rng: Range) -> int:
-    """図を置ける幅（twip）。セルの幅から左右の余白を引いたものと、ページの本文の幅の、小さいほう。"""
-    page = FALLBACK_WIDTH
+def _section_of(root: Node, node: Node) -> Optional[Node]:
+    """node の入っている節の設定（node の後で最初に来る節の区切り。なければ本文の最後の節）。"""
     body = body_of(root)
-    sect = next((c for c in reversed(body.children) if c.is_(W, "sectPr")), None)
+    top = node
+    while top.parent is not None and top.parent is not body:
+        top = top.parent
+    if top.parent is body:
+        for c in body.children[body.children.index(top):]:
+            if c.is_(W, "sectPr"):
+                return c
+            if c.is_(W, "p") and c.find(W, "pPr") is not None and c.find(W, "pPr").find(W, "sectPr") is not None:
+                return c.find(W, "pPr").find(W, "sectPr")
+    return next((c for c in reversed(body.children) if c.is_(W, "sectPr")), None)
+
+
+def _cell_width(cell: Node) -> Optional[int]:
+    """セルの幅（twip）。幅が dxa で書いてあればそれを、割合（pct）なら表の列の幅（tblGrid）の、セルが覆う列の和。"""
+    tcpr = cell.find(W, "tcPr")
+    tcw = tcpr.find(W, "tcW") if tcpr is not None else None
+    if tcw is not None and tcw.attr(W, "type") in (None, "dxa") and _twips(tcw, "w"):
+        return _twips(tcw, "w")
+    row = cell.parent
+    tbl = row.parent if row is not None else None
+    grid = tbl.find(W, "tblGrid") if tbl is not None else None
+    if grid is None:
+        return None
+    cols = [_twips(g, "w") or 0 for g in grid.findall(W, "gridCol")]
+    start = 0
+    for tc in row.findall(W, "tc"):
+        pr = tc.find(W, "tcPr")
+        span = pr.find(W, "gridSpan") if pr is not None else None
+        n = int(span.attr(W, "val") or 1) if span is not None else 1
+        if tc is cell:
+            return sum(cols[start:start + n]) or None
+        start += n
+    return None
+
+
+def available_width(root: Node, rng: Range) -> int:
+    """図や表を置ける幅（twip）。セルの幅から左右の余白を引いたものと、その節の本文の幅の、小さいほう。
+    （11/7：本文の幅を文書の最後の節〈スケジュールの A4 横〉から取り、欄の幅が割合のセルでは A4 横の幅で表を作って、
+    表が欄の右にはみ出した。節はその範囲の入っている節から、セルの幅は割合なら表の列の幅から取る）"""
+    page = FALLBACK_WIDTH
+    cell = rng.container
+    sect = _section_of(root, cell)
     if sect is not None:
         size, margin = sect.find(W, "pgSz"), sect.find(W, "pgMar")
         sw, left, right = _twips(size, "w"), _twips(margin, "left"), _twips(margin, "right")
         if sw and left is not None and right is not None and sw - left - right > 0:
             page = sw - left - right
-    cell = rng.container
     width = page
     if cell.is_(W, "tc"):
-        tcpr = cell.find(W, "tcPr")
-        tcw = tcpr.find(W, "tcW") if tcpr is not None else None
-        if tcw is not None and (tcw.attr(W, "type") in (None, "dxa")):
-            w = _twips(tcw, "w")
-            if w:
-                mar = tcpr.find(W, "tcMar")
-                lm = _twips(mar.find(W, "left") if mar is not None else None, "w")
-                rm = _twips(mar.find(W, "right") if mar is not None else None, "w")
-                width = min(page, w - (CELL_MARGIN if lm is None else lm) - (CELL_MARGIN if rm is None else rm))
+        w = _cell_width(cell)
+        if w:
+            tcpr = cell.find(W, "tcPr")
+            mar = tcpr.find(W, "tcMar") if tcpr is not None else None
+            lm = _twips(mar.find(W, "left") if mar is not None else None, "w")
+            rm = _twips(mar.find(W, "right") if mar is not None else None, "w")
+            width = min(page, w - (CELL_MARGIN if lm is None else lm) - (CELL_MARGIN if rm is None else rm))
     return max(width, 1000)
 
 

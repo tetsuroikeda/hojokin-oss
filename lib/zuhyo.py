@@ -151,6 +151,17 @@ def _man(v: float) -> str:
 # ---------------------------------------------------------------- 前後比較
 
 
+def _fit_label(text: str, width: float, size: int) -> str:
+    """右揃えの作業名が、図の左の端からはみ出さない長さ（はみ出すなら、後ろを「…」にする。11/7：長い名前の頭が切れた）。"""
+    def units(s: str) -> float:
+        return sum(1.0 if ord(ch) > 0x2000 else 0.55 for ch in s) * size
+    if units(text) <= width:
+        return text
+    while text and units(text + "…") > width:
+        text = text[:-1]
+    return text + "…"
+
+
 def before_after_svg(tasks: Sequence[Dict]) -> Tuple[str, str]:
     """工程ごとの1日の作業時間を、導入前と導入後で比べる横棒（同じ物差し）。（SVG、題）"""
     before = [t for t in tasks if t.get("側") == "導入前" and isinstance(t.get("分"), (int, float))]
@@ -174,7 +185,7 @@ def before_after_svg(tasks: Sequence[Dict]) -> Tuple[str, str]:
         for t in rows:
             y += row_h
             w = bar_w * t["分"] / top
-            body.append(_text(label_w, y - 12, str(t.get("工程") or ""), 26, INK, "end"))
+            body.append(_text(label_w, y - 12, _fit_label(str(t.get("工程") or ""), label_w - 40, 26), 26, INK, "end"))
             body.append(_rect(bar_x, y - 38, w, 30, color))
             body.append(_text(bar_x + w + 12, y - 13, _minutes(t["分"]), 26, INK_2))
         y += 20

@@ -37,6 +37,24 @@ RECALC_ALWAYS = (
 )
 
 
+# 様式が使う書体のうち、Mac に入っていないことが多いものを、入っていることが多い近い書体に置き換える（PDF の写しの見た目）。
+# 11/7：BIZ UDゴシック がなく、代わりの書体の行の高さが行のグリッドを超えて、1行が2行分に広がった。
+# 置き換え先がないパソコンでは、LibreOffice がいつもの代わりの書体を使う（悪くはならない）
+FONT_SUBSTITUTIONS = (("BIZ UDゴシック", "BIZ UDPゴシック"), ("ＭＳ ゴシック", "BIZ UDPゴシック"), ("ＭＳ Ｐゴシック", "BIZ UDPゴシック"))
+
+
+def _font_substitutions() -> str:
+    nodes = "".join(
+        f'<node oor:name="_{i}" oor:op="replace"><prop oor:name="Always" oor:op="fuse"><value>true</value></prop>'
+        f'<prop oor:name="OnScreenOnly" oor:op="fuse"><value>false</value></prop>'
+        f'<prop oor:name="ReplaceFont" oor:op="fuse"><value>{src}</value></prop>'
+        f'<prop oor:name="SubstituteFont" oor:op="fuse"><value>{dst}</value></prop></node>'
+        for i, (src, dst) in enumerate(FONT_SUBSTITUTIONS))
+    return ('<item oor:path="/org.openoffice.VCL"><prop oor:name="FontSubstituteTableEnabled" oor:op="fuse">'
+            '<value>true</value></prop></item>'
+            f'<item oor:path="/org.openoffice.VCL/FontSubstitutions">{nodes}</item>')
+
+
 class LibreOfficeError(RuntimeError):
     """LibreOffice が動かなかった、または計算し直したファイルができなかった。"""
 
@@ -79,7 +97,8 @@ def write_profile(profile: Path) -> None:
     """一時のプロフィールに、計算し直しを「常に」にする設定を書く（起動する前に書く）。"""
     user = profile / "user"
     user.mkdir(parents=True, exist_ok=True)
-    (user / "registrymodifications.xcu").write_text(XCU_HEAD + RECALC_ALWAYS + "</oor:items>", encoding="utf-8")
+    (user / "registrymodifications.xcu").write_text(XCU_HEAD + RECALC_ALWAYS + _font_substitutions() + "</oor:items>",
+                                                    encoding="utf-8")
 
 
 def recalc_xlsx(src: Path, work: Path, soffice: str, timeout: int = TIMEOUT) -> Path:

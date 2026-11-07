@@ -323,10 +323,15 @@ def test_layout_copy_changes_only_fixed_line_heights_and_floating_tables(twm_for
     assert set(before) == set(after)
     assert all(before[n] == after[n] for n in before if n != yw.DOC)
     doc_b, doc_a = before[yw.DOC], after[yw.DOC]
-    assert b"tblpPr" in doc_b and b"tblpPr" not in doc_a and b'lineRule="exact"' not in doc_a
+    assert b"tblpPr" in doc_b and b"tblpPr" not in doc_a
+    assert b'lineRule="exact"' in doc_b and b'lineRule="exact"' not in doc_a and b'lineRule="atLeast"' not in doc_a
+    assert b'w:type="lines"' in doc_b and b'w:type="lines"' not in doc_a  # 行のグリッドにそろえる設定を外す
+    # 変わるのは、浮いた表・行の間隔・行のグリッドだけ（文字はそのまま）
+    from lib import xml_spans
+    assert yw.text_of(xml_spans.parse(doc_a)) == yw.text_of(xml_spans.parse(doc_b))
     import re as _re
-    normalized = _re.sub(rb"<w:tblpPr\b[^>]*/>", b"", doc_b).replace(b'lineRule="exact"', b'lineRule="atLeast"')
-    assert normalized == doc_a
+    strip = lambda d: _re.sub(rb"<w:tblpPr\b[^>]*/>|<w:spacing\b[^>]*/>|<w:docGrid\b[^>]*/>", b"", d)  # noqa: E731
+    assert strip(doc_a) == strip(doc_b)
 
 
 # ---------------------------------------------------------------- 箇条書き・本文の表・揃え・説明の青字・空の欄（11/7 の作者の指摘）
@@ -361,6 +366,10 @@ def test_bullets_tables_and_outside_blue_text(env: twm.Env, twm_form: bytes) -> 
     # 「|」の行は、範囲の中の表になる（区切りの行は表にしない）。表の後の文も範囲に入る
     tables = [n for n in rng.nodes if n.is_(yw.W, "tbl")]
     assert len(tables) == 1 and len(tables[0].findall(yw.W, "tr")) == 3
+    # 表は欄の幅に収める（欄の幅が割合のセルで、文書の最後の節〈A4 横〉の幅で作って、右にはみ出した。11/7）
+    tbl_w = int(tables[0].find(yw.W, "tblPr").find(yw.W, "tblW").attr(yw.W, "w"))
+    grid_w = sum(int(g.attr(yw.W, "w")) for g in tables[0].find(yw.W, "tblGrid").findall(yw.W, "gridCol"))
+    assert tbl_w == grid_w <= 11906 - 1440  # A4 縦の本文の幅（左右の余白 720）より狭い
     text = yw.item_text(blob, pos)
     assert "導入の前と後" in text and "見積1件" in text and "15分" in text and text.endswith("見積の時間が大きく減ります。")
     # 範囲の外の説明の青字（題の「記載例」など）も消え、青字でない所は変わらない
