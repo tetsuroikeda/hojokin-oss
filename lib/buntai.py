@@ -4,11 +4,12 @@ docs/style-criteria.md の A（数えられる基準）と B（避ける言い�
 文体の基準の表は、そのたびにファイルから読む（作者が A14 で表を直しても、そのまま数える）。
 
 - 合否に使うもの（SPEC F9 の完成の条件）：
-  - A の「要修正」：100字を超える文、`**`・`##` などの記号の残り、です・ます調とである調の混在。
-  - B の避ける言い回しと、会社の「避けたい言い方」に当たる言い回し。社長が残すと決めたもの（会社の記録の
-    「好む言い方」に「」で書いた言い回し）は除く。
-- 合否に使わないもの（数えて示すだけ）：A の「注意」「弱い注意」。A と B が重なる項目（「等」「など」「さまざまな」、
-  定着していないカタカナ語）は A に従い、注意として数える。
+  - A の「要修正」：`**`・`##` などの記号の残り、です・ます調とである調の混在。
+  - 会社の「避けたい言い方」に当たる言い回し（社長が決めたこと）。
+- 合否に使わないもの（数えて社長に示すだけ）：A の「注意」「弱い注意」（100字を超える文を含む）と、B の避ける言い回し
+  （11/7 の作者の決定。言葉の一覧で縛ると、書き手が文脈に合う言葉まで避けて回りくどくなるため）。B は「避ける言い回し」として
+  別に数えて示し、書き手は自然に言い換えられる所だけ直す。社長が残すと決めたもの（会社の記録の「好む言い方」に「」で書いた
+  言い回し）は数えない。A と B が重なる項目（「等」「など」「さまざまな」、定着していないカタカナ語）は A に従い、注意として数える。
 - B の表の言い回しの読み方は、testdata/計画書/check_plans.py と同じ（「〜」は間の何文字か。「〇〇」・かぎかっこの例・
   かっこの中の条件の文は数えない。2字以下の短い語は数えない）。
 
@@ -113,8 +114,8 @@ def count(texts: Dict[str, str], criteria: Criteria, avoid: Sequence[str] = (), 
         sents = sentences(text)
         for s in sents:
             n = len(s)
-            if n > LONG_MUST:
-                add(MUST_FIX, where, s, f"一文が{LONG_MUST}字を超える（{n}字）", "2つの文に分ける")
+            if n > LONG_MUST:  # 11/7 の作者の決定で、要修正から注意に下げた
+                add(CAUTION, where, s, f"一文が{LONG_MUST}字を超える（{n}字）", "読みにくければ分ける")
             elif n > LONG_CAUTION:
                 add(CAUTION, where, s, f"一文が{LONG_CAUTION}字を超える（{n}字）")
             if s.count("、") >= TOO_MANY_COMMAS:
@@ -154,5 +155,5 @@ def count(texts: Dict[str, str], criteria: Criteria, avoid: Sequence[str] = (), 
 
 
 def failing(result: Dict[str, List[Dict[str, str]]]) -> int:
-    """合否に使う件数（要修正、B の避ける言い回し、会社の避けたい言い方）。"""
-    return len(result[MUST_FIX]) + len(result[B_HIT]) + len(result[COMPANY_HIT])
+    """合否に使う件数（A の要修正と、会社の避けたい言い方）。B の避ける言い回しは注意として示すだけ（11/7 の作者の決定）。"""
+    return len(result[MUST_FIX]) + len(result[COMPANY_HIT])
