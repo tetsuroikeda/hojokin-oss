@@ -744,8 +744,12 @@ def names_match(a: str, b: str) -> bool:
 
 
 def _is_form(doc: Dict, stage: Dict, data: Dict) -> bool:
-    """様式で作る書類か（申請書として作るもの。集める書類ではない）。段階の様式か制度データの様式の名前に当たれば様式。"""
+    """様式で作る書類か（申請書として作るもの。集める書類ではない）。段階の様式か制度データの様式の名前に当たれば様式。
+    外の機関が出す書類（商工会議所の事業支援計画書〈様式4〉など）は、様式の名前に当たっても、人に頼んで集める書類とする
+    （11/7 の通し：制度データの「様式」に様式4 が入り、依頼の締切 12/4 が期限の一覧と依頼の候補から落ちた）。"""
     name = str(doc.get("名前") or "")
+    if doc.get("発行元") == "外部機関" or isinstance(doc.get("依頼先"), dict):
+        return False
     if "様式" in str(doc.get("形式") or ""):
         return True
     if re.match(r"^【[^】]*様式】", name):

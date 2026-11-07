@@ -145,6 +145,19 @@ def test_requests_then_days_then_status(folder) -> None:
     assert "聞き直していません" in out
 
 
+def test_external_form_in_the_forms_is_still_a_request(folder) -> None:
+    """制度データの「様式」に、外の機関が出す様式4 が入っていても、人に頼む書類として依頼の候補に出る
+    （11/7 の通し：読み取り役が様式4 を「様式」に入れ、締切 12/4 が依頼の候補と期限の一覧から落ちた）。"""
+    data = _json(REPO_ROOT / "evals" / "_lib" / "T6-6" / "持続化_第20回.json")
+    seido = json.loads(data) if isinstance(data, str) else data
+    seido.setdefault("様式", []).append({"名前": "事業支援計画書（様式4）", "入力先": {"値": {"種類": "ファイル"}}, "項目": []})
+    add_case(folder, CASE_2, "持続化", "小規模事業者持続化補助金", "通常枠", "第20回", "第20回",
+             seido if not isinstance(data, str) else json.dumps(seido, ensure_ascii=False))
+    code, out = run(folder, "--case", CASE_2, "--requests")
+    assert code == 0, out
+    assert "事業支援計画書（様式4）" in out and "締切：2026年12月4日（金）" in out
+
+
 def test_wrong_names_and_values_write_nothing(folder) -> None:
     code, out = run(folder, "--case", CASE_1, "--add", "よく分からない書類")
     assert code == 2 and "制度データの書類に「よく分からない書類」が見当たりません" in out and "金融機関確認書" in out
