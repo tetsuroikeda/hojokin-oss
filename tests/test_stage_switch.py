@@ -473,3 +473,63 @@ def test_grant_decision_without_a_deadline_rule_is_recorded_without_switching(tm
                            "--folder", str(shop.folder), "--case", case, "--stage", "2_見積書等の提出"],
                           capture_output=True, text=True, timeout=60)
     assert json.loads(fubi.stdout)["交付決定の日"] == "2027-04-23", fubi.stdout + fubi.stderr
+
+
+# ---- 期限が読み取れない段階の手がかり（11/7 の採択後の通し） ----
+
+
+def _page(doc_dir: Path, number: int, text: str) -> dict:
+    """資料の本文の1ページ（lib/doc_text.write_text と同じ形。1行目は見出し）。"""
+    name = f"ページ_{number:03d}.txt"
+    (doc_dir / name).write_text(f"【架空の公募要領／印刷されたページ {number}】\n\n{text}", encoding="utf-8")
+    return {"PDFのページ": number, "印刷されたページ": number, "番号を見つけた": True, "文字数": len(text), "ファイル": name}
+
+
+def test_unread_deadline_shows_clue_from_another_chapter_and_keeps_data(tmp_path) -> None:
+    """交付申請の期限を、採択後の章（p.38）だけで読ませて「読み取れない」になった制度データ。期限の定めは別の章（p.26 の
+    実施期間の節の※書き）にある。切り替えの道具と制度データの確かめの道具が、そのページと文と決め方の見当を示し、
+    制度データは書き換えない。出来事の名前として段階の語を使っただけの文（「交付申請日から」）は、手がかりにしない。
+    資料の文は、公募要領の文を写さず、このテストのために書いた架空のもの。"""
+    data = seido()
+    stage = next(s for s in data["手続きの段階"] if s["id"] == "交付申請")
+    stage["期限"] = {"値": None, "状態": "読み取れない", "理由": "p.38 には「早めに出す」とだけある"}
+    shop = Shop(tmp_path, data)
+    shop.set_today("2027-03-16")
+    doc_dir = shop.folder / "記録" / "資料の本文" / CASE / "要領3"
+    doc_dir.mkdir(parents=True)
+    pages = [
+        _page(doc_dir, 26, "（3）実施期間\n交付決定の日から17か月の内に終える。\n※ 交付申請は、なるべく\n"
+                           "採択発表日から２か月後の日までに出すこと（架空の資料の文）。"),
+        _page(doc_dir, 27, "実績報告は、交付申請日から30日の内に出す決まりではありません。期限は別に示します。"),
+        _page(doc_dir, 38, "採択の後は、交付申請を早めに出す。"),
+    ]
+    index = {"資料": "要領3", "名前": "公募要領", "公募回": "第3回", "ファイル": "公式資料/要領.pdf", "ハッシュ": "",
+             "種類": "PDF", "ページ数": 38, "ページのずれ": 0, "ページ": pages}
+    _write_json(doc_dir / "ページの対応.json", index)
+    data_file = shop.folder / "記録" / "制度データ" / f"{SHORT}_第3回.json"
+    before = data_file.read_bytes()
+
+    out = shop.tool("--event", "採択発表日=2027-03-10", code=1)
+    deadline = section(out, "交付申請の期限")
+    assert deadline[0].startswith("- 日付はまだ出せません（資料から読み取れませんでした"), deadline
+    # 文は形をそろえたもの（NFKC。改行と空白を除き、全角の数字とかっこは半角になる）
+    clue = "要領3 p.26「…交付申請は、なるべく採択発表日から2か月後の日までに出すこと(架空の資料の文)」（決め方の見当：採択発表日から2か月）"
+    assert f"  - {clue}" in out.splitlines(), out
+    assert any("junbi の手順（制度データの期限の抜けを直す）" in line for line in deadline), deadline
+    assert "なければ事務局への問い合わせ文の案を作ってください" not in out  # 手がかりがあるときは、問い合わせに回さない
+    assert "要領3 p.27「" not in out  # 「交付申請日から」は出来事の名前なので、交付申請の期限の手がかりにしない
+    assert data_file.read_bytes() == before  # 制度データは書き換えない
+
+    # 制度データの確かめ（--check）の終わりにも、同じ手がかりを出す（終了コードには響かせない）
+    r = subprocess.run([hr.real_python(), "-B", str(hr.REPO_ROOT / "skills" / "junbi" / "scripts" / "seido_data.py"),
+                        "--folder", str(shop.folder), "--case", CASE, "--check"], capture_output=True, timeout=120)
+    checked = r.stdout.decode("utf-8")
+    assert "読み取れないとした段階の期限に、資料の本文で当たりそうな文：1段階" in checked, checked
+    assert f"  - {clue}" in checked.splitlines(), checked
+    assert data_file.read_bytes() == before
+
+    # 期限の定めが資料にない段階（手がかりがない）は、今までどおり問い合わせに回す
+    (doc_dir / "ページ_026.txt").write_text("【架空】\n\n（3）実施期間\n交付決定の日から17か月の内に終える。", encoding="utf-8")
+    out = shop.tool("--show", code=1)
+    assert "資料の本文に、期限らしい文があります" not in out
+    assert "なければ事務局への問い合わせ文の案を作ってください" in out

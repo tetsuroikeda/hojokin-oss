@@ -16,6 +16,8 @@
 6. 結果：切り替えた段階の期限（日付・あと何日・決め方・もとにした日・出典）、書類の一覧（制度データの書類のうち、
    手続きにその段階の id があるもの。必須・条件付き・任意に分け、集める書類は、書類の台帳と、その段階の「添付する書類」に
    あるかを示す）、段階の注意、事前着手の注意（その段階が交付決定より前のとき）、この後の段階の期限。
+7. 期限が読み取れない段階は、資料の本文から期限らしい文を探して示す（lib/seido_data.deadline_clues。11/7 の採択後の通しで、
+   交付申請の期限が別の章〈補助事業実施期間の節〉にあり、制度データから落ちていた）。制度データは書き換えない。
 
 書く前に、書くもの（期限の台帳と段階のフォルダ）の場所をすべて確かめ、1つでも別名があれば何も書かない（lib/places.py。DESIGN 5章）。
 日付と日数は、すべてここ（とその下の lib/dates.py・lib/deadlines.py）で出す。Claude には結果の値をそのまま使わせる
@@ -87,6 +89,8 @@ class Outcome:
     kept_for_event: bool = False  # 今の段階の出来事の日付だけを渡されたので、段階を進めなかった
     year: int = 0  # 繰り返しの報告の段階で、次に出す回（「2」なら 4_効果報告/2年目。B31a）
     year_made: List[str] = field(default_factory=list)  # 作った年のフォルダ
+    # 期限が読み取れない段階の、資料の本文にある期限らしい文（段階の名前 → 手がかり。lib/seido_data.deadline_clues）
+    clues: Dict[str, List[seido_data.DeadlineClue]] = field(default_factory=dict)
 
     def where(self) -> str:
         """書類を置く段階のフォルダ（繰り返しの報告は年のフォルダ）。"""
@@ -446,6 +450,7 @@ def switch(folder: Path, case: str, stage: Optional[str] = None, events: Optiona
     out.cautions = _cautions(target)
     if _before_decision(data, target):
         out.prohibitions = _prohibitions(data)
+    out.clues = seido_data.deadline_clues(folder, case, data)
     out.notes = _notes(before, out, data)
     return out
 
@@ -469,6 +474,12 @@ def _notes(before: deadlines.CaseStatus, out: Outcome, data: Dict) -> List[str]:
                      f"第{case_round}回の交付申請の手引きなどが出たら、公式資料を取り直して、期限と書類を確かめてください")
     if out.status is not None:
         notes += out.status.notes
+    target_name = str(out.target.get("名前") or out.target.get("id") or "")
+    for name, clues in out.clues.items():
+        if name == target_name:
+            continue  # 切り替えた段階の手がかりは、期限の節に出す
+        notes.append(f"「{name}」の期限は、制度データでは読み取れないとしていますが、資料の本文に当たりそうな文があります："
+                     + "／".join(c.line() for c in clues) + "。junbi の手順（制度データの期限の抜けを直す）で確かめてください")
     return notes
 
 
@@ -549,7 +560,14 @@ def report(out: Outcome) -> str:
             lines.append(f"- 出典：{'、'.join(d.sources)}")
         if isinstance(rule, dict) and isinstance(rule.get("注記"), str):
             lines.append(f"- 制度データの注記：{rule['注記']}")
-        if d is not None and not d.dated:
+        clues = out.clues.get(str(out.target.get("名前") or out.target.get("id") or ""), [])
+        if d is not None and not d.dated and clues:
+            lines.append("- 制度データでは、この段階の期限を読み取れないとしていますが、資料の本文に、期限らしい文があります"
+                         "（制度データの抜けかもしれません）：")
+            lines += [f"  - {c.line()}" for c in clues]
+            lines.append("- 日付を頭で計算せず、junbi の手順（制度データの期限の抜けを直す）で、この段階を読んだ章を、上のページを"
+                         "足して読み取り役に読ませ直し、裏取りの道具に通してまとめ直してから、--show で期限を出し直してください")
+        elif d is not None and not d.dated:
             lines.append(f"- {_undated_hint(rule)}")
         if row.years:
             lines.append("- 回ごとの期限（5年先までの期限。提出版を記録した回は済み）：")

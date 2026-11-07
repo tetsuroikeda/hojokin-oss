@@ -11,6 +11,8 @@
 - まとめ方、確かめ方、段階のフォルダの作り方は、lib/seido_data.py の説明のとおり。
 - --merge は、まとめた制度データを裏取りし直して `記録/制度データ/<制度の略称>_<公募回>.json` に置き、
   確かめた結果を出し、形が合えば、いちばん前の段階（申請）のフォルダを作る。置き場所は道具が決める（ほかの場所には書かない）。
+- --merge と --check は、期限が読み取れない手続きの段階について、資料の本文にある期限らしい文（「<段階>は…<出来事>から
+  <数>か月…期限」）を探し、あれば結果の終わりに示す（制度データの抜けかもしれない。終了コードには響かせない）。
 - --case：案件の名前（`記録/資料の本文/` の下のフォルダの名前）。案件が1つなら、渡さなくてよい。
 - Claude が Bash で動かすコマンドには、CLAUDE_PROJECT_DIR の環境変数が入らないので、--folder で渡す。
 - 終了コード：
@@ -92,6 +94,7 @@ def main(argv) -> int:
             rel = verified.out_file
             result = seido_data.check(saved)
             out = seido_data.merge_report(case, merged, verified, rel) + "\n" + seido_data.check_report(result, rel)
+            out += seido_data.clues_report(seido_data.deadline_clues(folder, case, saved))
             stage_ok = True
             if not result.schema_errors:
                 try:
@@ -110,7 +113,8 @@ def main(argv) -> int:
         rel = str(path.relative_to(folder))
         if args.check:
             result = seido_data.check(data)
-            print(seido_data.check_report(result, rel), end="")
+            print(seido_data.check_report(result, rel) + seido_data.clues_report(seido_data.deadline_clues(folder, case, data)),
+                  end="")
             return 0 if result.ok else 1
         # --stage-folders
         if seido_data.check(data).schema_errors:

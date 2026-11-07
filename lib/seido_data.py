@@ -75,7 +75,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from lib import case_folder, place_text, urakadori
+from lib import case_folder, doc_text, place_text, urakadori
 from lib.official_docs import LIST_FILE, RECORDS_DIR, TEXT_DIR, round_number
 
 SCHEMA_VERSION = 1
@@ -1152,6 +1152,195 @@ def load_data(company: Path, case: str) -> Tuple[Path, Any]:
         raise DataMissing(f"制度データ（{path.relative_to(company)}）が JSON として読めません（{e}）") from e
 
 
+# ---- 読み取れないとした期限の手がかり ----
+#
+# 章ごとに読ませると、段階の期限が、その段階の章とは別の章に書かれているときに落ちる（11/7 の採択後の通し：
+# 交付申請の期限「採択発表日から2か月後の日」は、公募要領の補助事業実施期間の節〈p.25〉の※書きにあり、
+# 採択後の手続きの章〈p.37〜38〉だけを読ませた交付申請の段階は「読み取れない」になった）。
+# 期限が読み取れない段階について、資料の本文から「<段階>は…<出来事>から<数><単位>…期限」の文を探して示す。
+# 制度データは書き換えない（直すのは、読み取り役に読ませ直して裏取りの道具に通す junbi の手順）。
+
+CLUE_MAX = 3  # 段階ごとに示す文の数
+CLUE_TEXT_MAX = 80  # 示す文の長さ（字）
+CLUE_GAP = 20  # 段階の語の終わりから出来事の始まりまでの字数の上限（表の文字が1行につながったページで、離れた語を拾わない）
+_CLUE_PERIOD = re.compile(r"([^、。,，「」『』（）()]{1,12}?日)から([0-9]+)(か月|ヶ月|カ月|ケ月|箇月|日|年)")
+_CLUE_TAIL = ("期限", "までに")
+_CLUE_BRACKETS = re.compile(r"（[^）]*）|\([^)]*\)|【[^】]*】")
+
+
+@dataclass
+class DeadlineClue:
+    """期限が読み取れない段階の、期限らしい文（資料の本文から）。"""
+
+    stage: str  # 段階の名前
+    doc: str  # 資料の id
+    page: Optional[int]  # 印刷されたページ（ずれが分からない資料は PDF のページ。HTML などは None）
+    text: str  # 文（形をそろえたもの。長いときは切る）
+    rule: str  # 文から読んだ決め方（「採択発表日から2か月」）
+
+    def where(self) -> str:
+        return f"{self.doc} p.{self.page}" if self.page is not None else self.doc
+
+    def line(self) -> str:
+        return f"{self.where()}「{self.text}」（決め方の見当：{self.rule}）"
+
+
+def _deadline_unread(stage: Dict) -> bool:
+    """段階の期限が読み取れないか（期限の欄が「値」なし。フォルダのある段階は、期限の欄がないときも）。"""
+    node = stage.get("期限")
+    if isinstance(node, dict):
+        return node.get("値") is None
+    return node is None and isinstance(stage.get("フォルダ"), str)
+
+
+def _stage_keys(stage: Dict) -> List[str]:
+    """文の中で段階を指す語（id・名前。かっこの中を除き、「・」で分けた語も。2字以上）。"""
+    keys: List[str] = []
+    for raw in (stage.get("id"), stage.get("名前")):
+        if not isinstance(raw, str):
+            continue
+        whole = urakadori.normalize(_CLUE_BRACKETS.sub("", raw))
+        for key in [whole] + whole.split("・"):
+            if len(key) >= 2 and key not in keys:
+                keys.append(key)
+    return keys
+
+
+def _key_hits(head: str, keys: List[str]) -> List[int]:
+    """head の中の段階の語の位置。出来事の名前として使われた語（「採択発表日」の「採択発表」）と、出来事から
+    CLUE_GAP 字より離れた語は除く。"""
+    hits = []
+    for key in keys:
+        start = head.find(key)
+        while start >= 0:
+            end = start + len(key)
+            if head[end:end + 1] != "日" and len(head) - end <= CLUE_GAP:
+                hits.append(start)
+            start = head.find(key, start + 1)
+    return hits
+
+
+def _rule_events(data: Any) -> List[str]:
+    """制度データの手続きの段階の期限の決め方にある出来事の名前（形をそろえたもの。長い順）。"""
+    found: List[str] = []
+
+    def walk(rule: Any) -> None:
+        if not isinstance(rule, dict):
+            return
+        if rule.get("種類") == "出来事からの期間" and isinstance(rule.get("出来事"), str):
+            name = urakadori.normalize(rule["出来事"])
+            if name and name not in found:
+                found.append(name)
+        for part in rule.get("期限") if isinstance(rule.get("期限"), list) else []:
+            walk(part)
+
+    stages = data.get("手続きの段階") if isinstance(data, dict) else None
+    for stage in stages if isinstance(stages, list) else []:
+        node = stage.get("期限") if isinstance(stage, dict) else None
+        walk(node.get("値") if isinstance(node, dict) else None)
+    return sorted(found, key=len, reverse=True)
+
+
+def _clues_in(text: str, keys: List[str], events: Optional[List[str]] = None) -> List[Tuple[str, str]]:
+    """ページの文字から、段階の語が出来事のすぐ前にあり、後ろに「期限」「までに」がある文（文、決め方）。
+    出来事の名前は、制度データの期限の決め方にある出来事（events）で終わっていれば、その名前にそろえる
+    （「なるべく採択発表日」→「採択発表日」）。"""
+    found = []
+    for sentence in urakadori.normalize(text).split("。"):
+        for m in _CLUE_PERIOD.finditer(sentence):
+            head = sentence[:m.start(1)]
+            hits = _key_hits(head, keys)
+            if not hits or not any(w in sentence[m.end():] for w in _CLUE_TAIL):
+                continue
+            event = next((e for e in events or [] if m.group(1).endswith(e)), m.group(1))
+            unit = "か月" if m.group(3) in ("ヶ月", "カ月", "ケ月", "箇月") else m.group(3)
+            start = max(hits)
+            shown = sentence[start:start + CLUE_TEXT_MAX]
+            if start > 0:
+                shown = "…" + shown
+            if start + CLUE_TEXT_MAX < len(sentence):
+                shown += "…"
+            found.append((shown, f"{event}から{int(m.group(2))}{unit}"))
+            break
+    return found
+
+
+def _listed_docs(texts: "urakadori.Texts") -> List[str]:
+    """資料の一覧の「資料」の id（一覧の順。前の回の資料は見ない）。一覧がなければ、本文のある資料のフォルダの名前。"""
+    listed = texts.root / LIST_FILE
+    texts.check_inside(listed)
+    try:
+        data = json.loads(listed.read_text(encoding="utf-8")) if listed.is_file() else None
+    except (OSError, ValueError):
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("資料"), list):
+        return [d["id"] for d in data["資料"] if isinstance(d, dict) and isinstance(d.get("id"), str)]
+    names = texts.doc_names() or {}
+    return sorted(names)
+
+
+def deadline_clues(company: Path, case: str, data: Any) -> Dict[str, List[DeadlineClue]]:
+    """期限が読み取れない段階ごとの、資料の本文にある期限らしい文（段階の名前 → 手がかり。ない段階は入れない）。
+
+    読めない資料・会社のフォルダの外を指す資料は、黙って飛ばす（手がかりは知らせだけなので、切り替えや確かめを止めない）。
+    """
+    stages = [s for s in (data.get("手続きの段階") or []) if isinstance(s, dict)] if isinstance(data, dict) else []
+    wanted = [(str(s.get("名前") or s.get("id") or ""), _stage_keys(s)) for s in stages if _deadline_unread(s)]
+    wanted = [(name, keys) for name, keys in wanted if name and keys]
+    if not wanted:
+        return {}
+    events = _rule_events(data)
+    out: Dict[str, List[DeadlineClue]] = {}
+    try:
+        texts = urakadori.Texts(company, case)
+        if not texts.exists():
+            return {}
+        docs = _listed_docs(texts)
+    except Exception:
+        return {}
+    for doc_id in docs:
+        if urakadori._bad_doc_id(doc_id):
+            continue
+        doc_dir = texts.doc_dir(doc_id)
+        try:
+            texts.check_inside(doc_dir)
+            texts.check_inside(doc_dir / doc_text.INDEX_FILE)
+            index = doc_text.load_index(doc_dir)
+        except Exception:
+            continue
+        numbered = index.get("ページのずれ") is not None
+        for info in index.get("ページ") or []:
+            if not isinstance(info, dict) or not isinstance(info.get("ファイル"), str):
+                continue
+            try:
+                texts.check_inside(doc_dir / info["ファイル"])
+                text = doc_text.read_page(doc_dir, info)
+            except Exception:
+                continue
+            page = info.get("印刷されたページ") if numbered else info.get("PDFのページ")
+            for name, keys in wanted:
+                if len(out.get(name, [])) >= CLUE_MAX:
+                    continue
+                for shown, rule in _clues_in(text, keys, events):
+                    out.setdefault(name, []).append(DeadlineClue(stage=name, doc=doc_id, page=page, text=shown, rule=rule))
+                    if len(out[name]) >= CLUE_MAX:
+                        break
+    return out
+
+
+def clues_report(clues: Dict[str, List[DeadlineClue]]) -> str:
+    """seido_data.py の --check・--merge の結果に添える文（手がかりがなければ空）。"""
+    if not clues:
+        return ""
+    lines = ["", f"読み取れないとした段階の期限に、資料の本文で当たりそうな文：{len(clues)}段階"
+             "（制度データの抜けかもしれません。その段階を読んだ章を、下のページを足して読み取り役に読ませ直し、"
+             "裏取りの道具に通してから、まとめ直す。読ませ直しても読み取れないなら、そのままでよい）"]
+    for name, found in clues.items():
+        lines.append(f"- {name}の期限：")
+        lines += [f"  - {c.line()}" for c in found]
+    return "\n".join(lines) + "\n"
+
+
 # ---- 段階のフォルダ ----
 
 
@@ -1300,7 +1489,7 @@ def merge_report(case: str, merged: MergeResult, verified: urakadori.Result, rel
 
 
 __all__ = [
-    "IMPORTANT", "CheckResult", "DataMissing", "ImportantItem", "MergeError", "MergeResult", "check", "check_report",
-    "data_round", "load_data", "make_stage_folders", "merge", "merge_and_save", "merge_report", "reference_problems",
-    "seido_path",
+    "IMPORTANT", "CheckResult", "DataMissing", "DeadlineClue", "ImportantItem", "MergeError", "MergeResult", "check",
+    "check_report", "clues_report", "data_round", "deadline_clues", "load_data", "make_stage_folders", "merge",
+    "merge_and_save", "merge_report", "reference_problems", "seido_path",
 ]
