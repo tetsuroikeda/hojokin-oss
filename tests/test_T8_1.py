@@ -123,8 +123,10 @@ def test_cells_tool_writes_every_kind_of_input_and_keeps_the_form(env: Env, form
     parts_b, parts_a = twm.parts_of(form3), twm.parts_of(blob)
     assert b'fullCalcOnLoad="1"' in parts_a[ye.BOOK] and b"fullCalcOnLoad" not in parts_b[ye.BOOK]
     changed = sorted(n for n in parts_b if parts_b[n] != parts_a.get(n))
-    assert changed == sorted(["xl/workbook.xml", "xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml",
-                              "xl/worksheets/sheet4.xml", "xl/worksheets/sheet6.xml"])
+    # 書いたシート（1・2・4・6）と、数式の値を計算し直したシート（LibreOffice があるとき）だけが変わる
+    assert {"xl/workbook.xml", "xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml",
+            "xl/worksheets/sheet4.xml", "xl/worksheets/sheet6.xml"} <= set(changed)
+    assert all(n == "xl/workbook.xml" or n.startswith("xl/worksheets/sheet") for n in changed), changed
     # 2回目は前の値を置き換え、ほかのセルは残る
     twm.ok(env.run("cells", "--input", env.put("記録/一時/その3の値.json", {"値": [{"シート": B3, "セル": "H6", "値": 280}]})))
     blob2 = (env.folder / APP3).read_bytes()
@@ -285,3 +287,45 @@ def test_stop_hook_reverts_outside_changes_made_by_adhoc_code(tmp_path: Path, fo
     out = c.stop()
     assert not (out and "根拠対照表.xlsx が、書いてよい範囲" in json.dumps(out, ensure_ascii=False))
     assert evidence.read_bytes() == second
+
+
+# ---------------------------------------------------------------- 数式のセルの値の保存（11/6 のリハーサルの不具合）
+
+
+def test_cells_tool_stores_formula_values(env: Env, form3: bytes) -> None:
+    """書いた後に、数式のセルの値を LibreOffice で計算し直して保存する。数式と書式はそのまま（範囲の外の変化0件）。
+    リハーサルでは、省力化指数（その3!B8）・業務時間の合計（別紙1!D3）・投資回収期間が 0 のまま残り、審査役が要修正にした。"""
+    from zaimu_tool import soffice_or_skip
+
+    soffice_or_skip()
+    text = twm.ok(env.run("cells", "--input", env.put("記録/一時/その3の値.json", {"値": VALUES})))
+    assert "数式のセル（省力化指数・投資回収期間・伸び率など）の値を、LibreOffice で計算し直して保存しました" in text
+    blob = (env.folder / APP3).read_bytes()
+    assert ye.compare_xlsx(ye.first_copy(form3), blob) == []
+    before_h, after_h = float(ye.cell_value(blob, B1, "D3")), float(ye.cell_value(blob, B1, "J3"))  # 時間（式は分÷60）
+    assert before_h > after_h > 0  # 前は 0 のまま残っていた
+    assert abs(float(ye.cell_value(blob, B1, "M3")) - (before_h - after_h) / before_h) < 1e-9  # 省力化指数
+    assert ye.cell_value(blob, S3, "B8") == ye.cell_value(blob, B1, "M3")  # その3 の省力化指数は別紙1 から
+    # 数式はそのまま残る（値だけを替えた）
+    sheet = twm.parts_of(blob)["xl/worksheets/sheet1.xml"]
+    assert sheet.count(b"<f") == twm.parts_of(form3)["xl/worksheets/sheet1.xml"].count(b"<f")
+    # recalc は、値の同じセルは書き換えない（もう一度動かしても変わらない）
+    twm.ok(env.run("recalc", "--file", "その3.xlsx"))
+    assert (env.folder / APP3).read_bytes() == blob
+
+
+def test_cells_tool_writes_to_the_form_given_by_source(env: Env, form3: bytes) -> None:
+    """--source に その3 以外の Excel の様式を渡すと、その様式の名前の申請書に書く（前は その3.xlsx に決め打ちだった）。
+    書き先がもうあって、渡した様式とシートの構成が違えば断る。"""
+    other = f"案件/{twm.CASE}/公式資料/【指定様式】試しの確認書_第9回.xlsx"
+    (env.folder / other).write_bytes(form3)
+    text = twm.ok(env.run("cells", "--source", other, "--input",
+                          env.put("記録/一時/確認書の値.json", {"値": [{"シート": B3, "セル": "H6", "値": 250}]}), "--soffice", "/nonexistent"))
+    made = f"案件/{twm.CASE}/{twm.STAGE}/申請書/試しの確認書.xlsx"
+    assert f"{made} に、公式資料の様式から写して作り" in text
+    assert "計算し直せませんでした" in text  # LibreOffice がないときは、値を前のまま残したと伝える
+    assert not (env.folder / APP3).exists()
+    # 書き先と様式の構成が違うときは断る
+    (env.folder / f"案件/{twm.CASE}/{twm.STAGE}/申請書/別の.xlsx").write_bytes(twm.FORM.read_bytes())
+    r = env.run("cells", "--source", other, "--file", "別の.xlsx", "--input", "記録/一時/確認書の値.json")
+    assert r.returncode != 0

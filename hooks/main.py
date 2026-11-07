@@ -39,6 +39,10 @@ HANDLERS = {
 }
 
 
+# hooks が会社のフォルダで動いた合図を残す場面（道具が、hooks が動いているかを確かめるのに使う。lib/company.py）
+SIGNAL_EVENTS = ("SessionStart", "UserPromptSubmit", "Stop")
+
+
 def main(argv: list) -> int:
     event = argv[1] if len(argv) > 1 else ""
     folder = company.company_folder()
@@ -47,6 +51,8 @@ def main(argv: list) -> int:
     handler = HANDLERS.get(event)
     if handler is None:
         return 0
+    if event in SIGNAL_EVENTS:
+        company.write_hook_signal(folder, event)
     raw = sys.stdin.buffer.read().decode("utf-8")
     data = json.loads(raw) if raw.strip() else {}
     output = handler(data, folder)

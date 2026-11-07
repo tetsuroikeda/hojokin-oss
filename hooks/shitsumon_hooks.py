@@ -121,8 +121,12 @@ def add(folder: Path, questions: List[Dict[str, Any]], route: str, session: str 
                  "理由": q.get("理由", ""), "同じ回の数": len(questions), "経路": route}
         if q.get("選択肢"):
             entry["選択肢"] = q["選択肢"]
+        if q.get("選択肢の説明"):
+            entry["選択肢の説明"] = q["選択肢の説明"]
         if q.get("答え"):
             entry["答え"] = q["答え"]
+            if q.get("答えの説明"):
+                entry["答えの説明"] = q["答えの説明"]
             entry["答えた日時"] = when
             entry["答えた時刻"] = _stamp(folder)
         if session:
@@ -164,9 +168,19 @@ def from_ask_user(tool_input: Any, tool_response: Any) -> List[Dict[str, Any]]:
         if not text:
             continue
         options = [str(o.get("label") if isinstance(o, dict) else o) for o in q.get("options") or []]
+        # 選択肢の説明も残す（勧める案の中身を説明に書くことが多く、見出しだけでは、社長が何を選んだかを
+        # 審査役が確かめられない。11/7 のリハーサルで、答えにない中身として要修正になった）
+        notes = {str(o.get("label")): str(o.get("description") or "").strip()
+                 for o in q.get("options") or [] if isinstance(o, dict) and str(o.get("description") or "").strip()}
         m = _REASON.search(text)
         reason = m.group(1) if m else ""
-        out.append({"問い": text, "理由": reason, "選択肢": options, "答え": _answer_text(tool_response, text)})
+        answer = _answer_text(tool_response, text)
+        entry = {"問い": text, "理由": reason, "選択肢": options, "答え": answer}
+        if notes:
+            entry["選択肢の説明"] = notes
+            if answer in notes:
+                entry["答えの説明"] = notes[answer]
+        out.append(entry)
     return out
 
 

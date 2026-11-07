@@ -274,6 +274,32 @@ def test_diff_without_page_is_exit_1(company) -> None:
     assert "出典のページのない変わった項目：1件" in text and "← 出典のページがありません" in text
 
 
+def test_diff_matches_renamed_entries(company) -> None:
+    """前と後で件名だけが違う件は、消えた・足したに分けず、件名が変わった件として出す（11/6 のリハーサル：783件の差）。
+    中身の数が変わった件は、件名が違っても「値が変わった」に出る。言い回しだけの違いは、別に分けて出す。"""
+    old = full("第1回", "要領1", 12, 2)
+    new = full("第2回", "要領2", 10, 2)
+    new["数値でない要件"][0]["名前"] = "電子申請での申請"                  # 件名の言い換え（中身は同じ）
+    new["手続きの段階"][0]["名前"] = "補助事業の実施期間"                  # 件名の言い換え（期間は 12 → 10 か月）
+    new["手続きの段階"][0]["id"] = "実施期間"
+    old["数値でない要件"].append({"名前": "郵送の申請はできない", "種類": "満たすこと", "区分": "申請の要件",
+                             "内容": sv("郵送の申請は受け付けない", "要領1", 2, "郵送の申請は受け付けない。")})
+    new["数値でない要件"].append({"名前": "郵送の申請はできない", "種類": "満たすこと", "区分": "申請の要件",
+                             "内容": sv("郵送による申請は受け付けない", "要領2", 2, "郵送による申請は受け付けない。")})
+    put(company, "テスト_第1回.json", old)
+    put(company, "テスト_第2回.json", new)
+    text = out(company.run("--diff"), 0)
+    assert "件名が変わった件（前と後で件名が違い、件名と中身の近さで同じ件として比べた）：2件" in text
+    assert "- 数値でない要件「電子申請で申請する」 → 数値でない要件「電子申請での申請」（近さ：件名 " in text
+    assert "変わった項目：1件（値が変わった 1件）" in text
+    assert "値が変わった：手続きの段階「補助事業の実施期間」の期限" in text
+    assert "消えた" not in text and "足した" not in text
+    assert "文の言い回しだけが違う値：1件" in text and "- 数値でない要件「郵送の申請はできない」の内容" in text
+    data = json.loads(out(company.run("--diff", "--json"), 0))
+    assert [x["前"] for x in data["件名が変わった件"]] == ["手続きの段階「補助事業の実施」", "数値でない要件「電子申請で申請する」"]
+    assert sorted(c["種類"] for c in data["変わった項目"]) == ["値が変わった", "言い回しが変わった"]
+
+
 def test_diff_no_change(company) -> None:
     put(company, "テスト_第1回.json", full("第1回", "要領1", 12, 2))
     same = copy.deepcopy(full("第2回", "要領2", 12, 2))

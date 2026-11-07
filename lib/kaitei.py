@@ -5,6 +5,9 @@
   変わった行が当たるページ（後の資料の印刷されたページ）と、前のページから後のページへの対応を出す。
 - 引き継ぎ：変わったページに当たらない章の読み取りは、出典の資料と頁を後の資料に付け替え、後の本文で裏取りし直す。
 - 制度データの差：前と後の制度データを項目ごとに比べ、足した・消えた・値が変わった項目を、前と後の値と出典で出す。
+  前と後は別の読み取りなので、名前のある件は、件名の形が同じ件と、件名と中身の近さで組にした件どうしで比べる
+  （lib/seido_data.pair_items。近さで組にした件は「件名が変わった件」に出す）。件ごと足した・消えた件と、区分ごとの同じ変化は
+  1件にまとめ、数が同じで言い回しだけが違う値は別に出す（11/6 のリハーサルで、第8回と第9回の差が 783 件になり使えなかった）。
   自社の申請のどこに影響するかを、会社のフォルダの中身（期限の台帳・書類の台帳・会社の記録・申請書）と照らして出す。
 
 会社のフォルダの中だけを読む・書く（lib/places.py。DESIGN 5章）。/usr/bin/python3（3.9）で動く書き方にする。
@@ -20,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from lib import case_folder, doc_text, place_text, urakadori
+from lib import case_folder, doc_text, place_text, seido_data, urakadori
 
 RECORDS_DIR = "記録"
 TEXT_DIR = "資料の本文"
@@ -523,36 +526,64 @@ class ValueChange:
     old: Optional[Dict]
     new: Optional[Dict]
     page_ok: bool = True
+    entry: str = ""      # 件ごと足した・消えたときの、その件の場所（報告では、件ごとに1つにまとめる）
 
 
-def _flat(data: Dict) -> Dict[str, Dict]:
-    """出典つき値の場所 → 出典つき値。資料どうしの食い違いの値も入れる。"""
-    out: Dict[str, Dict] = {}
+@dataclass
+class Rename:
+    """前と後で件名が違い、件名と中身の近さで同じ件として比べた件（lib/seido_data.pair_items）。"""
+    key: str
+    old: str             # 前の件の場所
+    new: str             # 後の件の場所
+    score: str           # 近さ（件名 0.70・中身 0.19）
 
-    def visit(node: Any, path: List[Any]) -> None:
-        if urakadori._is_sourced_value(node):
-            where = urakadori.readable(path, data)
-            while where in out:  # 同じ名前の件が2つあるとき
-                where += "＊"
-            out[where] = node
-            return
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if not path and key in SKIP_KEYS + ("資料どうしの食い違い",):
-                    continue
-                visit(value, path + [key])
-        elif isinstance(node, list):
-            for i, value in enumerate(node):
-                visit(value, path + [i])
 
-    visit(data, [])
-    for entry in data.get("資料どうしの食い違い") or []:
-        if not isinstance(entry, dict):
-            continue
-        for j, item in enumerate(entry.get("値") or []):
-            if isinstance(item, dict):
-                out[f"資料どうしの食い違い「{entry.get('項目')}」の{j + 1}つ目の値"] = dict(item, 状態=item.get("状態", "資料で食い違い"))
+def _leaves(node: Any, path: List[Any]) -> List[Tuple[List[Any], Dict]]:
+    """node の中の出典つき値の（道、出典つき値）。"""
+    out: List[Tuple[List[Any], Dict]] = []
+    if urakadori._is_sourced_value(node):
+        return [(path, node)]
+    if isinstance(node, dict):
+        for k, v in node.items():
+            out += _leaves(v, path + [k])
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            out += _leaves(v, path + [i])
     return out
+
+
+WORDING = "言い回しが変わった"
+
+
+# 決まった言葉を選ぶ欄（言い回しではなく、中身の違い）
+CHOICE_KEYS = {"種類", "何の上限", "税", "比べ方", "単位", "旬", "区分", "出来事"}
+
+
+def _has_words(value: str) -> bool:
+    """文の言葉（数字を除いて4字以上の文字）か。金額・割合・日付だけの文字は、言い回しの違いにしない。"""
+    return len(re.sub(r"\d", "", seido_data.name_form(value))) >= 4
+
+
+def only_wording(a: Any, b: Any, key: Optional[str] = None) -> bool:
+    """2つの値の違いが、文の言い回しだけか：違う所がどれも文の言葉の欄（決まった言葉を選ぶ欄でない）で、
+    欄の組み立ても同じ。数が同じかは、呼ぶ側で見る。"""
+    if _same_value(a, b):
+        return True
+    if isinstance(a, str) and isinstance(b, str):
+        return key not in CHOICE_KEYS and _has_words(a) and _has_words(b)
+    if isinstance(a, dict) and isinstance(b, dict):
+        return set(a) == set(b) and all(only_wording(a[k], b[k], k) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(only_wording(x, y, key) for x, y in zip(a, b))
+    return False
+
+
+def _named(items: List[Any]) -> bool:
+    return any(urakadori._item_name(x) for x in items)
+
+
+def _conflict_values(entry: Dict) -> List[Dict]:
+    return [dict(item, 状態=item.get("状態", "資料で食い違い")) for item in entry.get("値") or [] if isinstance(item, dict)]
 
 
 def _same_value(a: Any, b: Any) -> bool:
@@ -587,27 +618,122 @@ def top_key(where: str) -> str:
     return next((k for k in props if where.startswith(k)), re.split(r"[「の]", where, 1)[0])
 
 
-def diff_data(old: Dict, new: Dict, kinds: Dict[str, str]) -> List[ValueChange]:
-    a, b = _flat(old), _flat(new)
-    out = []
-    for where in list(a) + [w for w in b if w not in a]:
-        key = top_key(where)
-        x, y = a.get(where), b.get(where)
+def diff_data(old: Dict, new: Dict, kinds: Dict[str, str], renames: Optional[List[Rename]] = None) -> List[ValueChange]:
+    """前と後の制度データの、出典つき値ごとの差。
+
+    名前のある件の一覧（補助額・書類・数値の要件 など。件の中の特例や画面も）は、件名の形が同じ件を組にし、
+    残りを件名と中身の近さで組にしてから（lib/seido_data.pair_items）、組の中の値を比べる。
+    近さで組にした件は renames に入れる（報告で「件名が変わった件」として出す。黙って同じ件にしない）。
+    組にならない件は、件ごと足した・消えたにする（件の中の値ごとの差には分けない）。
+    前と後は別の読み取りなので、件名の言い回しが違うだけで、件の値が全部「消えた」と「足した」に出ないようにする
+    （11/6 のリハーサル：第8回と第9回の差が 783 件になり、使えなかった）。
+    """
+    out: List[ValueChange] = []
+    renames = renames if renames is not None else []
+
+    def leaf(x: Optional[Dict], y: Optional[Dict], pa: List[Any], pb: List[Any], key: str, where: str = "") -> None:
         if x is not None and y is not None:
+            where = where or urakadori.readable(pb, new)
             if _same_value(x.get("値"), y.get("値")):
                 if x.get("状態") != y.get("状態"):
                     out.append(ValueChange("状態が変わった", where, key, x, y, True))
-                continue
-            change = ValueChange("値が変わった", where, key, x, y)
+                return
+            kind = "値が変わった"
+            if (x.get("値") is not None and y.get("値") is not None
+                    and urakadori.UNREADABLE not in (x.get("状態"), y.get("状態"))
+                    and only_wording(x.get("値"), y.get("値"))
+                    and seido_data.numbers_in(x.get("値")) == seido_data.numbers_in(y.get("値"))):
+                kind = WORDING  # 数（金額・割合・日付も）は同じで、文の言い回しだけが違う
+            change = ValueChange(kind, where, key, x, y)
             # 読み取れないになった値は出典を持たない。前も読み取れないだったときだけ、ページがなくてよい
             change.page_ok = _has_page(y, kinds) or (y.get("状態") == urakadori.UNREADABLE and x.get("状態") == urakadori.UNREADABLE)
         elif y is not None:
-            change = ValueChange("足した", where, key, None, y)
+            change = ValueChange("足した", where or urakadori.readable(pb, new), key, None, y)
             change.page_ok = _has_page(y, kinds)
-        else:
-            change = ValueChange("消えた", where, key, x, None)
+        elif x is not None:
+            change = ValueChange("消えた", where or urakadori.readable(pa, old), key, x, None)
             change.page_ok = _has_page(x, kinds)  # 消えた値は、前の資料のどこにあったかを示す
+        else:
+            return
         out.append(change)
+
+    def whole(node: Any, path: List[Any], root: Dict, gone: bool, key: str) -> None:
+        """件ごと消えた（gone）・足した件の、中の値の全部。"""
+        label = urakadori.readable(path, root)
+        for p, v in _leaves(node, path):
+            before = len(out)
+            leaf(v if gone else None, None if gone else v, p, p, key)
+            for c in out[before:]:
+                c.where = urakadori.readable(p, root)
+                c.entry = label
+
+    def one_side(node: Any, path: List[Any], root: Dict, gone: bool, key: str) -> None:
+        if isinstance(node, list) and _named(node):
+            for i, item in enumerate(node):
+                whole(item, path + [i], root, gone, key)
+            return
+        for p, v in _leaves(node, path):
+            leaf(v if gone else None, None if gone else v, p, p, key, urakadori.readable(p, root))
+
+    def walk(a: Any, b: Any, pa: List[Any], pb: List[Any], key: str) -> None:
+        sa, sb = urakadori._is_sourced_value(a), urakadori._is_sourced_value(b)
+        if sa and sb:
+            leaf(a, b, pa, pb, key)
+            return
+        if isinstance(a, dict) and isinstance(b, dict) and not sa and not sb:
+            for k in list(a) + [k for k in b if k not in a]:
+                if not pa and k in SKIP_KEYS + ("資料どうしの食い違い",):
+                    continue
+                if not pa and (not a.get(k)) != (not b.get(k)):
+                    # 項目ごと、片方の回にしかない（前の回では読んでいない項目など）：項目で1つにまとめる
+                    whole(a.get(k) or b.get(k), [k], old if a.get(k) else new, bool(a.get(k)), k)
+                    continue
+                walk(a.get(k), b.get(k), pa + [k], pb + [k], key or k)
+            return
+        if isinstance(a, list) and isinstance(b, list):
+            if _named(a) or _named(b):
+                pairs = seido_data.pair_items(
+                    [(urakadori._item_name(x) or "", seido_data.content_text(x)) for x in a],
+                    [(urakadori._item_name(x) or "", seido_data.content_text(x)) for x in b])
+                for p in pairs:
+                    if p.near:
+                        renames.append(Rename(key, urakadori.readable(pa + [p.old], old),
+                                              urakadori.readable(pb + [p.new], new), p.label()))
+                    walk(a[p.old], b[p.new], pa + [p.old], pb + [p.new], key)
+                for i in sorted(set(range(len(a))) - {p.old for p in pairs}):
+                    whole(a[i], pa + [i], old, True, key)
+                for j in sorted(set(range(len(b))) - {p.new for p in pairs}):
+                    whole(b[j], pb + [j], new, False, key)
+            else:
+                for i in range(max(len(a), len(b))):
+                    walk(a[i] if i < len(a) else None, b[i] if i < len(b) else None, pa + [i], pb + [i], key)
+            return
+        one_side(a, pa, old, True, key)
+        one_side(b, pb, new, False, key)
+
+    walk(old, new, [], [], "")
+    # 資料どうしの食い違い：項目の名前で組にし、組の中の値を順に比べる
+    ca = [e for e in old.get("資料どうしの食い違い") or [] if isinstance(e, dict)]
+    cb = [e for e in new.get("資料どうしの食い違い") or [] if isinstance(e, dict)]
+    key = "資料どうしの食い違い"
+    pairs = seido_data.pair_items([(e.get("項目") or "", "") for e in ca], [(e.get("項目") or "", "") for e in cb])
+    for p in pairs:
+        ea, eb = ca[p.old], cb[p.new]
+        if p.near:
+            renames.append(Rename(key, f"{key}「{ea.get('項目')}」", f"{key}「{eb.get('項目')}」", p.label()))
+        va, vb = _conflict_values(ea), _conflict_values(eb)
+        for j in range(max(len(va), len(vb))):
+            leaf(va[j] if j < len(va) else None, vb[j] if j < len(vb) else None, [], [], key,
+                 f"{key}「{eb.get('項目')}」の{j + 1}つ目の値")
+    for gone, entries, used in ((True, ca, {p.old for p in pairs}), (False, cb, {p.new for p in pairs})):
+        for i, e in enumerate(entries):
+            if i in used:
+                continue
+            before = len(out)
+            for j, v in enumerate(_conflict_values(e)):
+                leaf(v if gone else None, None if gone else v, [], [], key, f"{key}「{e.get('項目')}」の{j + 1}つ目の値")
+            for c in out[before:]:
+                c.entry = f"{key}「{e.get('項目')}」"
     return out
 
 
@@ -736,6 +862,23 @@ def impact(company: Path, case: str, changes: List[ValueChange]) -> List[Dict]:
     return out
 
 
+_FIRST_NAME = re.compile(r"「[^「」]*」")
+
+
+def _signature(kind: str, cs: List[ValueChange]) -> Any:
+    """同じ変化かを見る印：種類、いちばん上の件名を除いた場所（「補助額の特例「X」の条件」）、値の前後。"""
+    def values(c: ValueChange) -> str:
+        return json.dumps([(c.old or {}).get("値"), (c.new or {}).get("値")], ensure_ascii=False, sort_keys=True)
+
+    def place(where: str) -> str:
+        return _FIRST_NAME.sub("", where, count=1)
+
+    if len(cs) == 1 and not cs[0].entry:
+        return (kind, place(cs[0].where), values(cs[0]))
+    entry = cs[0].entry
+    return (kind, place(entry), tuple((c.where[len(entry):], values(c)) for c in cs))
+
+
 @dataclass
 class DiffResult:
     old_file: str
@@ -747,10 +890,44 @@ class DiffResult:
     impacts: List[Dict]
     labels_old: Dict[str, str] = field(default_factory=dict)
     labels_new: Dict[str, str] = field(default_factory=dict)
+    renames: List[Rename] = field(default_factory=list)
 
     @property
     def missing_pages(self) -> List[ValueChange]:
         return [c for c in self.changes if not c.page_ok]
+
+    def grouped(self) -> List[Tuple[str, List[ValueChange], List[str], bool]]:
+        """報告の1件ずつ（種類、値の差、同じ変化のほかの場所、どれにも出典のページがあるか）。区分ごとに同じ特例が
+        あるときなど、件名の最後と値の前後がまったく同じ変化は、1件にまとめて、ほかの場所を並べる。"""
+        out: List[Tuple[str, List[ValueChange], List[str], bool]] = []
+        at: Dict[Any, int] = {}
+        for kind, cs in self.items():
+            sig = _signature(kind, cs)
+            ok = all(c.page_ok for c in cs)
+            if sig in at:
+                k, first, others, was_ok = out[at[sig]]
+                out[at[sig]] = (k, first, others + [cs[0].entry or cs[0].where], was_ok and ok)
+                continue
+            at[sig] = len(out)
+            out.append((kind, cs, [], ok))
+        return out
+
+    def items(self) -> List[Tuple[str, List[ValueChange]]]:
+        """報告の1件ずつ（種類、値の差）。件ごと足した・消えた件は、中の値をまとめて1件にする。"""
+        out: List[Tuple[str, List[ValueChange]]] = []
+        at: Dict[Tuple[str, str], int] = {}
+        for c in self.changes:
+            if c.kind == "状態が変わった":
+                continue
+            if not c.entry:
+                out.append((c.kind, [c]))
+                continue
+            group = (c.kind, c.entry)
+            if group not in at:
+                at[group] = len(out)
+                out.append((f"{'項目' if c.entry == c.key else '件'}ごと{c.kind}", []))
+            out[at[group]][1].append(c)
+        return out
 
 
 def load_seido(company: Path, rel: str) -> Dict:
@@ -784,34 +961,79 @@ def compare_seido(company: Path, case: str, old_rel: Optional[str] = None, new_r
         old_rel, new_rel = old_rel or files[-2], new_rel or files[-1]
     old, new = load_seido(company, old_rel), load_seido(company, new_rel)
     kinds = _kinds(company, case)
-    changes = diff_data(old, new, kinds)
+    renames: List[Rename] = []
+    changes = diff_data(old, new, kinds, renames)
     la, lb = doc_label(old), doc_label(new)
     docs = []
     for i, label in lb.items():
         if label not in la.values():
             docs.append(f"使う資料が変わった：{label}" + (f"（前は {la[i]}）" if i in la else ""))
     return DiffResult(old_rel, new_rel, str(old["制度"].get("公募回")), str(new["制度"].get("公募回")), docs, changes,
-                      impact(company, case, changes), la, lb)
+                      impact(company, case, changes), la, lb, renames)
+
+
+SHOW_RENAMES = 60      # 報告に並べる「件名が変わった件」の数（ほかは --json で見る）
+SHOW_ENTRY_VALUES = 3  # 件ごと足した・消えた件で、報告に並べる値の数
 
 
 def diff_report(r: DiffResult) -> str:
     labels_old, labels_new = r.labels_old, r.labels_new
-    real = [c for c in r.changes if c.kind != "状態が変わった"]
+    every = r.grouped()
+    items = [x for x in every if x[0] != WORDING]
+    wording = [x for x in every if x[0] == WORDING]
     lines = [f"制度データの差（前：{r.old_file}〔{r.old_round}〕／後：{r.new_file}〔{r.new_round}〕）", ""]
     lines += [f"- {d}" for d in r.docs]
-    if not real:
+    if r.renames:
+        lines += ["", f"件名が変わった件（前と後で件名が違い、件名と中身の近さで同じ件として比べた）：{len(r.renames)}件。"
+                  "組が違っていれば、その章を読み直す（中の値の差は、下の変わった項目に出る）"]
+        lines += [f"- {x.old} → {x.new}（近さ：{x.score}）" for x in r.renames[:SHOW_RENAMES]]
+        if len(r.renames) > SHOW_RENAMES:
+            lines.append(f"- ほかに {len(r.renames) - SHOW_RENAMES} 件（--json の「件名が変わった件」）")
+    if not items and not wording:
         lines += ["", "変更なし（値の変わった項目はありません）。"]
+    elif not items:
+        lines += ["", "変わった項目：0件（数の変わった値・足した値・消えた値はありません。言い回しだけが違う値は下のとおり）。"
+                  "出典のページのない変わった項目：0件"]
     else:
-        counts = Counter(c.kind for c in real)
-        lines += ["", f"変わった項目：{len(real)}件（" + "・".join(f"{k} {n}件" for k, n in counts.items())
-                  + f"）。出典のページのない変わった項目：{len(r.missing_pages)}件", ""]
-        for n, c in enumerate(real, 1):
-            mark = "" if c.page_ok else "  ← 出典のページがありません"
-            lines.append(f"{n}. {c.kind}：{c.where}{mark}")
-            if c.old is not None:
-                lines.append(f"   前：{value_text(c.old)}　〔出典：{sources_text(c.old, labels_old)}〕")
-            if c.new is not None:
-                lines.append(f"   後：{value_text(c.new)}　〔出典：{sources_text(c.new, labels_new)}〕")
+        counts = Counter(kind for kind, _cs, _o, _ok in items)
+        missing = sum(1 for _k, _cs, _o, ok in items if not ok)
+        same = sum(len(o) for _k, _cs, o, _ok in items)
+        lines += ["", f"変わった項目：{len(items)}件（" + "・".join(f"{k} {n}件" for k, n in counts.items())
+                  + f"）。出典のページのない変わった項目：{missing}件"
+                  + (f"。区分ごとなどに同じ変化があるものは1件にまとめた（まとめた場所 {same}か所）" if same else ""), ""]
+        for n, (kind, cs, others, ok) in enumerate(items, 1):
+            mark = "" if ok else "  ← 出典のページがありません"
+            also = ""
+            if others:
+                shown = "、".join(others[:3]) + (f" ほか{len(others) - 3}か所" if len(others) > 3 else "")
+                also = f"\n   （同じ変化がほかに {len(others)}か所：{shown}）"
+            if len(cs) == 1:
+                c = cs[0]
+                whole = ("（項目ごと）" if c.entry == c.key else "（件ごと）") if c.entry else ""
+                lines.append(f"{n}. {c.kind}：{c.where}{mark}{whole}{also}")
+                if c.old is not None:
+                    lines.append(f"   前：{value_text(c.old)}　〔出典：{sources_text(c.old, labels_old)}〕")
+                if c.new is not None:
+                    lines.append(f"   後：{value_text(c.new)}　〔出典：{sources_text(c.new, labels_new)}〕")
+                continue
+            lines.append(f"{n}. {kind}：{cs[0].entry}（値 {len(cs)}）{mark}{also}")
+            for c in cs[:SHOW_ENTRY_VALUES]:
+                value, labels = (c.old, labels_old) if c.old is not None else (c.new, labels_new)
+                inner = c.where[len(c.entry):] if c.where.startswith(c.entry) else c.where
+                lines.append(f"   - {inner.lstrip('の') or '値'}：{value_text(value, 80)}　〔出典：{sources_text(value, labels)}〕")
+            if len(cs) > SHOW_ENTRY_VALUES:
+                lines.append(f"   - ほかに {len(cs) - SHOW_ENTRY_VALUES} 値（--json の「変わった項目」）")
+    if wording:
+        missing = sum(1 for _k, _cs, _o, ok in wording if not ok)
+        lines += ["", f"数（金額・割合・日付・人数など）は同じで、文の言い回しだけが違う値：{len(wording)}件"
+                  f"（出典のページのない値 {missing}件）。前と後は別の読み取りなので、書き方の違いのことが多い。"
+                  "中身が変わっていないかは、前と後の文で確かめる"]
+        for _k, cs, others, ok in wording:
+            c = cs[0]
+            mark = "" if ok else "  ← 出典のページがありません"
+            also = f"（同じ変化がほかに {len(others)}か所）" if others else ""
+            lines.append(f"- {c.where}{mark}{also}：前「{value_text(c.old, 50)}」／後「{value_text(c.new, 50)}」"
+                         f"〔出典：{sources_text(c.new, labels_new)}〕")
     states = [c for c in r.changes if c.kind == "状態が変わった"]
     if states:
         lines += ["", f"値は同じで、状態だけが変わった値：{len(states)}件"]
@@ -829,6 +1051,8 @@ def diff_json(r: DiffResult) -> Dict:
 
     def one(c: ValueChange) -> Dict:
         out: Dict[str, Any] = {"種類": c.kind, "場所": c.where, "項目": c.key, "出典のページ": c.page_ok}
+        if c.entry:
+            out["件ごと"] = c.entry  # 件ごと足した・消えた件の場所
         for side, value, labels in (("前", c.old, labels_old), ("後", c.new, labels_new)):
             if value is not None:
                 out[side] = {"値": value.get("値"), "状態": value.get("状態"), "出典": value.get("出典"),
@@ -836,6 +1060,7 @@ def diff_json(r: DiffResult) -> Dict:
         return out
 
     return {"前": r.old_file, "後": r.new_file, "前の公募回": r.old_round, "後の公募回": r.new_round, "資料": r.docs,
+            "件名が変わった件": [{"項目": x.key, "前": x.old, "後": x.new, "近さ": x.score} for x in r.renames],
             "変わった項目": [one(c) for c in r.changes if c.kind != "状態が変わった"],
             "状態だけ変わった値": [one(c) for c in r.changes if c.kind == "状態が変わった"],
             "影響するところ": r.impacts}
