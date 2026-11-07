@@ -372,10 +372,11 @@ const scenes = {};
     qs.forEach((q, i) => {
       const t0 = c(3 + i) - 0.15;
       const x = eBack(prog(l, t0, t0 + 0.45));
-      if (l > t0) { shown = i + 1; walk = lerp(i ? at[i - 1] - 0.08 : 0.03, at[i] - 0.08, eInOut(prog(l, t0, t0 + 0.7))); }
+      if (l > t0) { shown = i + 1; walk = lerp(i ? at[i - 1] - 0.045 : 0.03, at[i] - 0.045, eInOut(prog(l, t0, t0 + 0.7))); }
       q.style.opacity = clamp(x);
       q.style.left = (q.dataset.x - q.offsetWidth / 2) + 'px';
-      q.style.top = (q.dataset.y - 190 - (i % 2) * 40) + 'px';
+      // 最後の問いは、道が上がる所なので、社長の頭と重ならないよう高く出す
+      q.style.top = (q.dataset.y - [190, 230, 190, 230, 300][i]) + 'px';
       q.style.transform = `scale(${0.6 + 0.4 * x})`;
       q.style.transformOrigin = '50% 100%';
     });
