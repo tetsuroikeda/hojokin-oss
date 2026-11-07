@@ -181,6 +181,15 @@
     </div>
   </div>
 
+  <!-- 申請の画面に入れる（模擬の申請画面） -->
+  <div class="scene" id="s-nyuryoku">
+    <div class="abs" id="ny-no" style="left:110px;top:200px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">STEP 4 ・ 申請の画面に入れる</div>
+    <div class="abs" id="ny-sol" style="left:110px;top:250px;font-size:58px;font-weight:800;line-height:1.25">入力シートの値を、<br>申請の画面へ</div>
+    <div class="abs" id="ny-pts" style="left:110px;top:440px;display:flex;flex-direction:column;gap:14px"><div class="pt">1画面ずつ入れ、一時保存まで</div><div class="pt">ログイン・提出・誓約のチェックは人</div><div class="pt">入れた後に読み直して照らす</div></div>
+    <div class="sheet" id="ny-sheet" style="left:900px;top:200px;width:910px;height:520px;"><div class="cap"><span class="ic">🌐</span>模擬の申請画面（手元の練習用・架空）</div><div class="view"><img id="ny-img" src="out/assets/nyuryoku_screen.png"></div><div class="real">実際の入力の結果</div></div>
+    <div class="card" id="ny-quote" style="left:900px;top:745px;width:910px;padding:16px 22px;"></div>
+  </div>
+
   <div class="scene" id="s-s5">
     <div class="step"><div class="no">STEP 5 ・ 採択の後</div><div class="prob">採択の後も、手続きが大変<span class="strike"></span></div>
       <div class="sol">期限を出し、<br>発注を止める</div>
@@ -501,6 +510,22 @@ scenes.s2 = (l, d) => {
     verdict.textContent = '要修正の指摘を直すまで、完成にしない';
     show(verdict, eOut(prog(l, 4.6, 5.1)), 15);
     show(band, eOut(prog(l, 5.4, 5.9)), 15);
+  };
+})();
+
+// ===== 申請の画面に入れる：模擬の申請画面に保存された値と、実際の応答 =====
+(() => {
+  const q = D.nyuryoku;
+  if (q) $('ny-quote').innerHTML = `<div style="font-size:18px;color:var(--teal);font-weight:800;margin-bottom:6px">${q[0]}<span style="color:var(--sub);font-weight:600">　実際の応答から</span></div><div style="font-size:22px;line-height:1.5">${q[1]}</div>`;
+  scenes.nyuryoku = (l, d) => {
+    show($('ny-no'), eOut(prog(l, 0, 0.5)), 10);
+    show($('ny-sol'), eOut(prog(l, 0.3, 1.0)), 30);
+    [...$('ny-pts').children].forEach((e, i) => show(e, eOut(prog(l, 1.4 + i * 0.5, 1.9 + i * 0.5)), 0, -30));
+    sheetIn($('ny-sheet'), l, 0.6);
+    $('ny-img').style.transform = `translateY(${-eInOut(prog(l, 2.5, d - 1)) * 220}px)`;
+    const caps = capsOf('nyuryoku');
+    const t = (caps[1] !== undefined ? caps[1] : 4.5) - 0.2;
+    show($('ny-quote'), q ? eOut(prog(l, t, t + 0.5)) : 0, 30);
   };
 })();
 

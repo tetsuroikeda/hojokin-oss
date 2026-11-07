@@ -30,7 +30,7 @@ VOICE = OUT / "voice"
 
 # 場面ごとの、絵の動きに要る最短の長さ（秒）。台詞が短くても、絵が見終わるまで次へ行かない
 MIN_DUR = {"road": 15.0, "title": 6.5, "s1": 11.5, "s2": 11.5, "s3": 12.5, "hear": 10.0, "s4": 14.0, "shinsa": 9.5,
-           "s5": 11.0, "pm": 17.0, "learn": 11.0, "start": 9.5, "built": 14.0, "end": 6.0}
+           "nyuryoku": 10.0, "s5": 11.0, "pm": 17.0, "learn": 11.0, "start": 8.0, "built": 12.5, "end": 6.0}
 VOICE_LEAD = {"road": 0.4, "title": 0.6}  # 台詞を場面の頭から何秒遅らせるか（ほかは 0.3 秒）
 
 
@@ -95,7 +95,7 @@ def terminal_text(path: Path) -> str:
 
 def check_quotes(material: dict) -> None:
     # 素材.json の引用が、実際の対話の記録にそのままあるかを確かめる
-    for key in ("pm", "shorui", "learn", "how", "saitaku", "hear"):
+    for key in [k for k in ("pm", "shorui", "learn", "how", "saitaku", "hear", "nyuryoku") if k in material]:
         src = (HERE / material[key]["source"]).read_text(encoding="utf-8")
         if src.lstrip().startswith("{"):
             src = terminal_text(HERE / material[key]["source"])
@@ -108,6 +108,8 @@ def check_quotes(material: dict) -> None:
             quotes = [s[2] for s in material[key]["second"]]
         elif key == "saitaku":
             quotes = [q[1] for q in material[key]["quotes"]]
+        elif key == "nyuryoku":
+            quotes = [material[key]["quote"][1]]
         elif key == "hear":
             quotes = [q["question"] for q in material[key]["questions"]] + \
                      [s for q in material[key]["questions"] for opt in q["options"] for s in opt]
@@ -144,8 +146,9 @@ def render_assets(company: Path, extra: Path, material: dict) -> None:
         made = sorted(ASSETS.glob(f"{stem}_p-*.png"), key=lambda p: int(p.stem.rsplit("-", 1)[1]))
         for i, p in enumerate(made, 1):
             p.rename(ASSETS / f"{stem}-{i}.png")
-    # 別の段階の画像（採択のお知らせ）
-    shutil.copy(extra / "saitaku_tsuuchi.png", ASSETS / "saitaku_tsuuchi.png")
+    # 別の段階の画像（採択のお知らせ、模擬の申請画面に保存された値の画面）
+    for n in ("saitaku_tsuuchi.png", "nyuryoku_screen.png"):
+        shutil.copy(extra / n, ASSETS / n)
 
 
 def find_page(pdf: Path, text: str) -> int:
@@ -204,6 +207,7 @@ def write_data(timeline, captions, total, material, cdata) -> None:
         "shorui": {k: material["shorui"][k] for k in ("inputs", "tree", "fubi", "summary")},
         "learn": learn,
         "hear": material["hear"]["questions"],
+        "nyuryoku": [material["nyuryoku"]["quote"][0], bold(material["nyuryoku"]["quote"][1])] if material.get("nyuryoku") else None,
         "zaimuSim": {k: material["zaimu_sim"][k] for k in ("change", "rows")},
         "saitaku": [[label, bold(q)] for label, q in material["saitaku"]["quotes"]],
         "shinsa": cdata["shinsa"],
