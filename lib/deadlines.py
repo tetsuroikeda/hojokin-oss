@@ -18,6 +18,8 @@
   「発行から◯か月以内」の形の文なら、そこから期間を読む（仮）。
   締切は提出の締切の日なので、早く出すときは、いちばん早い日も早まる（作業に一言添える）。段階の締切を過ぎたものは
   作らない（段階の期限切れが知らせる）。
+- 提出（日付で示された期限）：期限の台帳の作業のうち種類が「提出」のもの（差し戻しの出し直しの期限など。通知に書かれた
+  日付）。日付は確定とし、出典を添える。状態が「済み」なら済んだものに並べる（fixed_tasks。11/7 の採択後の通し）。
 - 依頼：外部への依頼（期限の台帳の作業。K2）。締切は、制度データの書類の「依頼の締切」、なければその書類を使う
   手続きの段階の期限。始める日（依頼する日）は、締切から目安の日数を戻した日。目安の日数は、台帳の値、制度データの
   「依頼の目安の日数」、会社の記録の「依頼の目安の日数：<書類>」（前の案件で社長に聞いたもの）の順に取る。
@@ -640,6 +642,7 @@ class Task:
     who: str = ""  # だれがするか（社長・担当者・外部。依頼は「社長が頼む／外部（信用金庫）が書く」の形）
     doc: str = ""  # 取り直し・依頼の書類の名前
     lead: str = ""  # 依頼の目安の日数の文（「14日（社長の答え）」）。分からなければ空
+    fixed: bool = False  # 期限の台帳に日付で残した期限（差し戻しの出し直しなど。fixed_tasks）
 
     @property
     def done(self) -> bool:
@@ -1283,6 +1286,25 @@ def _request_tasks(status: CaseStatus, data: Dict, plan: "Plan", open_stages: Li
     return tasks
 
 
+FIXED_NOTE = "通知に書かれた日付"  # 日付で示された期限の作業に添える文の頭
+
+
+def fixed_tasks(status: CaseStatus, dues: Sequence[task_ledger.FixedDue]) -> List[Task]:
+    """期限の台帳の「提出」（事務局などが日付で示した期限。差し戻しの出し直しの期限など）を作業にする。
+
+    日付は通知の中の事実なので「確定」とし、出典を添える。段階は今の段階（段階が分からなければ空）。
+    """
+    now = next((row for row in status.stages if row.state == "今"), None)
+    tasks = []
+    for d in dues:
+        due = Due(first=d.day, last=d.day, confirmed=True, sources=[d.source] if d.source else [])
+        task = Task(case=status.name, order=now.order if now is not None else 0, stage=now.name if now is not None else "",
+                    what=f"{d.name}の期限", due=due, kind=SUBMIT, state=d.state if d.finished else "", fixed=True)
+        task.notes.append(FIXED_NOTE)  # 出典は Due.sources から「出典：」として添える
+        tasks.append(task)
+    return tasks
+
+
 def _document_notes(folder: Path, status: CaseStatus, data: Dict, stage: Dict, ledger: Optional[List[str]],
                     ledger_problem: str, where: str = "") -> List[str]:
     """今の段階の必須の書類の揃い具合を status.documents に入れ、作業に添える文を返す。
@@ -1393,16 +1415,24 @@ def build(folder: Path, today: Optional[date] = None, near_days: Optional[int] =
         requests, requests_problem = task_ledger.requests_by_case(folder)
         if requests_problem and requests_problem not in problems:
             problems.append(requests_problem)
+        fixed, fixed_problem = task_ledger.dues_by_case(folder)
+        if fixed_problem and fixed_problem not in problems:
+            problems.append(fixed_problem)
         facts = _company_facts(folder)
         for name in names:
             status = case_status(folder, name, submissions, ledger, ledger_problem, events.get(name),
                                  originals=originals, requests=requests.get(name), facts=facts, today=day)
+            status.tasks += fixed_tasks(status, fixed.get(name) or [])
             cases.append(status)
             tasks += status.tasks
         known = set(names)
         for case, items in requests.items():
             if case not in known:
                 problems.append(f"期限の台帳の依頼（{'、'.join(r.doc for r in items)}）の案件「{case}」の"
+                                "フォルダがありません")
+        for case, dues in fixed.items():
+            if case not in known:
+                problems.append(f"期限の台帳の期限（{'、'.join(d.name for d in dues)}）の案件「{case}」の"
                                 "フォルダがありません")
     done = sorted((t for t in tasks if t.done), key=Task.sort_key)
     groups, later, undated = classify([t for t in tasks if not t.done], day, days)

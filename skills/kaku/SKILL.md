@@ -10,6 +10,9 @@ allowed-tools:
   - Bash(python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py*)
   - Bash(python3 -B ${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/record.py*)
   - Read(/${CLAUDE_PLUGIN_ROOT}/skills/kiroku/scripts/**)
+  - Bash(python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/junbi/scripts/kigen.py*)
+  - Bash(python3 -B ${CLAUDE_PLUGIN_ROOT}/skills/junbi/scripts/kigen.py*)
+  - Read(/${CLAUDE_PLUGIN_ROOT}/skills/junbi/scripts/**)
   - Read(/${CLAUDE_PLUGIN_ROOT}/knowledge/**)
 ---
 
@@ -369,6 +372,13 @@ python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/kaku/scripts/sashimodoshi.py" diff --fo
 ```
 
 1. 差し戻しを原本にする（貼り付けた文面は Write で `入れ口/<受け取った日>_差し戻し.txt` に置き、shorui の整理で原本にする。写真も同じ）。終わったら、この skill を呼び直す。
+   差し戻しの文に出し直しの期限があれば、junbi の期限の道具で期限の台帳に残す（日付は文のとおり。書いていなければ社長に聞くか、残さない）。
+   開いたときの一覧と今の状態.html の近い締切に出る。出し直したら `--due "差し戻しの出し直し=済み"` で済みにする。
+
+```bash
+python3 -B "${CLAUDE_PLUGIN_ROOT}/skills/junbi/scripts/kigen.py" --folder "${CLAUDE_PROJECT_DIR}" --case "<案件>" --due "差し戻しの出し直し=<YYYY-MM-DD>" --source "<差し戻しの原本の場所>"
+```
+
 2. `show` の進め方に従い、提出版の中身と照らして、差し戻しが指す箇所（ファイル・欄・提出したときの値）と、正しい値とその出典を特定する。
 3. その箇所だけを直す（新しいファイルは作らない）。書類の取り直しが要るときは、junbi の依頼で残し、届いたら shorui で原本と写しにする。
 4. `diff` で、差し戻しが指す箇所だけが提出版から変わったことを確かめ直し、前と後の値・出典と一緒に社長に示す。
