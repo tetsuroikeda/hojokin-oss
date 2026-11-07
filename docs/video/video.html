@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>hojokin デモ動画</title>
+<!--
+  デモ動画の1コマを描くページ。window.seek(t) に秒を渡すと、その時刻の絵になる（アニメーションは CSS ではなく t から計算する）。
+  render.mjs が 30fps で t を進めて撮り、ffmpeg でつなぐ。ブラウザで直接開くと流れを確かめられる（?t=秒 で途中から）。
+  時刻表・字幕・実物の対話・端末の記録は out/data.js（build.py が作る）から読む。
+-->
+<link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
+<style>
+  :root {
+    --paper: #f5f1e8; --paper2: #ebe4d4; --card: #ffffff;
+    --ink: #1e2430; --sub: #5d6676; --line: #d9d1c0;
+    --teal: #0e6e66; --teal2: #128a7f; --tealL: #d6ebe6;
+    --coral: #e2553b; --coralL: #fbe0d8;
+    --sun: #f2b84b; --sunL: #fff1c9;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--paper); }
+  body { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif; color: var(--ink); }
+  #stage { position: absolute; inset: 0; overflow: hidden; }
+  #bg { position: absolute; inset: 0; }
+  .scene { position: absolute; inset: 0; display: none; }
+  .abs { position: absolute; }
+  .mono { font-family: Menlo, monospace; }
+
+  /* 段階の見出し */
+  .step { position: absolute; left: 110px; top: 200px; width: 700px; }
+  .step .no { font-size: 24px; font-weight: 800; letter-spacing: 4px; color: var(--teal); }
+  .step .prob { margin-top: 18px; font-size: 34px; font-weight: 700; color: var(--coral); position: relative; display: inline-block; }
+  .step .prob .strike { position: absolute; left: -4px; top: 54%; height: 4px; background: var(--coral); border-radius: 2px; }
+  .step .sol { margin-top: 14px; font-size: 58px; font-weight: 800; line-height: 1.25; letter-spacing: 1px; }
+  .step .pts { margin-top: 30px; display: flex; flex-direction: column; gap: 14px; }
+  .pt { font-size: 27px; font-weight: 600; display: flex; align-items: center; gap: 14px; }
+  .pt::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: var(--teal); flex: none; }
+  .tag { font-family: Menlo, monospace; font-size: 20px; color: var(--sub); background: var(--paper2); padding: 4px 12px; border-radius: 8px; }
+
+  /* 紙（実物の画面） */
+  .sheet { position: absolute; background: var(--card); border-radius: 18px; overflow: hidden; box-shadow: 0 2px 0 var(--line), 0 24px 60px rgba(60,48,20,.16); }
+  .sheet .cap { position: absolute; left: 0; right: 0; top: 0; height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 22px; font-size: 20px; font-weight: 700; color: var(--sub); border-bottom: 1px solid #eee7da; background: #fbf9f4; z-index: 2; }
+  .sheet .cap .ic { width: 26px; height: 26px; border-radius: 6px; background: var(--teal); color: #fff; font-size: 13px; display: flex; align-items: center; justify-content: center; font-weight: 800; }
+  .sheet .view { position: absolute; left: 0; right: 0; top: 52px; bottom: 0; overflow: hidden; }
+  .sheet .view img { position: absolute; left: 0; top: 0; width: 100%; transform-origin: 0 0; }
+  .real { position: absolute; right: 16px; bottom: 16px; background: var(--ink); color: #fff; font-size: 17px; padding: 6px 12px; border-radius: 999px; font-weight: 700; z-index: 3; }
+  .mark { position: absolute; background: rgba(242,184,75,.38); border-radius: 6px; mix-blend-mode: multiply; z-index: 1; }
+
+  .card { position: absolute; background: var(--card); border-radius: 16px; box-shadow: 0 1px 0 var(--line), 0 14px 34px rgba(60,48,20,.12); padding: 20px 24px; }
+  .sev { display: inline-block; font-size: 19px; font-weight: 800; padding: 3px 12px; border-radius: 999px; margin-right: 12px; }
+  .sev.big { background: var(--coral); color: #fff; } .sev.chk { background: var(--sun); color: #3a2a00; }
+  .file { position: absolute; width: 260px; height: 64px; background: #fff; border-radius: 12px; display: flex; align-items: center; gap: 10px; padding: 0 14px;
+          font-size: 17px; font-weight: 600; box-shadow: 0 8px 20px rgba(60,48,20,.18); white-space: nowrap; overflow: hidden; }
+  .file .ic { width: 32px; height: 40px; border-radius: 5px; flex: none; color: #fff; font-size: 11px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 4px; font-weight: 800; }
+  .tree { position: absolute; font-size: 17px; line-height: 1.5; white-space: nowrap; }
+  .tree .dir { color: var(--teal); font-weight: 800; }
+  .check { position: absolute; font-size: 25px; font-weight: 600; display: flex; align-items: center; gap: 16px; }
+  .check .box { width: 36px; height: 36px; border-radius: 10px; border: 3px solid var(--line); display: flex; align-items: center; justify-content: center; font-weight: 800; background: #fff; }
+
+  /* 道のり（上の進み具合） */
+  #journey { position: absolute; left: 110px; right: 110px; top: 54px; height: 90px; }
+  #journey .rail { position: absolute; left: 30px; right: 30px; top: 22px; height: 6px; border-radius: 3px; background: var(--line); }
+  #journey .fill { position: absolute; left: 30px; top: 22px; height: 6px; border-radius: 3px; background: var(--teal); }
+  #journey .node { position: absolute; top: 0; width: 160px; margin-left: -80px; text-align: center; }
+  #journey .dot { width: 50px; height: 50px; margin: 0 auto; border-radius: 50%; background: var(--paper); border: 4px solid var(--line); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 22px; color: var(--sub); }
+  #journey .lbl { margin-top: 8px; font-size: 22px; font-weight: 700; color: var(--sub); }
+  #journey .node.on .dot { background: var(--teal); border-color: var(--teal); color: #fff; transform: scale(1.12); }
+  #journey .node.on .lbl { color: var(--teal); }
+  #journey .node.done .dot { background: var(--tealL); border-color: var(--teal); color: var(--teal); }
+
+  /* 冒頭の道 */
+  .q { position: absolute; background: #fff; border: 3px solid var(--coral); color: var(--ink); border-radius: 18px; padding: 14px 22px; font-size: 30px; font-weight: 800; white-space: nowrap; box-shadow: 0 12px 26px rgba(226,85,59,.18); }
+  .q::after { content: ""; position: absolute; left: 50%; bottom: -14px; margin-left: -12px; border: 12px solid transparent; border-top-color: var(--coral); border-bottom: 0; }
+  .sign { position: absolute; width: 150px; margin-left: -75px; text-align: center; font-size: 24px; font-weight: 800; color: var(--sub); }
+  .sign .pin { width: 34px; height: 34px; margin: 0 auto 8px; border-radius: 50%; background: #fff; border: 5px solid var(--coral); }
+
+  /* 端末 */
+  .term { position: absolute; background: #16181d; border-radius: 16px; overflow: hidden; box-shadow: 0 30px 70px rgba(20,20,30,.35); }
+  .term .tbar { height: 42px; background: #24272e; display: flex; align-items: center; gap: 8px; padding: 0 16px; color: #aab; font-size: 17px; }
+  .term .tbar i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .term .tbody { position: absolute; left: 18px; top: 54px; transform-origin: 0 0; }
+  .xterm .xterm-viewport { overflow: hidden !important; }
+
+  .flow { position: absolute; display: flex; align-items: center; justify-content: center; }
+  .box { background: #fff; border-radius: 18px; padding: 22px 26px; box-shadow: 0 1px 0 var(--line), 0 14px 34px rgba(60,48,20,.12); text-align: center; }
+  .big { font-size: 30px; font-weight: 800; }
+  .small { font-size: 20px; color: var(--sub); margin-top: 6px; }
+  .arrow { width: 90px; height: 6px; background: var(--teal); position: relative; margin: 0 16px; border-radius: 3px; }
+  .arrow::after { content: ""; position: absolute; right: -6px; top: -9px; border: 12px solid transparent; border-left-color: var(--teal); border-right: 0; }
+  .quote { position: absolute; font-size: 25px; line-height: 1.6; background: #fff; border-left: 8px solid var(--teal); border-radius: 12px; padding: 20px 28px; box-shadow: 0 10px 28px rgba(60,48,20,.1); }
+  .rule { font-size: 23px; line-height: 1.5; padding: 14px 18px; border-radius: 12px; background: var(--paper); border-left: 6px solid var(--teal); margin: 0 30px 14px; }
+  .bubble { position: absolute; padding: 10px 18px; border-radius: 16px; font-size: 21px; background: #fff; border: 2px solid var(--line); white-space: nowrap; }
+  .stepc { position: absolute; width: 520px; height: 470px; background: #fff; border-radius: 26px; padding: 40px 38px; box-shadow: 0 1px 0 var(--line), 0 20px 50px rgba(60,48,20,.14); }
+  .stepc .n { width: 64px; height: 64px; border-radius: 50%; background: var(--teal); color: #fff; font-size: 34px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+  .stepc h3 { font-size: 38px; margin: 26px 0 14px; line-height: 1.3; }
+  .stepc p { font-size: 22px; color: var(--sub); line-height: 1.6; }
+  .stat { position: absolute; width: 380px; text-align: left; }
+  .stat .num { font-size: 96px; font-weight: 800; color: var(--teal); line-height: 1; letter-spacing: -1px; }
+  .stat .lbl { font-size: 24px; color: var(--sub); margin-top: 10px; font-weight: 600; }
+  .pill { position: absolute; padding: 12px 22px; border-radius: 999px; background: #fff; border: 2px solid var(--line); font-size: 23px; font-weight: 700; white-space: nowrap; }
+  .pill b { color: var(--teal); }
+
+  #cap { position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); white-space: nowrap; text-align: center;
+         font-size: 32px; font-weight: 700; line-height: 1.4; padding: 12px 30px; border-radius: 14px; background: rgba(30,36,48,.9); color: #fff; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="bg" width="1920" height="1080"></canvas>
+
+  <!-- 冒頭：社長の道のり -->
+  <div class="scene" id="s-road">
+    <div class="abs" id="road-lead" style="left:0;right:0;top:150px;text-align:center;">
+      <div id="road-l1" style="font-size:70px;font-weight:800;">人手が足りない惣菜工場。</div>
+      <div id="road-l2" style="font-size:44px;font-weight:700;color:var(--teal);margin-top:18px;">機械を入れたい。補助金を使いたい。</div>
+    </div>
+    <svg class="abs" id="road-svg" width="1920" height="1080" style="left:0;top:0"></svg>
+    <div id="road-signs"></div>
+    <div id="road-qs"></div>
+    <div class="abs" id="road-walker" style="width:64px;height:64px;margin:-32px 0 0 -32px;border-radius:50%;background:var(--teal);color:#fff;font-size:22px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 18px rgba(14,110,102,.35)">社長</div>
+  </div>
+
+  <!-- 題名 -->
+  <div class="scene" id="s-title">
+    <div class="abs" id="logo" style="left:0;right:0;top:330px;text-align:center;font-size:200px;font-weight:800;letter-spacing:2px;">hojokin</div>
+    <div class="abs" id="logo-bar" style="left:50%;top:632px;height:10px;border-radius:5px;background:var(--teal);"></div>
+    <div class="abs" id="tag" style="left:0;right:0;top:684px;text-align:center;font-size:42px;font-weight:700;color:var(--sub);">補助金の申請を、自社で。Claude と話しながら最初から最後まで</div>
+  </div>
+
+  <!-- 段階1〜5 -->
+  <div class="scene" id="s-s1">
+    <div class="step"><div class="no">STEP 1 ・ 探す</div><div class="prob">どれを使えばいいか分からない<span class="strike"></span></div>
+      <div class="sol">会社に合う補助金を<br>分けて、比べる</div>
+      <div class="pts"><div class="pt">公募中・公募予定・例年公募あり</div><div class="pt">要件・義務・返還の条件・自己負担</div><div class="pt">すべてに出典</div></div></div>
+    <div class="sheet" id="s1-sheet" style="left:900px;top:200px;width:910px;height:720px;"><div class="cap"><span class="ic">W</span>補助金の候補.docx</div>
+      <div class="view"><img id="s1-img" src="out/assets/kouho-1.png"><img id="s1-img2" src="out/assets/kouho-2.png"></div><div class="real">実際の出力</div></div>
+  </div>
+
+  <div class="scene" id="s-s2">
+    <div class="step"><div class="no">STEP 2 ・ 調べる</div><div class="prob">ルールと書類が多すぎる<span class="strike"></span></div>
+      <div class="sol">公募要領を読み込み<br>ページつきで整理</div>
+      <div class="pts"><div class="pt">要件・特例・必要な書類・締切</div><div class="pt">決まりごとに資料のページ</div><div class="pt">資料にないことは推測しない</div></div></div>
+    <div class="sheet" id="s2-sheet" style="left:900px;top:200px;width:910px;height:720px;"><div class="cap"><span class="ic">W</span>概要と流れ.docx</div>
+      <div class="view"><img id="s2-img" src="out/assets/gaiyou-2.png"><div class="mark" id="s2-mark"></div></div><div class="real">実際の出力</div></div>
+  </div>
+
+  <div class="scene" id="s-s3">
+    <div class="step" style="width:760px"><div class="no">STEP 3 ・ 書類をそろえる</div><div class="prob">何が足りない？何が不備？<span class="strike"></span></div>
+      <div class="sol" id="s3-sol">原本を守って整理し<br>不備を見つける</div></div>
+    <div id="s3-files"></div>
+    <div class="tree" id="s3-tree" style="left:110px;top:430px;"></div>
+    <div class="abs" id="s3-fubi" style="left:900px;top:200px;width:910px;"></div>
+  </div>
+
+  <div class="scene" id="s-s4">
+    <div class="step"><div class="no">STEP 4 ・ 申請書を書く</div><div class="prob">これで採択される？<span class="strike"></span></div>
+      <div class="sol">書いて、<br>別の目で確かめる</div>
+      <div class="pts"><div class="pt">根拠のある数字の計画から書く</div><div class="pt">審査役のサブエージェントが確かめる</div><div class="pt">直すまで完成にしない</div></div></div>
+    <div class="sheet" id="s4-zaimu" style="left:900px;top:220px;width:430px;height:560px;"><div class="cap"><span class="ic">X</span>財務モデル.xlsx</div><div class="view"><img src="out/assets/zaimu-1.png"></div></div>
+    <div class="sheet" id="s4-plan" style="left:1120px;top:200px;width:430px;height:560px;"><div class="cap"><span class="ic">W</span>計画書</div><div class="view"><img id="s4-planimg" src="out/assets/keikaku-1.png"></div></div>
+    <div class="sheet" id="s4-konkyo" style="left:1340px;top:240px;width:470px;height:560px;"><div class="cap"><span class="ic">X</span>根拠対照表.xlsx</div><div class="view"><img src="out/assets/konkyo-1.png"></div><div class="real">実際の出力</div></div>
+    <div class="card" id="s4-review" style="left:900px;top:200px;width:910px;height:720px;padding:34px 40px;">
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:26px"><span class="sev chk" style="font-size:20px">審査役 shinsa</span><span style="font-size:22px;color:var(--sub)">書いたときとは別の文脈で確かめる</span></div>
+      <div id="s4-checks" style="position:relative;height:500px"></div>
+    </div>
+  </div>
+
+  <div class="scene" id="s-s5">
+    <div class="step"><div class="no">STEP 5 ・ 採択の後</div><div class="prob">まだ手続きが続く<span class="strike"></span></div>
+      <div class="sol">期限を見張り、<br>指摘を次に生かす</div>
+      <div class="pts"><div class="pt">交付申請・実績報告・効果の報告</div><div class="pt">工程表と期限を、いつでも</div><div class="pt">差し戻しは記録して次へ</div></div></div>
+    <div class="sheet" id="s5-sheet" style="left:900px;top:200px;width:910px;height:440px;"><div class="cap"><span class="ic">H</span>今の状態.html ・ 工程表</div><div class="view"><img id="s5-img" src="out/assets/status_html.png"></div><div class="real">実際の出力</div></div>
+    <div class="sheet" id="s5-sashi" style="left:900px;top:670px;width:520px;height:270px;"><div class="cap"><span class="ic">!</span>差し戻しの通知（模擬の画面）</div><div class="view"><img src="out/assets/sashimodoshi.png" style="top:-60px"></div></div>
+    <div class="card" id="s5-memo" style="left:1450px;top:700px;width:360px;font-size:22px;line-height:1.5;"><b style="color:var(--teal)">会社の記録に残す</b><br>次の手続きで、同じ型を先に確かめる</div>
+  </div>
+
+  <!-- PM（実際の端末） -->
+  <div class="scene" id="s-pm">
+    <div class="abs" style="left:110px;top:70px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">聞かれる前に、知らせる</div>
+    <div class="abs" style="left:110px;top:110px;font-size:52px;font-weight:800">「今日は何から？」に、段取りで答える</div>
+    <div class="term" id="pm-term" style="left:110px;top:210px;width:1160px;height:700px;">
+      <div class="tbar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span style="margin-left:12px">やまぶき惣菜 — claude</span></div>
+      <div class="tbody" id="xterm"></div>
+      <div class="real" id="pm-real">実際の Claude Code（待ち時間を詰めて再生）</div>
+    </div>
+    <div id="pm-call" class="abs" style="left:1320px;top:230px;width:490px;"></div>
+  </div>
+
+  <!-- 仕組み -->
+  <div class="scene" id="s-how">
+    <div class="abs" style="left:110px;top:70px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">しくみ</div>
+    <div class="abs" style="left:110px;top:110px;font-size:52px;font-weight:800">フォルダを開くたびに、フックが調べる</div>
+    <div class="flow" id="how-flow" style="left:110px;right:110px;top:300px;">
+      <div class="box" id="hw1" style="width:330px"><div class="big" style="white-space:nowrap">📂 フォルダを開く</div><div class="small">社長は何もしない</div></div>
+      <div class="arrow" id="ha1"></div>
+      <div class="box" id="hw2" style="width:660px;text-align:left"><div class="big" style="color:var(--teal)">フック <span class="mono" style="font-size:22px;color:var(--sub)">SessionStart</span></div>
+        <div id="how-items" style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px 18px;font-size:21px;font-weight:600;white-space:nowrap"></div></div>
+      <div class="arrow" id="ha2"></div>
+      <div class="box" id="hw3" style="width:360px"><div class="big">💬 Claude が<br>最初の返事で知らせる</div></div>
+    </div>
+    <div class="quote" id="how-quote" style="left:110px;right:110px;top:640px;"></div>
+  </div>
+
+  <!-- 学習 -->
+  <div class="scene" id="s-learn">
+    <div class="abs" style="left:110px;top:70px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">学習</div>
+    <div class="abs" style="left:110px;top:110px;font-size:52px;font-weight:800">使うほど、聞き直しが減る</div>
+    <div class="abs" style="left:110px;top:220px;font-size:26px;font-weight:800;color:var(--sub)">1件目：聞いて答えたこと</div>
+    <div id="learn-qs" class="abs" style="left:110px;top:270px;width:520px;height:620px;"></div>
+    <div class="card" id="learn-mem" style="left:660px;top:210px;width:620px;height:720px;padding:0;">
+      <div style="display:flex;gap:40px;padding:30px 32px 16px;">
+        <div><div id="lm-fact" style="font-size:84px;font-weight:800;color:var(--teal);line-height:1">0</div><div style="font-size:22px;color:var(--sub);margin-top:8px">覚えた事実</div></div>
+        <div><div id="lm-rule" style="font-size:84px;font-weight:800;color:var(--teal);line-height:1">0</div><div style="font-size:22px;color:var(--sub);margin-top:8px">書き方の決まり</div></div>
+      </div>
+      <div id="lm-rules"></div>
+      <div class="real">実際の記録</div>
+    </div>
+    <div class="abs" style="left:1320px;top:220px;font-size:26px;font-weight:800;color:var(--sub)">2件目：開いたときの決まり</div>
+    <div id="learn-2" class="abs" style="left:1320px;top:270px;width:490px;"></div>
+  </div>
+
+  <!-- 始め方 -->
+  <div class="scene" id="s-start">
+    <div class="abs" style="left:110px;top:70px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">始め方</div>
+    <div class="abs" style="left:110px;top:110px;font-size:52px;font-weight:800">3つの手順で、今日から</div>
+    <div class="stepc" id="st1" style="left:110px;top:250px;"><div class="n">1</div><h3>プラグインを<br>追加する</h3><p>デスクトップアプリの<br>設定 → プラグイン → 追加<br><span class="mono" style="font-size:19px;color:var(--teal)">tetsuroikeda/hojokin-oss</span></p></div>
+    <div class="stepc" id="st2" style="left:700px;top:250px;"><div class="n">2</div><h3>空のフォルダを<br>開く</h3><p>そのフォルダが「会社のフォルダ」になる。<br>目印・記録・守りの設定は自動で用意</p></div>
+    <div class="stepc" id="st3" style="left:1290px;top:250px;"><div class="n">3</div><h3>ふだんの言葉で<br>話しかける</h3><p>「うちで使える補助金ってある？」<br>使う段階は Claude が選ぶ</p></div>
+    <div class="pill" id="st-note" style="left:110px;top:770px;">ライブラリの準備は不要（必要なものは同梱）</div>
+  </div>
+
+  <!-- 作り方と守り -->
+  <div class="scene" id="s-built">
+    <div class="abs" style="left:110px;top:70px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">つくり方</div>
+    <div class="abs" style="left:110px;top:110px;font-size:52px;font-weight:800">Claude Code で、確かめながら作った</div>
+    <div id="built-stats"></div>
+    <div class="flow" id="built-flow" style="left:110px;top:560px;justify-content:flex-start;"></div>
+    <div id="built-pills"></div>
+  </div>
+
+  <!-- 終わり -->
+  <div class="scene" id="s-end">
+    <div class="abs" id="end-lead" style="left:0;right:0;top:270px;text-align:center;font-size:58px;font-weight:800;">専門家に頼めない会社にも、補助金を。</div>
+    <div class="abs" id="end-logo" style="left:0;right:0;top:390px;text-align:center;font-size:170px;font-weight:800;letter-spacing:2px;">hojokin</div>
+    <div class="abs" id="end-url" style="left:0;right:0;top:640px;text-align:center;font-size:38px;color:var(--teal);font-weight:700" class="mono">github.com/tetsuroikeda/hojokin-oss</div>
+    <div class="abs" id="end-by" style="left:0;right:0;top:720px;text-align:center;font-size:26px;color:var(--sub);">Built with Claude Code ・ 会社と書類はすべて架空です</div>
+  </div>
+
+  <div id="journey"></div>
+  <div id="cap"></div>
+</div>
+
+<script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script src="out/data.js"></script>
+<script>
+// ===== 計算の道具 =====
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const eOut = x => 1 - Math.pow(1 - x, 3);
+const eInOut = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const eBack = x => { const c = 1.6, c3 = c + 1; return 1 + c3 * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const lerp = (a, b, x) => a + (b - a) * x;
+const $ = id => document.getElementById(id);
+const mk = (tag, cls, html, parent) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; if (parent) parent.appendChild(e); return e; };
+function show(el, x, dy = 30, dx = 0) { el.style.opacity = x; el.style.transform = `translate(${(1 - x) * dx}px, ${(1 - x) * dy}px)`; }
+function typed(text, x) { return text.slice(0, Math.floor(text.length * clamp(x))); }
+
+const D = window.VIDEO_DATA;
+const T = {}; D.timeline.forEach(s => T[s.id] = s);
+const FADE = 0.45;
+// その場面の中の字幕の開始時刻（場面の頭からの秒）
+const capsOf = id => D.captions.filter(c => c.start >= T[id].start && c.start < T[id].start + T[id].dur).map(c => c.start - T[id].start);
+
+// ===== 背景：紙の地に、ゆっくり動く淡い丸と点 =====
+const bg = $('bg').getContext('2d');
+function drawBg(t) {
+  bg.fillStyle = '#f5f1e8'; bg.fillRect(0, 0, 1920, 1080);
+  const blobs = [[300, 900, 420, '214,235,230'], [1650, 180, 380, '255,241,201'], [1500, 950, 300, '251,224,216']];
+  blobs.forEach(([x, y, r, c], i) => {
+    const xx = x + Math.sin(t * 0.25 + i * 2) * 60, yy = y + Math.cos(t * 0.2 + i) * 40;
+    const g = bg.createRadialGradient(xx, yy, 0, xx, yy, r);
+    g.addColorStop(0, `rgba(${c},0.75)`); g.addColorStop(1, `rgba(${c},0)`);
+    bg.fillStyle = g; bg.fillRect(0, 0, 1920, 1080);
+  });
+  bg.fillStyle = 'rgba(30,36,48,0.06)';
+  for (let x = 40; x < 1920; x += 48) for (let y = 40; y < 1080; y += 48) { bg.beginPath(); bg.arc(x, y, 1.6, 0, 6.3); bg.fill(); }
+}
+
+// ===== 道のり（上の進み具合） =====
+const STAGES = ['探す', '調べる', '書類', '書く', '採択後'];
+const journey = $('journey');
+mk('div', 'rail', null, journey);
+const jfill = mk('div', 'fill', null, journey);
+const jnodes = STAGES.map((s, i) => { const n = mk('div', 'node', `<div class="dot">${i + 1}</div><div class="lbl">${s}</div>`, journey); n.style.left = `calc(30px + (100% - 60px) * ${i / 4})`; return n; });
+function updJourney(t) {
+  const ids = ['s1', 's2', 's3', 's4', 's5'];
+  let cur = -1, local = 0;
+  ids.forEach((id, i) => { if (t >= T[id].start - 0.2) { cur = i; local = t - T[id].start; } });
+  const on = t >= T.s1.start - FADE && t < T.s5.start + T.s5.dur;
+  journey.style.opacity = on ? 1 : 0;
+  if (!on) return;
+  const w = journey.offsetWidth - 60;
+  jfill.style.width = w * Math.max(0, (cur - 1 + eOut(prog(local, 0, 0.9))) / 4) + 'px';
+  jnodes.forEach((n, i) => { n.classList.toggle('on', i === cur); n.classList.toggle('done', i < cur); n.querySelector('.dot').textContent = i < cur ? '✓' : i + 1; });
+}
+
+const scenes = {};
+
+// ===== 冒頭：社長の道のり =====
+(() => {
+  const svg = $('road-svg');
+  // 左から右へ進む、ゆるやかに曲がる道
+  const P = 'M 120 700 C 400 560, 560 860, 840 720 S 1300 560, 1500 720 S 1760 820, 1820 700';
+  svg.innerHTML = `<path id="road-path" d="${P}" fill="none" stroke="#d9d1c0" stroke-width="34" stroke-linecap="round"/>
+                   <path id="road-dash" d="${P}" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="18 22" stroke-linecap="round"/>`;
+  const path = $('road-path'), dash = $('road-dash');
+  const L = path.getTotalLength();
+  const at = [0.13, 0.33, 0.52, 0.71, 0.9];
+  const QS = ['どれを使えばいい？', 'ルールが多すぎる', '書類がそろわない', 'これで通るの？', '採択後も手続き…'];
+  const signs = at.map((a, i) => { const p = path.getPointAtLength(L * a); const s = mk('div', 'sign', `<div class="pin"></div>${STAGES[i]}`, $('road-signs')); s.style.left = p.x + 'px'; s.style.top = (p.y + 34) + 'px'; return s; });
+  const qs = at.map((a, i) => { const p = path.getPointAtLength(L * a); const q = mk('div', 'q', QS[i], $('road-qs')); q.dataset.x = p.x; q.dataset.y = p.y; return q; });
+  scenes.road = (l, d) => {
+    const caps = capsOf('road');
+    show($('road-l1'), eOut(prog(l, 0.3, 1.0)), 30);
+    show($('road-l2'), eOut(prog(l, (caps[1] || 2) - 0.1, (caps[1] || 2) + 0.6)), 20);
+    const up = eInOut(prog(l, (caps[2] || 4) - 0.2, (caps[2] || 4) + 0.8));
+    $('road-lead').style.transform = `translateY(${-up * 40}px) scale(${1 - up * 0.25})`;
+    const draw = eInOut(prog(l, (caps[2] || 4) - 0.2, (caps[2] || 4) + 1.4));
+    path.style.strokeDasharray = L; path.style.strokeDashoffset = L * (1 - draw);
+    dash.style.opacity = draw;
+    signs.forEach((s, i) => show(s, eOut(prog(draw, at[i] - 0.05, at[i] + 0.05)), 10));
+    let walk = 0;
+    qs.forEach((q, i) => {
+      const t0 = (caps[3 + i] !== undefined ? caps[3 + i] : 6 + i) - 0.15;
+      const x = eBack(prog(l, t0, t0 + 0.45));
+      if (l > t0) walk = at[i];
+      q.style.opacity = clamp(x);
+      q.style.left = (q.dataset.x - q.offsetWidth / 2) + 'px';
+      q.style.top = (q.dataset.y - 150 - (i % 2) * 40) + 'px';
+      q.style.transform = `scale(${0.6 + 0.4 * x})`;
+      q.style.transformOrigin = '50% 100%';
+    });
+    // 社長の印は、問いが出た所まで進む
+    const wp = path.getPointAtLength(L * lerp(0.02, 1, 1) * (walk ? walk : 0.02) * clamp(draw * 3));
+    const w = $('road-walker'); w.style.left = wp.x + 'px'; w.style.top = wp.y + 'px'; w.style.opacity = draw;
+  };
+})();
+
+// ===== 題名 =====
+scenes.title = (l, d) => {
+  const x = eOut(prog(l, 0.1, 0.9));
+  $('logo').style.opacity = x; $('logo').style.transform = `translateY(${(1 - x) * 40}px)`;
+  const b = eInOut(prog(l, 0.6, 1.4)); $('logo-bar').style.width = 360 * b + 'px'; $('logo-bar').style.marginLeft = -180 * b + 'px';
+  show($('tag'), eOut(prog(l, 1.2, 1.9)), 20);
+};
+
+// 段階の見出しの動き（問いに線を引き、答えを出す）
+function stepHead(scene, l) {
+  const s = scene.querySelector('.step');
+  show(s.querySelector('.no'), eOut(prog(l, 0, 0.5)), 10);
+  const p = s.querySelector('.prob'); show(p, eOut(prog(l, 0.2, 0.7)), 10);
+  p.querySelector('.strike').style.width = (p.offsetWidth + 8) * eInOut(prog(l, 1.2, 1.7)) + 'px';
+  show(s.querySelector('.sol'), eOut(prog(l, 1.5, 2.2)), 30);
+  s.querySelectorAll('.pt').forEach((e, i) => show(e, eOut(prog(l, 2.6 + i * 0.5, 3.1 + i * 0.5)), 0, -30));
+}
+function sheetIn(el, l, t0) { const x = eOut(prog(l, t0, t0 + 0.8)); el.style.opacity = x; el.style.transform = `translateY(${(1 - x) * 70}px) rotate(${(1 - x) * 2}deg)`; }
+
+// ===== STEP 1 =====
+scenes.s1 = (l, d) => {
+  stepHead($('s-s1'), l);
+  sheetIn($('s1-sheet'), l, 0.8);
+  const sc = eInOut(prog(l, 4.5, d - 0.8));
+  const h = $('s1-img').offsetHeight;
+  $('s1-img').style.transform = `translateY(${-sc * 760}px)`;
+  $('s1-img2').style.top = h + 'px'; $('s1-img2').style.transform = `translateY(${-sc * 760}px)`;
+};
+
+// ===== STEP 2 =====
+scenes.s2 = (l, d) => {
+  stepHead($('s-s2'), l);
+  sheetIn($('s2-sheet'), l, 0.8);
+  const z = eInOut(prog(l, 3.5, d - 1));
+  $('s2-img').style.transform = `scale(${1 + 0.35 * z}) translate(${-z * 10}px, ${-z * 120}px)`;
+  // 出典の列に印を引く
+  const m = $('s2-mark'); const mx = eOut(prog(l, 2.8, 3.6));
+  m.style.cssText = `left:${58 + z * 18}px;top:${70 + 0 * z}px;width:${(255 + z * 80) * mx}px;height:${560 + z * 40}px;opacity:${mx}`;
+};
+
+// ===== STEP 3 =====
+(() => {
+  const host = $('s3-files');
+  const colors = { pdf: '#d9534f', jpg: '#5b8def', docx: '#2b6cb0', xlsx: '#2f855a' };
+  const files = D.shorui.inputs.map(n => { const ext = n.split('.').pop(); return mk('div', 'file', `<span class="ic" style="background:${colors[ext] || '#666'}">${ext.toUpperCase()}</span>${n}`, host); });
+  $('s3-tree').innerHTML = D.shorui.tree.map(([depth, name, isDir]) => `<div style="padding-left:${depth * 28}px" class="${isDir ? 'dir' : ''}">${isDir ? '📁 ' : '・'}${name}</div>`).join('');
+  const lines = [...$('s3-tree').children];
+  const fubi = $('s3-fubi');
+  const head = mk('div', null, `<div style="font-size:28px;font-weight:800;margin-bottom:16px">「${D.shorui.summary}」<span style="color:var(--sub);font-size:19px;font-weight:600">　実際の応答から一部</span></div>`, fubi);
+  const items = D.shorui.fubi.map(([sev, label, text]) => {
+    const e = mk('div', 'card', `<div style="margin-bottom:6px"><span class="sev ${sev === '重大' ? 'big' : 'chk'}">${sev}</span><b style="font-size:21px">${label}</b></div><div style="font-size:21px;line-height:1.5">${text}</div>`, fubi);
+    e.style.position = 'relative'; e.style.marginBottom = '12px'; e.style.padding = '14px 20px'; return e;
+  });
+  scenes.s3 = (l, d) => {
+    stepHead($('s-s3'), l);
+    const sort = eInOut(prog(l, 4.0, 5.6));
+    files.forEach((f, i) => {
+      const t0 = 0.6 + i * 0.1;
+      const x = eBack(prog(l, t0, t0 + 0.5));
+      const sx = 120 + (i * 263) % 1600, sy = 520 + ((i * 7) % 4) * 100 + (i % 2) * 30;
+      f.style.opacity = clamp(x) * (1 - sort);
+      f.style.transform = `translate(${lerp(sx, 130, sort)}px, ${lerp(sy, 480 + i * 3, sort)}px) rotate(${((i * 53) % 40 - 20) * (1 - sort)}deg) scale(${lerp(0.5 + 0.5 * x, 0.4, sort)})`;
+    });
+    lines.forEach((ln, i) => show(ln, eOut(prog(l, 5.2 + i * 0.08, 5.6 + i * 0.08)), 8));
+    show(head, prog(l, 6.4, 6.9), 10);
+    items.forEach((e, i) => show(e, eOut(prog(l, 6.8 + i * 0.55, 7.3 + i * 0.55)), 0, 60));
+  };
+})();
+
+// ===== STEP 4 =====
+(() => {
+  const checks = ['聞き取りの答えと、本文の事実が食い違っていないか', '根拠のない数字・固有名詞・日付はないか', '現状 → 課題 → 解決策 → 効果 の筋が通っているか', '審査項目と加点項目を、1つ残らず採点', '投資の効果が、数字で伝わるか', '過去の指摘と、会社の書き方の決まりに沿っているか'];
+  const rows = checks.map((c, i) => { const e = mk('div', 'check', `<span class="box"></span><span>${c}</span>`, $('s4-checks')); e.style.top = i * 76 + 'px'; return e; });
+  const verdict = mk('div', null, '', $('s4-checks')); verdict.style.cssText = 'position:absolute;top:470px;font-size:27px;font-weight:800;color:var(--teal)';
+  scenes.s4 = (l, d) => {
+    stepHead($('s-s4'), l);
+    const out = eInOut(prog(l, 6.2, 7.0));
+    [['s4-zaimu', 0.8], ['s4-plan', 1.6], ['s4-konkyo', 2.4]].forEach(([id, t0]) => { sheetIn($(id), l, t0); $(id).style.opacity *= (1 - out); });
+    $('s4-planimg').style.transform = `translateY(${-eInOut(prog(l, 2.5, 6.2)) * 160}px)`;
+    const rv = $('s4-review'); const rx = eOut(prog(l, 6.6, 7.3)); rv.style.opacity = rx; rv.style.transform = `translateY(${(1 - rx) * 50}px)`;
+    rows.forEach((r, i) => {
+      const t0 = 7.4 + i * 0.45;
+      show(r, eOut(prog(l, t0, t0 + 0.35)), 0, 20);
+      const done = l > t0 + 0.7 + (i === 4 ? 1.3 : 0);
+      const fix = i === 4 && l > t0 + 0.5 && !done;
+      const box = r.querySelector('.box');
+      box.textContent = done ? '✓' : fix ? '!' : '';
+      box.style.borderColor = done ? 'var(--teal)' : fix ? 'var(--coral)' : 'var(--line)';
+      box.style.background = done ? 'var(--tealL)' : fix ? 'var(--coralL)' : '#fff';
+      box.style.color = done ? 'var(--teal)' : 'var(--coral)';
+    });
+    verdict.textContent = '要修正の指摘を直すまで、完成にしない';
+    show(verdict, eOut(prog(l, 11.4, 11.9)), 15);
+  };
+})();
+
+// ===== STEP 5 =====
+scenes.s5 = (l, d) => {
+  stepHead($('s-s5'), l);
+  sheetIn($('s5-sheet'), l, 0.8);
+  const z = eInOut(prog(l, 2.5, 6));
+  $('s5-img').style.transform = `scale(${1 + 0.55 * z}) translate(${-z * 20}px, ${-z * 150}px)`;
+  sheetIn($('s5-sashi'), l, 5.2);
+  show($('s5-memo'), eOut(prog(l, 7.0, 7.6)), 20);
+};
+
+// ===== PM：実際の端末を描き直す =====
+const term = new Terminal({ cols: D.term.cols, rows: D.term.rows, fontFamily: 'Menlo, "Hiragino Sans", monospace', fontSize: 17, lineHeight: 1.12,
+  theme: { background: '#16181d', foreground: '#e6e6e6' }, allowProposedApi: true, convertEol: false, scrollback: 0 });
+term.open($('xterm'));
+const TEV = (() => {
+  // 信頼の確かめに答えた後から使い、1秒を超える待ちは0.6秒に詰める
+  const ev = D.term.events.filter(e => e[0] >= D.term.trust_at + 0.3);
+  let acc = 0, prev = ev.length ? ev[0][0] : 0;
+  return ev.map(([t, b64]) => { acc += Math.min(t - prev, 0.6); prev = t; return [acc, Uint8Array.from(atob(b64), c => c.charCodeAt(0))]; });
+})();
+const TLEN = TEV.length ? TEV[TEV.length - 1][0] : 1;
+let tIdx = 0, tLast = -1;
+async function seekTerm(local, d) {
+  const speed = Math.max(1, TLEN / Math.max(1, d - 4.5));
+  const target = (local - 1.0) * speed;
+  if (target < tLast) { term.reset(); tIdx = 0; }
+  tLast = target;
+  while (tIdx < TEV.length && TEV[tIdx][0] <= target) {
+    const data = TEV[tIdx][1];
+    await new Promise(r => term.write(data, r));
+    tIdx++;
+  }
+}
+(() => {
+  const call = $('pm-call');
+  const items = D.pm.callouts.map(([k, v]) => { const c = mk('div', 'card', `<div style="font-size:20px;color:var(--sub);font-weight:700">${k}</div><div style="font-size:30px;font-weight:800;margin-top:6px;line-height:1.35">${v}</div>`, call); c.style.position = 'relative'; c.style.marginBottom = '18px'; return c; });
+  scenes.pm = async (l, d) => {
+    const tw = eOut(prog(l, 0.1, 0.7)); $('pm-term').style.opacity = tw; $('pm-term').style.transform = `translateY(${(1 - tw) * 40}px)`;
+    $('xterm').style.transform = 'scale(1.0)';
+    items.forEach((c, i) => show(c, eOut(prog(l, d * 0.45 + i * 1.1, d * 0.45 + i * 1.1 + 0.5)), 0, 40));
+    await seekTerm(l, d);
+  };
+})();
+
+// ===== 仕組み =====
+(() => {
+  const host = $('how-items');
+  const its = D.how.items.map(s => mk('div', null, `✓ ${s}`, host));
+  $('how-quote').innerHTML = `<div style="font-size:19px;color:var(--sub);font-weight:700;margin-bottom:6px">フックが Claude に渡す指示（実際の出力）</div>「${D.how.quote}」`;
+  scenes.how = (l, d) => {
+    show($('hw1'), eOut(prog(l, 0.3, 0.9)), 20);
+    $('ha1').style.transform = `scaleX(${eOut(prog(l, 0.9, 1.4))})`; $('ha1').style.transformOrigin = '0 50%';
+    show($('hw2'), eOut(prog(l, 1.3, 1.9)), 20);
+    its.forEach((e, i) => show(e, eOut(prog(l, 2.0 + i * 0.35, 2.4 + i * 0.35)), 0, -16));
+    $('ha2').style.transform = `scaleX(${eOut(prog(l, 4.6, 5.1))})`; $('ha2').style.transformOrigin = '0 50%';
+    show($('hw3'), eOut(prog(l, 5.0, 5.6)), 20);
+    show($('how-quote'), eOut(prog(l, 6.4, 7.1)), 30);
+  };
+})();
+
+// ===== 学習 =====
+(() => {
+  const qEls = D.learn.questions.map((q, i) => { const e = mk('div', 'bubble', q, $('learn-qs')); e.style.top = i * 66 + 'px'; return e; });
+  const rEls = D.learn.rules.map(r => mk('div', 'rule', r, $('lm-rules')));
+  const l2 = D.learn.second.map(([kind, quote, note]) => { const e = mk('div', 'card', `<div style="font-size:19px;color:${kind === 'ok' ? 'var(--teal)' : '#a06b00'};font-weight:800;margin-bottom:8px">${kind === 'ok' ? '聞かずに使う' : '変わりうる情報だけ、確かめる'}</div><div style="font-size:23px;line-height:1.5">「${quote}」</div><div style="font-size:19px;color:var(--sub);margin-top:8px">${note}</div>`, $('learn-2')); e.style.position = 'relative'; e.style.marginBottom = '18px'; return e; });
+  scenes.learn = (l, d) => {
+    qEls.forEach((e, i) => show(e, eOut(prog(l, 0.3 + i * 0.2, 0.6 + i * 0.2)), 15, -20));
+    const m = eOut(prog(l, 2.0, 2.6)); $('learn-mem').style.opacity = m; $('learn-mem').style.transform = `translateY(${(1 - m) * 40}px)`;
+    $('lm-fact').textContent = Math.round(D.learn.facts * eOut(prog(l, 2.4, 4.2)));
+    $('lm-rule').textContent = Math.round(D.learn.ruleCount * eOut(prog(l, 2.4, 4.2)));
+    rEls.forEach((e, i) => show(e, eOut(prog(l, 3.4 + i * 0.7, 3.9 + i * 0.7)), 15));
+    l2.forEach((e, i) => show(e, eOut(prog(l, 6.2 + i * 1.0, 6.7 + i * 1.0)), 0, 40));
+  };
+})();
+
+// ===== 始め方 =====
+scenes.start = (l, d) => {
+  ['st1', 'st2', 'st3'].forEach((id, i) => { const x = eBack(prog(l, 0.5 + i * 1.6, 1.1 + i * 1.6)); const e = $(id); e.style.opacity = clamp(x); e.style.transform = `translateY(${(1 - x) * 80}px)`; });
+  show($('st-note'), eOut(prog(l, 6.0, 6.6)), 15);
+};
+
+// ===== 作り方 =====
+(() => {
+  const host = $('built-stats');
+  const els = D.built.stats.map(([n, lbl], i) => { const e = mk('div', 'stat', `<div class="num">0</div><div class="lbl">${lbl}</div>`, host); e.style.left = 110 + i * 430 + 'px'; e.style.top = '250px'; e.dataset.n = n; return e; });
+  const flow = $('built-flow');
+  const steps = D.built.flow.map((s, i) => { const b = mk('div', 'box', `<div class="big" style="font-size:25px">${s[0]}</div><div class="small mono" style="font-size:18px">${s[1]}</div>`, flow); if (i < D.built.flow.length - 1) mk('div', 'arrow', null, flow); return b; });
+  const arrows = [...flow.querySelectorAll('.arrow')];
+  const pills = D.built.guards.map((g, i) => { const p = mk('div', 'pill', g, $('built-pills')); p.style.left = 110 + i * 560 + 'px'; p.style.top = '800px'; return p; });
+  scenes.built = (l, d) => {
+    els.forEach((e, i) => { show(e, eOut(prog(l, 0.3 + i * 0.3, 0.8 + i * 0.3)), 20); e.querySelector('.num').textContent = Math.round(e.dataset.n * eOut(prog(l, 0.4 + i * 0.3, 2.4 + i * 0.3))).toLocaleString(); });
+    steps.forEach((s, i) => show(s, eOut(prog(l, 3.4 + i * 0.6, 3.9 + i * 0.6)), 20));
+    arrows.forEach((a, i) => { a.style.transform = `scaleX(${eOut(prog(l, 3.8 + i * 0.6, 4.2 + i * 0.6))})`; a.style.transformOrigin = '0 50%'; });
+    const pt = capsOf('built'); const g0 = (pt[2] !== undefined ? pt[2] : 9) - 0.2;
+    pills.forEach((p, i) => show(p, eOut(prog(l, g0 + i * 0.7, g0 + 0.5 + i * 0.7)), 20));
+  };
+})();
+
+// ===== 終わり =====
+scenes.end = (l, d) => {
+  show($('end-lead'), eOut(prog(l, 0.1, 0.8)), 20);
+  const x = eOut(prog(l, 0.8, 1.5)); $('end-logo').style.opacity = x; $('end-logo').style.transform = `translateY(${(1 - x) * 30}px)`;
+  show($('end-url'), eOut(prog(l, 1.6, 2.2)), 15);
+  show($('end-by'), eOut(prog(l, 2.2, 2.8)), 15);
+};
+
+// ===== 字幕 =====
+function updCap(t) {
+  const c = D.captions.find(c => t >= c.start && t < c.end);
+  const cap = $('cap'); cap.style.opacity = c ? 1 : 0; if (c) cap.textContent = c.text;
+}
+
+// ===== 1コマを描く =====
+window.seek = async function (t) {
+  drawBg(t);
+  for (const s of D.timeline) {
+    const el = $('s-' + s.id);
+    const l = t - s.start;
+    const vis = l >= -FADE && l < s.dur + FADE;
+    el.style.display = vis ? 'block' : 'none';
+    if (!vis) continue;
+    const a = Math.min(prog(l, -FADE, 0), 1 - prog(l, s.dur - 0.05, s.dur + FADE));
+    el.style.opacity = a;
+    await scenes[s.id](Math.max(0, l), s.dur);
+  }
+  updJourney(t);
+  updCap(t);
+};
+window.TOTAL = D.total;
+
+if (!navigator.webdriver) {
+  const t0 = performance.now();
+  const startAt = Number(new URLSearchParams(location.search).get('t') || 0);
+  let busy = false;
+  const loop = async () => { if (!busy) { busy = true; await window.seek((startAt + (performance.now() - t0) / 1000) % D.total); busy = false; } requestAnimationFrame(loop); };
+  window.addEventListener('load', loop);
+}
+</script>
+</body>
+</html>

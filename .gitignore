@@ -18,5 +18,13 @@ __pycache__/
 # 公式サイトからダウンロードした公募要領や様式
 downloads/
 
+# worktree に置いた downloads へのリンク
+/downloads
+
+# デモ動画の書き出しと道具（docs/video/build.py が作る）
+docs/video/out/
+docs/video/node_modules/
+docs/video/package-lock.json
+
 # Claude Code が作る worktree
 .claude/worktrees/

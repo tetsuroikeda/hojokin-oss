@@ -1,0 +1,10 @@
+{
+  "name": "hojokin-video",
+  "private": true,
+  "type": "module",
+  "description": "デモ動画を撮るための道具（プラグインには入らない）",
+  "dependencies": {
+    "@xterm/xterm": "^5.5.0",
+    "puppeteer-core": "24.10.0"
+  }
+}
