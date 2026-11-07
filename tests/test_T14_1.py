@@ -300,3 +300,88 @@ def test_from_downloads_hand_edited_word(tmp_path: Path) -> None:
     assert edited in made
     assert (tmp_path / edited).stat().st_size > 0
     assert (tmp_path / edited).read_bytes() != (tmp_path / f"{mp.PLAN_EDITED}/その1・2_ツールが書いた版.docx").read_bytes()
+
+
+# --- デモの会社の2社目（みずなら精工。TASKS D14）。デモだけが使い、eval と自動のテストの物差しは、上のやまぶき惣菜のまま ---
+
+DEMO2 = TD / "デモの会社_町工場"
+DEMO2_DOCUMENTS = [
+    "決算書_第35期.pdf", "決算書_第36期.pdf", "履歴事項全部証明書.pdf", "納税証明書_その2.pdf", "法人事業概況説明書_第36期.pdf",
+    "役員名簿.docx", "株主名簿.docx", "労働者名簿.xlsx", "見積依頼書.pdf", "要件の概要.pdf",
+    "見積書_かすみ野システム工房.pdf", "見積書_しらうめソフト.pdf", "書類の一覧.md",
+]
+DEMO2_FLAWS = ["見積書_かすみ野システム工房_旧.pdf", "見積書_しらうめソフト_一式.pdf", "注文書_試しの開発.pdf"]  # 不備の中身は 書類/書類の一覧.md
+DEMO2_MATERIALS = ["会社案内.pdf", "議事録_2026-09-30_見積の困りごと.docx", "図面の例_ブラケット.pdf", "資料の一覧.md"]
+
+
+def _answers2() -> Dict[str, str]:
+    out = {}
+    for line in (DEMO2 / "回答表.md").read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^\| ([A-L]-\d{2}) \|[^|]*\| (.*?) \|$", line)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+def _amounts(text: str, unit: str = "千円") -> List[int]:
+    return [int(v.replace(",", "")) for v in re.findall(r"([\d,]+)" + unit, text)]
+
+
+def test_demo2_files() -> None:
+    """2社目の回答表・設定・社名の確かめ・書類・デモの不備・会社の資料・フォルダを作る道具がそろい、空でない。"""
+    for name in ("回答表.md", "設定.md", "社名の確かめ.md", "make_demo_folder.py"):
+        assert (DEMO2 / name).stat().st_size > 0, name
+    for folder, names in ((DEMO2 / "書類", DEMO2_DOCUMENTS), (DEMO2 / "書類" / "デモの不備", DEMO2_FLAWS),
+                          (DEMO2 / "会社の資料", DEMO2_MATERIALS)):
+        for name in names:
+            assert (folder / name).is_file() and (folder / name).stat().st_size > 0, folder / name
+    assert len(_answers2()) >= 100
+
+
+def test_demo2_answer_numbers() -> None:
+    """2社目の回答表の数字が、内訳の和・決算の段々・補助の上限と合う（D14）。"""
+    a = _answers2()
+    # 第36期の売上原価と販管費の内訳
+    cost = _amounts(a["F-09"])
+    assert cost[0] + cost[1] + cost[2] + cost[5] == cost[-1] == 248600  # 材料・外注・労務・製造経費 ＝ 売上原価
+    assert cost[2] == cost[3] + cost[4] and cost[5] == sum(cost[6:12])
+    sga = _amounts(a["F-10"])
+    assert sum(sga[:-1]) == sga[-1] == 50400
+    assert 311000 - 248600 == 62400 == _amounts(a["F-02"])[-1]
+    assert 62400 - 50400 == 12000 == _amounts(a["F-03"])[-1]
+    assert 12000 + 400 - 1400 == 11000 == _amounts(a["F-04"])[-1]
+    assert 11000 - 3400 == 7600 == _amounts(a["F-05"])[-1]
+    assets = _amounts(a["F-12"])
+    assert sum(assets[:-1]) == assets[-1] == 197000
+    liab = _amounts(a["F-13"])  # 負債6つ、純資産（資本金・利益剰余金）、合計
+    assert sum(liab[:6]) + liab[6] == liab[-1] == 197000 and liab[7] + liab[8] == liab[6]
+    assert sum(_amounts(a["E-02"])[:-1]) == _amounts(a["E-02"])[-1] == 311000
+    assert _amounts(a["D-03"])[0] == sum(_amounts(a["D-03"])[1:]) == cost[3] + sga[1]  # 従業員の給与 ＝ 労務費の給与 ＋ 給料手当
+    # 1件目の見積の内訳：構築費の項目の和、クラウドの利用料、合計。補助の上限と、構築費以外の上限（第9回 p.8・p.24）
+    h02 = _amounts(a["H-02"])
+    build, items, cloud, total = h02[0], h02[1:12], h02[-2], h02[-1]
+    assert sum(items) == build == 21000 and build + cloud == total == 22200
+    assert cloud == 150 * 8 and cloud <= 5000
+    assert total * 2 // 3 <= 15000
+    # 見積1件の時間の内訳と、月の時間
+    assert sum(int(v) for v in re.findall(r"約(\d+)分", a["L-01"])[1:6]) == 75
+    assert 120 * 75 // 60 == 150 == int(re.search(r"約(\d+)時間", a["G-04"]).group(1))
+    # 2件目の内訳
+    i03 = _amounts(a["I-03"])
+    assert sum(i03[:-1]) == i03[-1] == 3000
+
+
+def test_demo2_make_folder(tmp_path: Path) -> None:
+    """デモの会社のフォルダを作る道具が、書類を散らして入れ、会社のフォルダの用意はしない（用意はデモの中でツールがする）。"""
+    import subprocess
+    import sys
+    target = tmp_path / "みずなら精工"
+    run = subprocess.run([sys.executable, "-B", str(DEMO2 / "make_demo_folder.py"), str(target)],
+                         capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    files = sorted(p.relative_to(target).as_posix() for p in target.rglob("*") if p.is_file())
+    assert len(files) == 17 and not (target / ".hojokin").exists()
+    assert any(f.startswith("入れ口/") for f in files) and any(f.startswith("メールの添付/") for f in files)
+    again = subprocess.run([sys.executable, "-B", str(DEMO2 / "make_demo_folder.py"), str(target)],
+                           capture_output=True, text=True)
+    assert again.returncode == 1  # 空でないフォルダには作らない

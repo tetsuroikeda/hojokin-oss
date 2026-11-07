@@ -12,6 +12,12 @@
   シートの XML とほかの部品の比べに入る）。書く道具は、差があれば保存しない。応答の終わりの hook も同じ物差しで比べる。
 - 様式を初めて写すとき（first_copy）だけ、ブックの計算の設定に「開いたときにすべて計算し直す」（fullCalcOnLoad）を
   付ける。書いたセルから計算する数式（省力化指数など）の古い値が、Excel で開いたときに残らないようにするため。
+- 数式のセルの計算済みの値（store_formula_values）：XML を直接書くと、数式のセルの値は書く前のまま（0・#VALUE! など）
+  残る。開いたときに計算し直す印だけでは、Excel で開いて保存しない限りファイルの値は変わらず、PDF・確かめ・
+  電子申請の添付では古い値が見える（11/6 のリハーサル）。そこで、LibreOffice で計算し直した写しから、数式のセルの
+  値（<v> とセルの種類 t）だけを元のファイルに写す。数式（<f>）・書式・ほかの部品はバイトのまま残す（写しを様式として
+  保存し直すと様式の部品が変わるため、写しそのものは使わない。DESIGN 5章）。比べる（compare_xlsx）ときも、数式の
+  セルは値と種類を除いて比べる（数式・書式が変われば差）。
 
 /usr/bin/python3（3.9）で動く。標準のライブラリだけを使う。
 """
@@ -35,6 +41,7 @@ PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 BOOK = "xl/workbook.xml"
 _REF = re.compile(r"^([A-Z]{1,3})([0-9]{1,7})$")
 MAX_LABEL = 60
+LEGEND_WORD = "入力欄"
 
 
 def _rel_target(base: str, target: str) -> str:
@@ -186,7 +193,12 @@ def outline(blob: bytes) -> List[Dict[str, Any]]:
                 continue
             c, r = split_ref(ref)
             by_row.setdefault(r, []).append((c, text.strip()))
-            labels.append({"セル": ref, "文字": _short(text)})
+            label = {"セル": ref, "文字": _short(text)}
+            if LEGEND_WORD in _norm(text):
+                # 「作業内容の説明 入力欄」のような、色で入力の欄を示す凡例（ロックした見出し）。ここには書けない。
+                # 11/6 のリハーサルで、別紙2 の凡例（X17・X62）を説明の欄と読み違え、「書けない」と止まったため
+                label["凡例"] = True
+            labels.append(label)
         inputs = []
         for ref in sorted(sh.inputs, key=lambda x: (split_ref(x)[1], split_ref(x)[0])):
             c, r = split_ref(ref)
@@ -213,7 +225,8 @@ def outline_text(entries: Sequence[Dict[str, Any]]) -> str:
         lines.append(f"## シート「{e['シート']}」（書いてよいセル {len(e['書いてよいセル'])}、数式のセル {e['数式のセル']}）")
         lines.append("見出し：")
         for lab in e["見出し"]:
-            lines.append(f"  {lab['セル']}「{lab['文字']}」")
+            note = "（凡例：同じ色のセルが入力の欄。このセルには書けない。書くのは下の「書いてよいセル」）" if lab.get("凡例") else ""
+            lines.append(f"  {lab['セル']}「{lab['文字']}」{note}")
         lines.append("書いてよいセル（行の見出し）：")
         rows: Dict[int, List[str]] = {}
         heads: Dict[int, str] = {}
@@ -311,6 +324,102 @@ def first_copy(blob: bytes) -> bytes:
     return yoshiki_word.rebuild_zip(blob, {BOOK: new_data})
 
 
+# ---------------------------------------------------------------- 数式のセルの計算済みの値
+
+
+def _calc_value(cell, text: str) -> Tuple[Optional[str], str]:
+    """計算し直した写しのセルから、（セルの種類 t、値の文字）。種類 None は数。文字の結果は t="str" にする。"""
+    if cell is None:
+        return "str", ""
+    kind = cell.attrs.get("t")
+    if kind in ("s", "str", "inlineStr"):
+        return "str", text
+    if kind in ("e", "b"):
+        return kind, text
+    return None, text
+
+
+def _same_value(old_kind: Optional[str], old_text: str, kind: Optional[str], text: str) -> bool:
+    """元のセルの値と、計算し直した値が同じか（文字の種類 s・str・inlineStr は同じに数え、改行の形をそろえる）。"""
+    def norm_kind(k):
+        return "str" if k in ("s", "str", "inlineStr") else (k if k in ("e", "b") else None)
+
+    if norm_kind(old_kind) != norm_kind(kind):
+        return False
+    a, b = (old_text or "").replace("\r\n", "\n"), (text or "").replace("\r\n", "\n")
+    if a == b:
+        return True
+    if norm_kind(kind) is None:
+        try:
+            return float(a) == float(b)
+        except ValueError:
+            return False
+    return False
+
+
+def _formula_cell_bytes(data: bytes, cell, kind: Optional[str], value: str) -> bytes:
+    """数式のセル cell を、値（<v>）と種類（t）だけ替えたバイト列。数式（<f>）とほかの子はバイトのまま。"""
+    from xml.sax.saxutils import escape, quoteattr
+
+    prefix = cell.prefix
+    name = f"{prefix}:c" if prefix else "c"
+    v_name = f"{prefix}:v" if prefix else "v"
+    attrs = [(k, v) for k, v in cell.attrs.items() if k != "t"]
+    if kind:
+        attrs.append(("t", kind))
+    head = f"<{name}" + "".join(f" {k}={quoteattr(v)}" for k, v in attrs) + ">"
+    inner = b""
+    for child in cell.children:
+        if child.is_(S, "v") or child.is_(S, "is"):
+            continue
+        if child.is_(S, "f"):
+            inner += child.raw(data) + f"<{v_name}>{escape(value)}</{v_name}>".encode("utf-8")
+        else:
+            inner += child.raw(data)
+    return head.encode("utf-8") + inner + f"</{name}>".encode("utf-8")
+
+
+def store_formula_values(blob: bytes, recalculated: bytes) -> Tuple[bytes, Dict[str, Any]]:
+    """blob の数式のセルの計算済みの値だけを、recalculated（LibreOffice で計算し直した写し）の値に替えたバイト列と要約。
+
+    数式（<f>）・書式・結合・ほかの部品は、元のバイトのまま残す。写しに同じ名前のシートがなければ FormError。
+    要約は {"替えたセル": 数, "エラーのセル": ["シート!セル（#DIV/0!）", …]}。
+    """
+    book = Book(blob)
+    calc = Book(recalculated)
+    by_name = {s.name: s for s in calc.sheets}
+    replacements: Dict[str, bytes] = {}
+    changed = 0
+    errors: List[str] = []
+    for sh in book.sheets:
+        if not sh.formulas:
+            continue
+        csh = by_name.get(sh.name)
+        if csh is None:
+            raise FormError(f"計算し直した写しに、シート「{sh.name}」がありません")
+        data = sh.grid.data
+        for ref in sorted(sh.formulas, key=lambda r: sh.grid.cells[r].start, reverse=True):
+            cell = sh.grid.cells[ref]
+            ccell = csh.grid.cells.get(ref)
+            kind, value = _calc_value(ccell, csh.grid.texts.get(ref, ""))
+            if kind == "e":
+                errors.append(f"{sh.name}!{ref}（{value}）")
+            if _same_value(cell.attrs.get("t"), sh.grid.texts.get(ref, ""), kind, value):
+                continue  # 値が同じなら、書き方（<v/> と <v></v>、改行の形など）の違いでも元のバイトのまま残す
+            new = _formula_cell_bytes(data, cell, kind, value)
+            if new != cell.raw(data):
+                data = xml_spans.splice(data, cell.start, cell.end, new)
+                changed += 1
+        if data != sh.grid.data:
+            replacements[sh.part] = data
+    new_blob = yoshiki_word.rebuild_zip(blob, replacements) if replacements else blob
+    return new_blob, {"替えたセル": changed, "エラーのセル": errors}
+
+
+def formula_cell_count(blob: bytes) -> int:
+    return sum(len(s.formulas) for s in Book(blob).sheets)
+
+
 # ---------------------------------------------------------------- 比べる
 
 
@@ -344,8 +453,8 @@ def compare_xlsx(before: bytes, after: bytes) -> List[str]:
                 out.append(f"シート「{sb.name}」のセル {ref} の書式が変わりました")
             if ca.find(S, "f") is not None:
                 out.append(f"シート「{sb.name}」のセル {ref} に数式が入りました")
-        units_b = input_sheet._units(sb.grid, masked)
-        units_a = input_sheet._units(sa.grid, masked)
+        units_b = _units(sb.grid, masked, sb.formulas)
+        units_a = _units(sa.grid, masked, sb.formulas)
         sm = difflib.SequenceMatcher(a=[u[1] for u in units_b], b=[u[1] for u in units_a], autojunk=False)
         for op, i1, i2, j1, j2 in sm.get_opcodes():
             if op == "equal":
@@ -359,3 +468,22 @@ def compare_xlsx(before: bytes, after: bytes) -> List[str]:
         if len(out) >= yoshiki_word.MAX_DIFFS:
             break
     return out[:yoshiki_word.MAX_DIFFS]
+
+
+def _units(grid: Grid, masked: Sequence[str], formulas: Set[str]) -> List[Tuple[str, bytes]]:
+    """比べる単位（input_sheet._units と同じ）。数式のセルは、計算済みの値（<v>）と種類（t）を除いた形で比べる。"""
+    out: List[Tuple[str, bytes]] = []
+    for label, raw in input_sheet._units(grid, masked):
+        out.append((label, raw))
+    if not formulas:
+        return out
+    data = grid.data
+    normalized = {}
+    for ref in formulas:
+        cell = grid.cells.get(ref)
+        if cell is None:
+            continue
+        attrs = sorted((k, v) for k, v in cell.attrs.items() if k != "t")
+        inner = b"".join(c.raw(data) for c in cell.children if not (c.is_(S, "v") or c.is_(S, "is")))
+        normalized[f"セル {ref}"] = b"(formula)" + str(attrs).encode("utf-8") + inner
+    return [(label, normalized.get(label, raw)) for label, raw in out]

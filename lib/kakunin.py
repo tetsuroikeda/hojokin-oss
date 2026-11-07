@@ -284,6 +284,40 @@ def _item_ranges(root, seido: Optional[dict]) -> List[Tuple[str, List]]:
     return out
 
 
+def form_table_notes(blob: bytes, rel: str, seido: Optional[dict]) -> List[str]:
+    """見出しの後に書く様式の項目の中にある表（役割分担の表、スケジュールの表など）が、空か、記載例の青字が残ったもの。
+    表を文章や自作の図で代えたままにしないため（11/7 のリハーサルで、5. の役割分担とスケジュールの表が空のままだった）。
+    見出しの行（1行目）は数えない。完成を止めない注意にし、審査役が読む。"""
+    root = _word_root(blob, rel)
+    body = yw.body_of(root)
+
+    def shown(node) -> str:
+        return "".join(yw.text_of(p) for p in node.iter() if p.is_(yw.W, "p") and yw.blue_state(p) != "全部").strip()
+
+    def blue(node) -> bool:
+        return any(p.is_(yw.W, "p") and yw.blue_state(p) == "全部" for p in node.iter())
+
+    out = []
+    for form in _forms(seido):
+        for entry in form.get("項目") or []:
+            pos = entry.get("書き込む位置") if isinstance(entry, dict) else None
+            place = str(pos.get("場所") or "") if isinstance(pos, dict) and pos.get("範囲") == "見出しの後" else ""
+            cell = yw.node_at(body, place.rsplit(".p", 1)[0]) if ".p" in place else None
+            if cell is None or not cell.is_(yw.W, "tc"):
+                continue
+            for tbl in cell.findall(yw.W, "tbl"):
+                rows = tbl.findall(yw.W, "tr")
+                if len(rows) < 2:
+                    continue
+                head = "／".join(t for t in (shown(c) for c in rows[0].findall(yw.W, "tc")) if t)[:40]
+                label = f"{entry.get('名前')}（{head or '表'}）"
+                if any(blue(r) for r in rows[1:]):
+                    out.append(f"{label}：記載例の青字が残っています")
+                elif not any(shown(r) for r in rows[1:]):
+                    out.append(f"{label}：空です")
+    return out
+
+
 def word_findings(blob: bytes, rel: str, seido: Optional[dict]) -> List[Finding]:
     root = _word_root(blob, rel)
     items = _item_ranges(root, seido)
@@ -690,6 +724,10 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
                 cells.update(got_cells)
             if suffix in WORD_SUFFIXES:
                 findings += word_findings(_read_bytes(path, rel), rel, seido)
+                tables = form_table_notes(_read_bytes(path, rel), rel, seido)
+                if tables:
+                    notes.append("様式の表に書いていない項目があります（表を文章や図で代えず、表の欄として対応づけて書く）："
+                                 + "、".join(tables))
             elif suffix in EXCEL_SUFFIXES:
                 findings += sheet_findings(_read_bytes(path, rel), rel)
             elif suffix in TEXT_SUFFIXES:

@@ -197,3 +197,30 @@ def test_cell_in_model_follows_the_shown_digits() -> None:
     assert shogo.cell_in_model("205632000", values) and not shogo.cell_in_model("205632002", values)
     assert shogo.cell_in_model("5.82", values) and not shogo.cell_in_model("5.84", values)
     assert shogo.cell_in_model("4.1", shogo.model_number_values(pt.numbers()))  # 率の前提（4.1%）は百分率でも当たる
+
+
+@pytest.mark.parametrize("text, value", [
+    ("-169,440円", -169440.0), ("−1,219,218円", -1219218.0), ("▲3,000円", -3000.0), ("△0.5%", -0.5),
+    ("67,364円", 67364.0), ("営業利益は2年目に黒字", 2.0),
+])
+def test_shown_number_reads_negative_marks(text, value) -> None:
+    """数の前の負の印（-・−・▲・△）を負の数として読む（11/6 のリハーサルで、営業利益の赤字の額を
+    財務モデルと食い違うと誤って数えた）。"""
+    from lib import shogo
+
+    assert shogo.shown_number(text)[0] == value
+
+
+def test_model_value_reads_beppyo4_rows() -> None:
+    """数字の控えの「別紙4」（様式に写す、円に丸めた値）を、出典「財務モデル 別紙4 売上原価 1年目」の形で読み、
+    セルの照合の数にも入れる（財務モデルの補助役の指摘。前は別紙4 の売上原価を「財務モデルとの食い違い」と数えるおそれがあった）。"""
+    from lib import shogo
+
+    numbers = {"中身": {"別紙4": {"年ごと": {"売上原価": [151333440.0, 160413128.0],
+                                              "1人当たり給与支給総額の伸び": [None, 4.0],
+                                              "常勤従業員数": [15.0, 15.0]}}}}
+    assert shogo.model_value(numbers, "別紙4 売上原価 1年目") == (160413128.0, "円")
+    assert shogo.model_value(numbers, "別紙4 1人当たり給与支給総額の伸び 1年目") == (4.0, "%")
+    assert shogo.model_value(numbers, "別紙4 常勤従業員数 基準年度") == (15.0, "")
+    assert shogo.model_value(numbers, "別紙4 1人当たり給与支給総額の伸び 基準年度") is None
+    assert 151333440.0 in shogo.model_number_values(numbers)

@@ -55,6 +55,7 @@ ORIGINAL = protected_store.ORIGINAL
 OFFICIAL = protected_store.OFFICIAL
 TEXT_DIR = "資料の本文"  # lib/official_docs.py の TEXT_DIR と同じ
 LIST_FILE = "資料の一覧.json"  # lib/official_docs.py の LIST_FILE と同じ
+OLDER_KEY = "前の回の資料"  # lib/official_docs.py の OLDER_KEY と同じ
 CACHE_FILE = "原本の照らし.json"
 READ_ONLY = seiri.READ_ONLY
 # 1回の照らしで、中身を読むのに使う秒数（hook の見張りと、版の記録の時間を残す。仮）
@@ -163,6 +164,11 @@ def _from_list(folder: Path, list_file: Path, problems: List[str]) -> List[Targe
         return []
     places = data.get("置き場所") if isinstance(data.get("置き場所"), dict) else {}
     docs = data.get("資料") if isinstance(data.get("資料"), list) else []
+    # 新しい回の資料を取ると、同じ名前の前の回の資料は「前の回の資料」に移る（lib/official_docs.py の OLDER_KEY）。
+    # ファイルと置き場所は残るので、前の回の資料も照らし続ける。読まないと、取り直した後の応答の終わりに毎回
+    # 「前に照らした公式資料がありません」と止めてしまう（11/6 のリハーサルで、第9回に取り直した後に起きた）。
+    older = data.get(OLDER_KEY) if isinstance(data.get(OLDER_KEY), list) else []
+    docs = list(docs) + list(older)
     found: List[Target] = []
     outside: List[str] = []
     for doc in docs:

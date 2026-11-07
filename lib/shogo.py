@@ -187,6 +187,14 @@ def model_value(numbers: Dict[str, Any], ref: str) -> Optional[Tuple[float, str]
             series = people.get(key)
         elif group == "指標":
             series = indicators.get(key)
+        elif group == "別紙4":
+            # 様式（別紙4）に写す、円に丸めた値（lib/zaimu.py の「様式（別紙4）に写す数字」。11/6 のリハーサルの後）
+            series = ((body.get("別紙4") or {}).get("年ごと") or {}).get(key)
+            people_like = key.endswith("数")
+            v = pick(series)
+            if v is None:
+                return None
+            return v, ("" if people_like else ("%" if key.endswith("の伸び") else "円"))
         elif group in by_business:
             series = by_business[group].get(key)
         v = pick(series)
@@ -281,7 +289,7 @@ def model_number_values(numbers: Dict[str, Any]) -> List[float]:
             if a.get("単位") == "%":
                 out.append(float(a["値"]) * 100)
     body = numbers.get("中身") or {}
-    for key in ("合算", "事業ごと", "指標", "人数", "省力化", "まとめ", "計画の年数"):
+    for key in ("合算", "事業ごと", "指標", "人数", "省力化", "まとめ", "計画の年数", "別紙4"):
         _flat_numbers(body.get(key), out)
     _flat_numbers(numbers.get("省力化の作業"), out)
     return out

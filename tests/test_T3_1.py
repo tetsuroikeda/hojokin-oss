@@ -402,6 +402,16 @@ def test_partly_published_round(tmp_path, site) -> None:
     assert [e["id"] for e in again["資料"]] == ids
     assert [e["id"] for e in again["前の回の資料"]] == ["要領8", "スケジュール"]
 
+    # 前の回の資料も、原本と公式資料の照らしが照らし続ける。取り直した後の応答の終わりに「前に照らした公式資料が
+    # ありません」と止めない（11/6 のリハーサル。lib/originals_guard.py が「前の回の資料」を読んでいなかった）
+    from lib import originals_guard
+
+    report = originals_guard.check(company.folder)
+    assert not [p for p in report.problems + report.problems_known if "前に照らした公式資料がありません" in p], report
+    assert not report.failed and not report.restored
+    watched = {t.path for t in originals_guard.targets(company.folder)}
+    assert any(p.endswith("公募要領_第8回.pdf") for p in watched) and any(p.endswith("公募要領_第9回.pdf") for p in watched)
+
 
 def test_same_round_and_printed_page_offsets(tmp_path, site) -> None:
     """持続化 第20回は、回が同じなので「第20回の資料ではなく」とは示さない。第19回版の資料は、資料を並べて示す。

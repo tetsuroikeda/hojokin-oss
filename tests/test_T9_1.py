@@ -90,6 +90,31 @@ def test_facts_learned_after_the_model_are_noted_but_do_not_stop(env: kt.Env) ->
     assert code == 0 and len(notes) == 1 and f"増産の見込み（{fact['id']}）" in notes[0], json.dumps(report["注意"], ensure_ascii=False)
 
 
+def test_empty_form_tables_are_noted_and_can_be_filled_as_fields(env: kt.Env) -> None:
+    """様式の項目の中の表（5. の役割分担、スケジュール）が空か記載例のままなら注意に挙げる。表のセルは、
+    同じ列の1行目の見出しで欄として対応づけて書ける（11/7 のリハーサルで、表が空のまま文章で代えていた。B37）。"""
+    from lib import kakunin
+    from lib import yoshiki_word as yw
+
+    form = pt.form_or_skip()
+    pt.place(env, form)
+    code, report = env.count()
+    notes = [n for n in report["注意"] if "様式の表に書いていない項目" in n]
+    assert code == 0 and len(notes) == 1, report["注意"]
+    seido = pt.seido_with_positions()
+    found = kakunin.form_table_notes(form, "その1・2.docx", seido)
+    assert any("事業の実施体制とスケジュール（役職／氏名" in n and n.endswith("空です") for n in found), found
+
+    # 列の見出し（同じ列の1行目）で、表のセルを欄として対応づけられる。違う列の見出しは断る
+    from lib import xml_spans
+
+    root = xml_spans.parse(yw.read_parts(form)[1][yw.DOC])
+    ok = yw.check_position(root, {"見出し": "氏名", "場所": "t4.r10.c0.t0.r1.c1", "範囲": "セル"}, "1行目（氏名）")
+    assert ok["場所"] == "t4.r10.c0.t0.r1.c1"
+    with pytest.raises(ValueError):
+        yw.check_position(root, {"見出し": "氏名", "場所": "t4.r10.c0.t0.r1.c2", "範囲": "セル"}, "1行目（担当内容）")
+
+
 def test_mixed_plan_passes_the_code_check(env: kt.Env) -> None:
     """聞き取りと食い違う記述は、表の出典が正しい計画書と同じなので、コードでは見つからない（審査役が見る。T9-2）。"""
     pt.place(env, pt.form_or_skip(), variant=pt.MIXED)
