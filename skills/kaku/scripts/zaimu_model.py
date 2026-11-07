@@ -27,13 +27,21 @@ kaku が、聞き取りと書類から前提を集めた後に動かす。数字
    入力シートの数字と財務モデルを照らすとき（kakunin.py）は、この控えを読む（財務モデル.xlsx は数式だけで、
    計算済みの値を持たないため）。
 
-  python3 -B <この場所>/zaimu_model.py kijun --input 記録/一時/決算の内訳.json [--into 記録/財務モデルの指定.json] [--json]
+  python3 -B <この場所>/zaimu_model.py kijun --input 記録/一時/決算の内訳.json [--into 記録/財務モデルの指定.json]
+                                             [--as 基準年度|直近期] [--json]
       決算書の科目ごとの金額を、財務モデルの基準年度の区分（売上・原材料費・給与支給総額・その他の人件費・
       減価償却費・その他の経費）に足し上げる（Claude は足し算をしない。波3 の気づき #7）。組み立てた営業利益が
       決算書の営業利益と1円でも違えば、区分の割り当てか科目の抜けを疑い、何も書かずに断る。
       --into を付けると、その指定の「基準年度」を、足し上げた値と出典で置き換える（ほかの所は変えない）。
-      入力：{"決算書": "決算書 第18期", "行": [{"科目": "材料費", "区分": "原材料費", "金額": 82600000, "出典": "p.3"}],
-             "営業利益": {"金額": 4800000, "出典": "p.2"}, "人数": {"役員数": {"値": 2, "根拠": "…", "出典": "…"}, …}}
+      --as 直近期 なら「基準年度」ではなく「直近期の実績」を置き換える（決算が出ているのが直近期だけで、基準年度は
+      補助事業の完了日を含む先の期のとき。基準年度は、直近期の実績からの式で指定に書く）。
+      行に「損益の区分」（売上原価 か 販管費）を付けると、区分ごとの売上原価の割合を出し、--into の指定の
+      「売上原価の割合」に書く（様式の別紙4 の売上原価・販売費及び一般管理費に使う）。決算書の売上原価と販管費の
+      合計（"売上原価"・"販売費及び一般管理費"）を渡すと、行の合計と1円でも違えば断る。
+      入力：{"決算書": "決算書 第18期", "行": [{"科目": "材料費", "区分": "原材料費", "金額": 82600000, "出典": "p.3",
+             "損益の区分": "売上原価"}], "営業利益": {"金額": 4800000, "出典": "p.2"},
+             "売上原価": {"金額": 148200000, "出典": "p.3"}, "販売費及び一般管理費": {"金額": 48600000, "出典": "p.3"},
+             "人数": {"役員数": {"値": 2, "根拠": "…", "出典": "…"}, …}}
 
 - 作業の途中のファイルは `.hojokin/一時/財務モデル/` の下に作り、終わったら消す（版の履歴に入れない）。
 - 会社のフォルダの外は読まない・書かない。場所の確かめは lib/places.py で行う（別名をたどった先が外なら断る。
@@ -63,6 +71,8 @@ SEIDO_DIR = "記録/制度データ"
 WORK_DIR = f"{company.MARKER_DIR}/{company.TEMP_DIR}/財務モデル"
 NUMBERS_FILE = "記録/財務モデルの数字.json"
 OK, BROKEN, REFUSED, MISMATCH = 0, 1, 2, 3
+KIJUN_BLOCKS = ("基準年度", "直近期")  # kijun --as：置き換える所（直近期は、指定の「直近期の実績」）
+SIDES = {"売上原価": "売上原価", "販管費": "販売費及び一般管理費", "販売費及び一般管理費": "販売費及び一般管理費"}
 
 
 class Refused(Exception):
@@ -88,6 +98,8 @@ def parse(argv):
     kijun.add_argument("--folder", help="会社のフォルダ（${CLAUDE_PROJECT_DIR}）。なければ今いるフォルダ")
     kijun.add_argument("--input", required=True, help="決算の内訳（会社のフォルダの中の JSON）")
     kijun.add_argument("--into", help="基準年度を置き換える財務モデルの指定（会社のフォルダの中の JSON）")
+    kijun.add_argument("--as", dest="as_block", choices=KIJUN_BLOCKS, default=KIJUN_BLOCKS[0],
+                       help="置き換える所（基準年度か、直近期の実績か）")
     kijun.add_argument("--json", action="store_true", help="JSON で出す")
     compare = sub.add_parser("compare", help="実績を財務モデルに入れて、計画と比べる（採択後の実績報告・効果報告）")
     compare.add_argument("--folder", help="会社のフォルダ（${CLAUDE_PROJECT_DIR}）。なければ今いるフォルダ")
@@ -173,6 +185,67 @@ def fmt_growth(value) -> str:
     return str(value)
 
 
+def yen_list(values, digits: int = 0) -> str:
+    return "、".join("—" if v is None else (f"{v:,.{digits}f}" if isinstance(v, (int, float)) else str(v)) for v in values)
+
+
+def low_case_lines(low: dict) -> list:
+    """数量が2割少ない場合の読み方（今の数量まで減らしていないか、変わる行、動かない原材料費、最後の年の差）。"""
+    lines = []
+    if low.get("参考の判定（今の数量まで減らした場合）"):
+        lines.append(f"  参考：今の数量まで減らした場合の判定は「{low['参考の判定（今の数量まで減らした場合）']}」（上の伸びはこの場合のもの）")
+    last = low.get("最後の年")
+    if last:
+        moved = "、".join(f"{m['事業']}の{m['行']}" for m in low.get("数量を減らすと変わる行") or []) or "なし"
+        lines.append(f"  {last['年']}年目：売上 {last['売上'][0]:,.0f}円 → {last['売上'][1]:,.0f}円、付加価値額 "
+                     f"{last['付加価値額'][0]:,.0f}円 → {last['付加価値額'][1]:,.0f}円（数量を減らすと変わる行：{moved}）")
+    lines += [f"  知らせ：{note}" for note in low.get("知らせ") or []]
+    return lines
+
+
+def timeline_lines(tl) -> list:
+    if not tl:
+        return []
+    deadline = (f"{tl['応募の締切']}（{tl['応募の締切の出典']}）" if tl["応募の締切の出典"] else tl["応募の締切"]) if tl["応募の締切"] \
+        else "分からない"
+    lines = ["", "年度（様式の別紙4 の決算期。基準年度は補助事業の完了日を含む期、1年目はその翌年度）",
+             f"- 直近期：{tl['直近期']}" + (f"（様式の直近期は {tl['様式の直近期']}）" if tl["様式の直近期"] != tl["直近期"] else "")
+             + f"／締切期：{tl['締切期']}（応募の締切 {deadline} を含む期）",
+             f"- 基準年度：{tl['基準年度']}（補助事業の完了予定 {tl['補助事業の完了予定']} を含む期）／経過年数 {tl['経過年数']}年"
+             f"／計画：{tl['計画の年'][0]}〜{tl['計画の年'][-1]}"]
+    lines += [f"  知らせ：{note}" for note in tl.get("知らせ") or []]
+    return lines
+
+
+BEPPYO_SHOWN = ("売上高", "売上原価", "販売費及び一般管理費", "営業利益", "人件費", "既存設備の減価償却費",
+                "本補助金で導入する設備の減価償却費", "付加価値額", "役員数", "常勤従業員数", "労働生産性の伸び", "給与支給総額",
+                "給与を受けた従業員数", "1人当たり給与支給総額の伸び")
+
+
+def beppyo_lines(b) -> list:
+    """様式（別紙4）に写す数字（円に丸めた値）。"""
+    if not b:
+        return []
+    rows = b["年ごと"]
+    lines = ["", "様式（別紙4）に写す数字（円に丸めた値。列は " + "、".join(b["列"]) + "）"]
+    for key in BEPPYO_SHOWN:
+        if key in rows:
+            lines.append(f"- {key}：{yen_list(rows[key]) if '伸び' not in key else '、'.join(fmt_growth(v) if v is not None else '—' for v in rows[key])}")
+    check = b.get("照らし")
+    if check:
+        lines.append(f"- 照らし：売上原価＋販売費及び一般管理費（丸める前）と 売上−営業利益 の差は、年ごとの最大で {check['差の最大']:.6f}円"
+                     f" → {'合う' if check['合う'] else '合わない（道具の不具合なので、作者に知らせる）'}")
+    a = b.get("足下の賃上げ")
+    if a:
+        lines.append(f"- 足下の賃上げ（{'、'.join(a['列'])}）：⑦ {yen_list(a['給与支給総額'])}／⑧ {yen_list(a['給与を受けた従業員数'])}"
+                     f"／1人当たり {yen_list(a['1人当たり給与支給総額'], 2)} → 年平均成長率 {fmt_growth(a['伸び'])}（経過年数 {a['経過年数']}年。"
+                     "要件ではなく審査で見る値。比べる目安は公募要領の審査項目で確かめる）")
+    if not b.get("様式の値と財務モデルの伸びの違い"):
+        lines.append("- 円に丸めた値から様式と同じ計算をしても、伸びは財務モデル（判定に使った値）と同じです")
+    lines += [f"  知らせ：{note}" for note in b.get("知らせ") or []]
+    return lines
+
+
 def report_text(result: dict) -> str:
     lines = []
     s = result["中身"]
@@ -236,6 +309,8 @@ def report_text(result: dict) -> str:
             lines.append(f"- 計算できませんでした：{low['理由']}")
         if low["判定"] == "満たさない":
             lines.append("  数量が2割少ないと要件を満たせません。要件を満たせないと返還につながるので、社長に伝えてください。")
+        lines += low_case_lines(low)
+    lines += timeline_lines(s.get("年度")) + beppyo_lines(s.get("別紙4"))
     sh = s.get("省力化")
     if sh is not None:
         shown = sh["表示"]
@@ -283,6 +358,10 @@ def report_text(result: dict) -> str:
         lines.append("仮の前提（後で確かめる）：" + "、".join(s["仮の前提"]))
     if s.get("仮の基準年度の値"):
         lines.append("仮の基準年度の値（後で確かめる）：" + "、".join(s["仮の基準年度の値"]))
+    if s.get("根拠か出典のない、そのほかの値"):
+        lines.append("根拠か出典のない値（直近期の実績・売上原価の割合など。出典を付ける）：" + "、".join(s["根拠か出典のない、そのほかの値"]))
+    if s.get("仮の、そのほかの値"):
+        lines.append("仮の値（直近期の実績・売上原価の割合など。後で確かめる）：" + "、".join(s["仮の、そのほかの値"]))
     if result.get("数字の控え"):
         lines.append("")
         lines.append(f"数字の控えを {result['数字の控え']} に書きました（計画書と財務モデルの照合に使う）。")
@@ -360,7 +439,63 @@ def kijun_block(data, zaimu) -> dict:
         if key in people:
             block[key] = people[key]
     return {"基準年度": block, "営業利益": {"足し上げ": built, "決算書": expected},
-            "人数のない項目": [k for k in zaimu.PEOPLE_KEYS if k not in people]}
+            "人数のない項目": [k for k in zaimu.PEOPLE_KEYS if k not in people],
+            "売上原価の割合": cost_share_block(data, rows, totals, head, zaimu)}
+
+
+def cost_share_block(data: dict, rows: list, totals: dict, head: str, zaimu) -> "dict | None":
+    """行の「損益の区分」（売上原価か販管費）から、区分ごとの売上原価の割合（様式の別紙4 の売上原価・販管費に使う）。
+
+    どの行にも付いていなければ None（今までどおり）。一部の行だけなら断る。決算書の売上原価・販管費の合計を渡されたら、
+    行の合計と照らす。割合は、その区分の売上原価の科目の和 ÷ その区分の和（区分の和が0なら書かない）。"""
+    cost_rows = [r for r in rows if r.get("区分") != "売上"]
+    marked = [r for r in cost_rows if r.get("損益の区分") is not None]
+    if not marked:
+        return None
+    unmarked = [r["科目"] for r in cost_rows if r.get("損益の区分") is None]
+    if unmarked:
+        raise Refused("損益の区分（売上原価か販管費）が付いていない行があります：" + "、".join(unmarked)
+                      + "。付けるときは、売上のほかのすべての行に付けてください")
+    sums = {"売上原価": 0.0, "販売費及び一般管理費": 0.0}
+    cost_by_kind = {key: 0.0 for key in zaimu.COST_KEYS}
+    parts = {key: [] for key in zaimu.COST_KEYS}
+    for r in cost_rows:
+        side = SIDES.get(r["損益の区分"]) if isinstance(r["損益の区分"], str) else None
+        if side is None:
+            raise Refused(f"{r['科目']}の損益の区分「{r['損益の区分']}」は使えません（売上原価 か 販管費）")
+        sums[side] += float(r["金額"])
+        if side == "売上原価":
+            cost_by_kind[r["区分"]] += float(r["金額"])
+            parts[r["区分"]].append(f"{r['科目'].strip()} {float(r['金額']):,.0f}円")
+    for side, total in sums.items():
+        given = data.get(side) if side in data else (data.get("販管費") if side == "販売費及び一般管理費" else None)
+        if given is None:
+            continue
+        if not isinstance(given, dict) or isinstance(given.get("金額"), bool) or not isinstance(given.get("金額"), (int, float)):
+            raise Refused(f"決算の内訳の「{side}」は {{\"金額\": …, \"出典\": …}} の形にしてください")
+        if abs(total - float(given["金額"])) >= 1:
+            raise Refused(f"損益の区分が{side}の行の合計 {total:,.0f}円が、決算書の{side} {float(given['金額']):,.0f}円と合いません"
+                          f"（差 {total - float(given['金額']):+,.0f}円）。行の損益の区分を確かめてください")
+    out = {}
+    for key in zaimu.COST_KEYS:
+        if totals[key] == 0:
+            continue
+        share = cost_by_kind[key] / totals[key]
+        value = int(share) if share in (0.0, 1.0) else share
+        listed = "＋".join(parts[key]) if parts[key] else "なし"
+        out[key] = {"値": value, "根拠": "決算書",
+                    "出典": (head + "：" if head else "") + f"売上原価の科目（{listed}）÷ {key}の計 {totals[key]:,.0f}円"}
+    return {"割合": out, "売上原価": sums["売上原価"], "販売費及び一般管理費": sums["販売費及び一般管理費"]}
+
+
+def cost_share_lines(shares) -> list:
+    if shares is None:
+        return []
+    lines = [f"損益の区分：売上原価の科目の計 {shares['売上原価']:,.0f}円、販売費及び一般管理費の科目の計 "
+             f"{shares['販売費及び一般管理費']:,.0f}円。区分ごとの売上原価の割合（残りは販管費）："]
+    for key, item in shares["割合"].items():
+        lines.append(f"- {key}：{item['値'] * 100:.2f}%（{item['出典']}）")
+    return lines
 
 
 def run_kijun(folder: Path, args) -> int:
@@ -372,11 +507,14 @@ def run_kijun(folder: Path, args) -> int:
             spec_data, spec_real = read_json_inside(folder, args.into, "財務モデルの指定")
             if not isinstance(spec_data, dict):
                 raise Refused("財務モデルの指定の形が違います")
-            old_base = spec_data.get("基準年度") if isinstance(spec_data.get("基準年度"), dict) else {}
-            spec_data["基準年度"] = dict(result["基準年度"])
+            block = "基準年度" if args.as_block == "基準年度" else zaimu.RECENT_KEY
+            old_base = spec_data.get(block) if isinstance(spec_data.get(block), dict) else {}
+            spec_data[block] = dict(result["基準年度"])
             for key in zaimu.PEOPLE_KEYS:  # 人数を渡さなかったときは、指定にある人数を残す
-                if key not in spec_data["基準年度"] and key in old_base:
-                    spec_data["基準年度"][key] = old_base[key]
+                if key not in spec_data[block] and key in old_base:
+                    spec_data[block][key] = old_base[key]
+            if result["売上原価の割合"] is not None:
+                spec_data[zaimu.COST_SHARE_KEY] = result["売上原価の割合"]["割合"]
             rel = places.relative_inside(folder, spec_real)
             places.no_link_on_the_way(folder, rel)
             tmp = spec_real.with_name(spec_real.name + ".tmp")
@@ -392,7 +530,7 @@ def run_kijun(folder: Path, args) -> int:
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return OK
-    lines = ["決算書の科目を、基準年度の区分に足し上げました（足し上げた営業利益 "
+    lines = [f"決算書の科目を、{'基準年度' if args.as_block == '基準年度' else zaimu.RECENT_KEY}の区分に足し上げました（足し上げた営業利益 "
              f"{result['営業利益']['足し上げ']:,.0f}円 が決算書と一致）。"]
     for key in zaimu.ROW_KEYS:
         item = result["基準年度"][key]
@@ -403,8 +541,14 @@ def run_kijun(folder: Path, args) -> int:
             lines.append(f"- {key}：{v.get('値') if isinstance(v, dict) else v}人")
     if result["人数のない項目"]:
         lines.append("人数を渡していない項目（指定に書く）：" + "、".join(result["人数のない項目"]))
+    lines += cost_share_lines(result["売上原価の割合"])
     if result.get("書いた指定"):
-        lines.append(f"{result['書いた指定']} の基準年度を置き換えました。")
+        block = "基準年度" if args.as_block == "基準年度" else zaimu.RECENT_KEY
+        lines.append(f"{result['書いた指定']} の{block}を置き換えました"
+                     + ("（売上原価の割合も書きました）。" if result["売上原価の割合"] is not None else "。"))
+        if args.as_block == "直近期":
+            lines.append(f"基準年度は、{zaimu.RECENT_KEY}からの式（例：{{\"式\": \"直近_給与支給総額*(1+賃上げ率)^経過年数\", "
+                         "\"根拠\": …, \"出典\": …}）で指定に書き、「年度」（直近期・補助事業の完了予定）を足してから build してください。")
     else:
         lines.append("指定に入れるときは --into 記録/財務モデルの指定.json を付けて動かし直してください（写し書きしない）。")
     print("\n".join(lines))
@@ -444,7 +588,7 @@ def main(argv) -> int:
             raw_spec, _ = read_json_inside(folder, args.spec, "財務モデルの指定")
         seido, seido_path = find_seido(folder, args.seido)
         requirements = youken.read_requirements(seido) if seido is not None else []
-        spec = zaimu.parse_spec(raw_spec)
+        spec = zaimu.parse_spec(zaimu.with_seido_deadline(raw_spec, seido))  # 年度の応募の締切がなければ制度データから
         book = zaimu.build(spec, requirements)
         try:
             places.no_link_on_the_way(folder, zaimu.MODEL_FILE)

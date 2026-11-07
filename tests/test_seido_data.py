@@ -333,6 +333,48 @@ def test_merge_makes_full_data_that_passes_schema(company) -> None:
     assert not list(company.env.plugin.rglob("__pycache__")) and not list(company.folder.rglob("__pycache__"))
 
 
+def test_second_reading_with_other_names_is_matched(company) -> None:
+    """2回目が件名を言い換えても、同じ件として突き合わせ、近さで組にした件を結果に出す（11/6 のリハーサル）。
+    2回目に本当にない件（読んだページにある件）は、要確認のまま。"""
+    read_all(company)
+    second = chapter_b()
+    second["読み取り"]["回目"] = 2
+    part = second["制度データ"]
+    part["決まった期日"][0]["名前"] = "締切"
+    part["書類"][0]["名前"] = "決算書（直近2期分）"
+    part["補助の対象にならない経費"][0]["名前"] = "中古の機械"
+    del part["書類"][1]  # 登記簿の写し（2回目が読んだ p.2 にある）を落とした
+    company.read(second)
+    out = check_code(company.tool("--merge"), 0)
+    data = company.data()
+    assert data["決まった期日"][0]["日時"]["状態"] == "確認済み"
+    assert data["書類"][0]["内容"]["状態"] == "確認済み"
+    assert data["補助の対象にならない経費"][0]["内容"]["状態"] == "確認済み"
+    assert data["書類"][1]["内容"]["状態"] == "要確認"
+    assert out.count("2回目の読み取りに、この件がありません") == 1
+    assert "| 書類「登記簿の写し」の内容 | 2回目の読み取りに、この件がありません |" in out
+    assert "件名が1回目と違い、件名と中身の近さで同じ件として比べた件：3" in out
+    assert "| 2 対象にならない経費と書類 | 決まった期日 | 申請の締切 | 締切 | 件名 " in out
+    assert "| 2 対象にならない経費と書類 | 書類 | 決算書 | 決算書（直近2期分） | 件名 " in out
+    assert "2回目の読み取りにだけある件" not in out
+
+
+def test_second_reading_that_did_not_read_the_page_is_not_compared(company) -> None:
+    """2回目の読んだページに出典のページがない件は、比べずに「比べていない件」に並べる（要確認にしない。11/6 のリハーサル）。"""
+    read_all(company)
+    second = chapter_b()
+    second["読み取り"]["回目"] = 2
+    second["読み取り"]["読んだページ"] = [{"資料": DOC, "ページ": 1}]   # 書類のある p.2 を読んでいない
+    second["制度データ"] = {"書類": [], "決まった期日": second["制度データ"]["決まった期日"]}
+    company.read(second)
+    out = check_code(company.tool("--merge"), 0)
+    data = company.data()
+    assert [d["内容"]["状態"] for d in data["書類"]] == ["確認済み", "確認済み"]
+    assert "2回目の読み取りに、この件がありません" not in out
+    assert "2回目の読み取りが出典のページを読んでいないので、比べていない件：2" in out
+    assert "2 対象にならない経費と書類：書類「決算書」（出典 要領T p.2）" in out
+
+
 def test_merge_is_repeatable_and_keeps_downgraded_values(company) -> None:
     a = chapter_a()
     a["制度データ"]["補助額"][1]["上限"]["値"] = 1000  # 単位をかけていない（根拠の文は「1,000 万円」）
