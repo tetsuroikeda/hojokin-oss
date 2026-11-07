@@ -329,6 +329,91 @@ def test_layout_copy_changes_only_fixed_line_heights_and_floating_tables(twm_for
     assert normalized == doc_a
 
 
+# ---------------------------------------------------------------- 箇条書き・本文の表・揃え・説明の青字・空の欄（11/7 の作者の指摘）
+
+BULLET_TEXT = (
+    "見積に時間がかかる理由は、次の3つです。\n"
+    "・図面を読んで形と寸法を拾うのに、1件約20分かかる\n"
+    "・材料と外注の値段を調べるのに、1件約15分かかる\n"
+    "【表：導入の前と後】\n"
+    "|作業|導入の前|導入の後|\n"
+    "|---|---|---|\n"
+    "|見積1件|75分|15分|\n"
+    "|工程の組み直し|90分|20分|\n"
+    "表のとおり、見積の時間が大きく減ります。"
+)
+
+
+def test_bullets_tables_and_outside_blue_text(env: twm.Env, twm_form: bytes) -> None:
+    twm.ok(env.run("map", "--input", put(env, "記録/一時/様式の対応.json", mapping())))
+    twm.ok(env.run("write", "--item", "1-2 経営課題", "--input", put(env, "記録/一時/書く文.txt", BULLET_TEXT)))
+    blob = (env.folder / twm.APP).read_bytes()
+    parts = yw.read_parts(blob)[1]
+    # 箇条書きは Word の箇条書き（行頭文字「・」の定義を numbering.xml に足し、段落は番号で指す）
+    assert f'w:abstractNumId="{yw.BULLET_NUM_ID}"'.encode() in parts[yw.NUMBERING]
+    data, root = twm.doc_root(blob)
+    pos = [it["書き込む位置"] for it in plan_items() if it["名前"] == "1-2 経営課題"][0]
+    rng = yw.resolve(root, pos)
+    numbered = [p for p in yw.range_paragraphs(rng) if any(n.is_(yw.W, "numId") and n.attr(yw.W, "val") == yw.BULLET_NUM_ID
+                                                          for n in p.iter())]
+    assert [yw.text_of(p) for p in numbered] == ["図面を読んで形と寸法を拾うのに、1件約20分かかる",
+                                                 "材料と外注の値段を調べるのに、1件約15分かかる"]
+    # 「|」の行は、範囲の中の表になる（区切りの行は表にしない）。表の後の文も範囲に入る
+    tables = [n for n in rng.nodes if n.is_(yw.W, "tbl")]
+    assert len(tables) == 1 and len(tables[0].findall(yw.W, "tr")) == 3
+    text = yw.item_text(blob, pos)
+    assert "導入の前と後" in text and "見積1件" in text and "15分" in text and text.endswith("見積の時間が大きく減ります。")
+    # 範囲の外の説明の青字（題の「記載例」など）も消え、青字でない所は変わらない
+    assert "記載例" not in "".join(yw.text_of(p) for p in yw._paragraphs(root))
+    form = [f for f in env.seido()["様式"] if f["名前"] == FORM_NAME][0]
+    assert yw.compare_docx(twm_form, blob, yw.item_positions(form)) == []
+    # 書き直すと、前の表と箇条書きは置き換わる（表は1つのまま）
+    twm.ok(env.run("write", "--item", "1-2 経営課題", "--input", put(env, "記録/一時/書く文.txt", BULLET_TEXT)))
+    blob2 = (env.folder / twm.APP).read_bytes()
+    _d2, root2 = twm.doc_root(blob2)
+    assert len([n for n in yw.resolve(root2, pos).nodes if n.is_(yw.W, "tbl")]) == 1
+    assert yw.compare_docx(blob, blob2, yw.item_positions(form)) == []
+
+
+def test_long_lines_in_a_centered_cell_are_justified() -> None:
+    """中央揃えの欄（SWOT の表など）に書いた長い行は両端揃えにし、短い見出しは中央のまま。箇条書きは左揃え。"""
+    from lib import xml_spans
+
+    data = (f'<w:document xmlns:w="{yw.W}"><w:body><w:tbl><w:tr><w:tc><w:p><w:pPr><w:spacing w:line="260" '
+            'w:lineRule="exact"/><w:jc w:val="center"/></w:pPr></w:p></w:tc></w:tr></w:tbl></w:body></w:document>').encode()
+    root = xml_spans.parse(data)
+    tc = next(n for n in root.iter() if n.is_(yw.W, "tc"))
+    rng = yw.Range(tc, 0, len(tc.children), "強み")
+    out = yw.new_paragraphs(data, rng, "＜強み＞\n" + "難しい形の部品を1個から短い納期で作れる。" * 2 + "\n・短い箇条", bullets=True)
+    paras = [p for p in xml_spans.parse(f'<x xmlns:w="{yw.W}">'.encode() + out + b"</x>").iter() if p.is_(yw.W, "p")]
+    jcs = [next((n.attr(yw.W, "val") for n in p.iter() if n.is_(yw.W, "jc")), "") for p in paras]
+    assert jcs == ["center", "both", "left"]
+    assert b'lineRule="exact"' not in out  # 書いた段落は、行の高さを固定しない
+    assert yw.BULLET_NUM_ID.encode() in out
+
+
+def test_empty_form_boxes_are_blank_and_map_can_add_an_item(env: twm.Env) -> None:
+    """どの項目にも対応づけていない空の欄（事業者情報・事業計画名・概要）は空欄に数える。
+    制度データにない様式の欄は、"足す": true で項目として足せる。"""
+    plan = [{"項目": it["名前"], "書き込む位置": it["書き込む位置"]} for it in plan_items()
+            if not it["名前"].startswith(("（2）", "（3）"))]
+    twm.ok(env.run("map", "--input", put(env, "記録/一時/様式の対応.json", {"様式": FORM_NAME, "対応": plan})))
+    twm.ok(env.run("write", "--item", "6. 補足事項", "--input", put(env, "記録/一時/書く文.txt", "試しの文。")))
+    blob = (env.folder / twm.APP).read_bytes()
+    boxes = kakunin.empty_form_boxes(blob, twm.APP, env.seido())
+    assert any(b.startswith("（２）事業計画名") for b in boxes) and any(b.startswith("（３）事業計画の概要") for b in boxes)
+    assert "商号又は名称" in boxes
+    new = {"様式": FORM_NAME, "対応": [{"項目": "事業計画名（様式の欄）", "足す": True,
+                                       "書き込む位置": cell("（２）事業計画名（３０字程度）", "t1.r0.c0")}]}
+    r = twm.refused(env.run("map", "--input", put(env, "記録/一時/様式の対応.json", dict(new, 対応=[dict(new["対応"][0], 足す=False)]))))
+    assert "項目「事業計画名（様式の欄）」がありません" in r
+    twm.ok(env.run("map", "--input", put(env, "記録/一時/様式の対応.json", new)))
+    twm.ok(env.run("write", "--item", "事業計画名（様式の欄）", "--input", put(env, "記録/一時/書く文.txt", "見積と工程の仕組みとAIで返事を速くする")))
+    blob = (env.folder / twm.APP).read_bytes()
+    boxes = kakunin.empty_form_boxes(blob, twm.APP, env.seido())
+    assert not any(b.startswith("（２）事業計画名") for b in boxes)
+
+
 # ---------------------------------------------------------------- PDF
 
 

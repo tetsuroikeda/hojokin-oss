@@ -283,7 +283,7 @@ def _item_ranges(root, seido: Optional[dict]) -> List[Tuple[str, List]]:
         if pos.get("範囲") == yw.TABLE:  # 表ごとの範囲（スケジュールの表）は、表の中の段落
             out.append((name, _TableParagraphs(rng.nodes[0])))
             continue
-        out.append((name, [n for n in rng.nodes if n.is_(yw.W, "p")]))
+        out.append((name, yw.range_paragraphs(rng)))  # 本文の中に作った表の段落も含める
     return out
 
 
@@ -334,6 +334,63 @@ def form_table_notes(blob: bytes, rel: str, seido: Optional[dict]) -> List[str]:
                     out.append(f"{label}：記載例の青字が残っています")
                 elif not any(shown(r) for r in rows[1:]):
                     out.append(f"{label}：空です")
+    return out
+
+
+def empty_form_boxes(blob: bytes, rel: str, seido: Optional[dict]) -> List[str]:
+    """様式の Word の入力の欄のうち、どの項目にも対応づけていない空の欄の名前（11/7 の作者の指摘：（１）事業者情報・
+    （２）事業計画名・（３）事業計画の概要が、申請画面に入れる欄として制度データの様式の項目になく、空のまま出た）。
+
+    入力の欄とみなすのは、本文のすぐ下の表の、ラベルのセルの右の空のセルと、見出しの下の1つだけのセルの枠。
+    説明の青字だけのセルは空とみなす。対応づけた項目が1つもない Word（様式でない文書）は見ない。
+    """
+    root = _word_root(blob, rel)
+    body = yw.body_of(root)
+    covered = set()
+    for name, pos in _mapped_items(seido):
+        try:
+            rng = yw.resolve(root, pos, name)
+        except ValueError:
+            continue
+        covered.add(id(rng.nodes[0] if pos.get("範囲") == yw.TABLE else rng.container))
+    if not covered:
+        return []
+
+    def shown(node) -> str:
+        return "".join(yw.text_of(p) for p in node.iter() if p.is_(yw.W, "p") and yw.blue_state(p) != "全部").strip()
+
+    def inside_covered(node) -> bool:
+        n = node
+        while n is not None:
+            if id(n) in covered:
+                return True
+            n = n.parent
+        return False
+
+    out: List[str] = []
+    for tbl in [c for c in body.children if c.is_(yw.W, "tbl")]:
+        rows = tbl.findall(yw.W, "tr")
+        cells = [tc for tr in rows for tc in tr.findall(yw.W, "tc")]
+        for tr in rows:
+            tcs = tr.findall(yw.W, "tc")
+            for k, tc in enumerate(tcs):
+                pr = tc.find(yw.W, "tcPr")
+                vmerge = pr.find(yw.W, "vMerge") if pr is not None else None
+                if (shown(tc) or inside_covered(tc) or tc.find(yw.W, "tbl") is not None
+                        or (vmerge is not None and vmerge.attr(yw.W, "val") != "restart")):
+                    continue
+                label = next((shown(o) for o in reversed(tcs[:k]) if shown(o)), "")
+                if not label and len(cells) == 1:
+                    siblings = body.children
+                    before = [n for n in siblings[:siblings.index(tbl)] if n.is_(yw.W, "p") or n.is_(yw.W, "tbl")]
+                    for n in reversed(before):
+                        if n.is_(yw.W, "tbl"):
+                            break
+                        if shown(n):
+                            label = shown(n)
+                            break
+                if label:
+                    out.append(label[:30])
     return out
 
 
@@ -748,6 +805,10 @@ def check(folder: Path, case: str, stage: str, seido: Optional[dict]) -> dict:
                 cells.update(got_cells)
             if suffix in WORD_SUFFIXES:
                 findings += word_findings(_read_bytes(path, rel), rel, seido)
+                boxes = empty_form_boxes(_read_bytes(path, rel), rel, seido)
+                if boxes:  # 完成は止めない注意（様式の項目の対応づけは制度データ次第なので、止めると誤って止まることがある）
+                    notes.append("様式の入力の欄が空のままです（どの項目にも対応づけていない欄。申請画面に入れる欄でも、"
+                                 "様式にあれば map で対応づけて書く）：" + "、".join(boxes))
                 tables = form_table_notes(_read_bytes(path, rel), rel, seido)
                 if tables:
                     notes.append("様式の表に書いていない項目があります（表を文章や図で代えず、表の欄として対応づけて書く）："

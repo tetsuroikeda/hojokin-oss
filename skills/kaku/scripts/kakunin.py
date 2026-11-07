@@ -89,7 +89,28 @@ def parse(argv):
 KNOWLEDGE_FILES = ("構成の型.json", "審査の観点.json")
 
 
+SCHEME_NOTES_DIR = "制度ごと"  # knowledge/制度ごと/<制度の言葉>.md：その制度のときだけ出す注（11/7）
+
+
+def _scheme_names(folder) -> list:
+    """会社のフォルダの制度データの、制度の名前（と枠）。読めなければ空。"""
+    top = Path(folder) / "記録" / "制度データ"
+    out = []
+    for path in sorted(top.glob("*.json")) if top.is_dir() else []:
+        try:
+            seido = json.loads(path.read_text(encoding="utf-8")).get("制度") or {}
+        except (OSError, ValueError, AttributeError):
+            continue
+        name = " ".join(str(seido.get(k) or "") for k in ("名前", "枠"))
+        if name.strip():
+            out.append(name)
+    return out
+
+
 def do_chiken(folder, args, kk) -> int:
+    """作者の知見を出す。審査の観点は、どの制度にも当てはまる観点と、この会社の制度データの制度の観点だけ。
+    制度ごとの注（knowledge/制度ごと/）は、制度の名前に注のファイルの名前の言葉が入るときだけ出す。"""
+    schemes = _scheme_names(folder)
     for name in KNOWLEDGE_FILES:
         path = PLUGIN_ROOT / "knowledge" / name
         try:
@@ -97,9 +118,19 @@ def do_chiken(folder, args, kk) -> int:
         except (OSError, ValueError) as e:
             print(f"しませんでした：作者の知見（knowledge/{name}）を読めませんでした（{e}）。プラグインを入れ直してください。")
             return BROKEN
+        if schemes and isinstance(data, dict) and isinstance(data.get("観点"), list):
+            data = dict(data, 観点=[v for v in data["観点"] if not isinstance(v, dict) or v.get("制度") in (None, "共通")
+                                  or any(str(v.get("制度")) in s for s in schemes)])
         print(f"# {name[:-5]}（knowledge/{name}）")
         print(json.dumps(data, ensure_ascii=False, indent=1))
         print()
+    notes_dir = PLUGIN_ROOT / "knowledge" / SCHEME_NOTES_DIR
+    for note in sorted(notes_dir.glob("*.md")) if notes_dir.is_dir() else []:
+        if any(note.stem in s for s in schemes):
+            print(f"# 制度ごとの注（knowledge/{SCHEME_NOTES_DIR}/{note.name}）")
+            print(note.read_text(encoding="utf-8"))
+    if not schemes:
+        print("（制度データがまだないので、制度ごとの注は出していません。junbi で制度データを作った後に、もう一度出す）")
     return OK
 
 

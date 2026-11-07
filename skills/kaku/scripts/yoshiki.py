@@ -399,6 +399,7 @@ def do_map(folder: Path, args, yw) -> int:
     problems = []
     source = None
     root = None
+    added = {}  # 制度データの項目になく、様式にある欄として足す項目（"足す": true）
     for k, pair in enumerate(data["対応"], 1):
         if not isinstance(pair, dict) or not isinstance(pair.get("項目"), str):
             problems.append(f"{k}件目：「項目」がありません")
@@ -406,8 +407,17 @@ def do_map(folder: Path, args, yw) -> int:
         try:
             form, entry = forms_with_item(seido, pair["項目"], form_name)
         except Refused as e:
-            problems.append(f"{k}件目：{e}")
-            continue
+            # 申請画面にも入れる欄（事業計画名など）が、制度データの様式の項目にないことがある（11/7）。
+            # 様式の Word にある欄は書くので、"足す": true なら様式の項目として足す
+            form = next((f for f in seido.get("様式") or [] if isinstance(f, dict) and f.get("名前") == form_name), None) \
+                if pair.get("足す") is True and form_name else None
+            if form is None:
+                problems.append(f"{k}件目：{e}" + ("" if pair.get("足す") is not True else
+                                                     "（足すときは、対応づけの「様式」に制度データの様式の名前を書く）"))
+                continue
+            entry = added.setdefault(pair["項目"], {"名前": pair["項目"], "足した理由": "様式の Word にあり、制度データの項目になかった欄"})
+            if not any(e is entry for e in form.get("項目") or []):
+                form.setdefault("項目", []).append(entry)
         field = pair.get("欄")
         if field is not None and (not isinstance(field, str) or not field.strip()):
             problems.append(f"{k}件目（{pair['項目']}）：「欄」は、表の欄の名前の文字にしてください")

@@ -59,6 +59,7 @@ from lib.xml_spans import Node
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 DOC = "word/document.xml"
+NUMBERING = "word/numbering.xml"
 CONTENT_TYPES = "[Content_Types].xml"
 
 AFTER_HEADING = "見出しの後"
@@ -402,10 +403,22 @@ def find_heading(root: Node, heading: str, place: Optional[str] = None) -> Node:
 
 
 def _until_table(children: List[Node], start: int) -> int:
+    """範囲の終わり：次の様式の表の手前（この道具が本文に作った表は、範囲の中に含める）。"""
     end = start
-    while end < len(children) and not children[end].is_(W, "tbl"):
+    while end < len(children) and not (children[end].is_(W, "tbl") and not _is_our_table(children[end])):
         end += 1
     return end
+
+
+def range_paragraphs(rng: "Range") -> List[Node]:
+    """範囲の段落（この道具が本文に作った表の中の段落も、並びのとおりに含める）。"""
+    out: List[Node] = []
+    for n in rng.nodes:
+        if n.is_(W, "p"):
+            out.append(n)
+        elif n.is_(W, "tbl") and _is_our_table(n):
+            out += [p for p in n.iter() if p.is_(W, "p")]
+    return out
 
 
 def _heading_near_cell(cell: Node, heading: str) -> bool:
@@ -587,6 +600,87 @@ _EXACT_LINE = re.compile(rb'(:lineRule=")exact(")')
 _FLOATING_TABLE = re.compile(rb"<(?:\w+:)?tblpPr\b[^>]*/>")
 
 
+# ---------------------------------------------------------------- 説明の青字を文書の全体から消す（11/7 の作者の指摘）
+#
+# 様式は「説明の青字は削除の上」と求める。書いた項目の範囲の青字は前から消していたが、範囲の外（題の「記載例」、
+# スケジュールの「（参考）」、注の「事業計画は事業者ごとの決算期」など）は残り、出す PDF に青字が残った。
+# 書くたびに、文書の全体から説明の青字を消す。比べるときは、前と後の両方から青字を消してから比べる
+# （青字を消したことは範囲の外の変化に数えない。青字でない文字・書式・表の形の変化は、これまでどおり見つける）。
+
+
+def strip_outside(data: bytes, positions: Sequence[Tuple[str, Dict]]) -> bytes:
+    """書き込む位置の見出しの段落と、範囲「表」の表（スケジュールの表。道具が表ごと作る）を残して、説明の青字を消す。"""
+    try:
+        root = xml_spans.parse(data)
+    except xml_spans.SpanError:
+        return data
+    protect = []
+    for label, pos in positions:
+        if pos.get("範囲") == TABLE:
+            try:
+                tbl = resolve(root, pos, label).nodes[0]
+            except FormError:
+                continue
+            protect.append((tbl.start, tbl.end))
+    return strip_explanation(data, _headings(positions), protect)
+
+
+def strip_explanation(data: bytes, keep: Sequence[str] = (), protect: Sequence[Tuple[int, int]] = ()) -> bytes:
+    """word/document.xml から説明の青字を消したもの。
+
+    全部が青字の段落は段落ごと消す（ただし、節の区切りやブックマークなどの印を持つ段落、セルの最後の段落、
+    keep の見出しと同じ文字の段落は、段落を残して青字の文字だけを消す）。一部が青字の段落は、青字の文字だけを消す。
+    protect の中（バイトの位置の範囲）は触らない。
+    """
+    try:
+        root = xml_spans.parse(data)
+        body = body_of(root)
+    except (xml_spans.SpanError, FormError):
+        return data
+    keep_keys = {norm(k) for k in keep if k}
+    cuts: List[Tuple[int, int]] = []
+
+    def blue_runs(p: Node) -> List[Node]:
+        return [r for r in _runs(p) if text_of(r).strip() and run_color(r) in EXPLANATION_COLORS]
+
+    for p in [n for n in body.iter() if n.is_(W, "p")]:
+        if any(_skipped(a) or a.is_(W, "p") for a in _ancestors(p)):
+            continue  # 互換の代わりの絵の中と、図形の文字の中の段落は触らない
+        state = blue_state(p)
+        if not state:
+            continue
+        ppr = p.find(W, "pPr")
+        parent = p.parent
+        siblings = [c for c in parent.children if c.is_(W, "p")] if parent is not None else []
+        last_in_cell = parent is not None and parent.is_(W, "tc") and siblings and siblings[-1] is p
+        if parent is not None:
+            blocks = [c for c in parent.children if c.is_(W, "p") or c.is_(W, "tbl")]
+            j = blocks.index(p)
+            # 表と表のあいだの段落は残す（消すと2つの表がつながる）
+            last_in_cell = last_in_cell or (0 < j < len(blocks) - 1 and blocks[j - 1].is_(W, "tbl") and blocks[j + 1].is_(W, "tbl"))
+        whole = (state == "全部" and not has_drawing(p) and not (ppr is not None and ppr.find(W, "sectPr") is not None)
+                 and not any(n.uri == W and n.local in KEEP_MARKS for n in p.iter())
+                 and not last_in_cell and norm(text_of(p)) not in keep_keys)
+        if whole:
+            cuts.append((p.start, p.end))
+        else:
+            cuts += [(r.start, r.end) for r in blue_runs(p)]
+    cuts = [(s, e) for s, e in cuts if not any(ps <= s and e <= pe for ps, pe in protect)]
+    if not cuts:
+        return data
+    out = data
+    for start, end in sorted(cuts, reverse=True):
+        out = out[:start] + out[end:]
+    return out
+
+
+def _ancestors(node: Node) -> Iterator[Node]:
+    n = node.parent
+    while n is not None:
+        yield n
+        n = n.parent
+
+
 def layout_copy(blob: bytes) -> bytes:
     """PDF にする写しの、見た目だけの直し（元の Word は変えない。DESIGN 5章「PDF にするときは写しを作る」）。
 
@@ -640,8 +734,109 @@ def _figure_paragraph(w: str, placed: Placed, kept: bytes) -> bytes:
             + f"<{w}:r><{w}:drawing>{inline}</{w}:drawing></{w}:r></{w}:p>".encode("utf-8"))
 
 
-def new_paragraphs(data: bytes, rng: Range, text: str, placed: Optional[Dict[str, Placed]] = None) -> bytes:
-    """範囲を置き換える段落のバイト列。placed の行（図を置く行）は、図の段落にする。"""
+# 箇条書き（11/7 の作者の指摘：「・」を手で打った行が、折り返しでそろわず見づらい）。行の頭の「・」などを
+# Word の箇条書き（番号の定義の行頭文字）にする。定義は word/numbering.xml に、この道具の番号で足す。
+BULLET_NUM_ID = "9301"
+_BULLET_LINE = re.compile(r"^\s*[・•●\-－‐]\s*(\S.*)$")
+BULLET_IND = 284  # 行頭文字の後の字下げ（twip。約0.5cm）
+# 本文の中の表（11/7 の作者の指摘：図表で伝わる所を増やす）。「|」で区切った行が続く所を表にする。
+_TABLE_LINE = re.compile(r"^\s*[|｜].*[|｜]\s*$")
+_TABLE_RULE = re.compile(r"^:?[-ー－]{2,}:?$")
+_TABLE_TITLE = re.compile(r"^\s*【表：(.+)】\s*$")
+TABLE_CAPTION = "hojokin_hyou"  # この道具が作った表の印（範囲の終わりを決めるとき、様式の表と分ける）
+_NUMERIC_CELL = re.compile(r"^[約▲△+＋\-－]?[0-9０-９][0-9０-９,，.．]*\s*[%％円万億千件人時間分日年月台回倍か所]*.{0,4}$")
+PPR_ORDER = ("pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr",
+             "suppressLineNumbers", "pBdr", "shd", "tabs", "suppressAutoHyphens", "kinsoku", "wordWrap", "overflowPunct",
+             "topLinePunct", "autoSpaceDE", "autoSpaceDN", "bidi", "adjustRightInd", "snapToGrid", "spacing", "ind",
+             "contextualSpacing", "mirrorIndents", "suppressOverlap", "jc", "textDirection", "textAlignment",
+             "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange")
+CENTER_MAX_UNITS = 16  # 中央揃えの欄でも、これより長い行は両端揃えにする（SWOT の表など。11/7 の作者の指摘）
+
+
+def _ppr_with(data: bytes, ppr: Optional[Node], w: str, numid: Optional[str] = None,
+              ind: Optional[str] = None, jc: Optional[str] = None) -> bytes:
+    """写す段落の書式に、箇条書きの番号・字下げ・揃えを差し替えたもの（子の並びは様式の決まりの順）。"""
+    parts: List[Tuple[int, bytes]] = []
+    tail = len(PPR_ORDER)
+    if ppr is not None:
+        for c in ppr.children:
+            if c.uri == W and (c.local in DROP_FROM_PARAGRAPH or (c.local == "numPr" and numid)
+                               or (c.local == "ind" and ind) or (c.local == "jc" and jc)):
+                continue
+            raw = _clean_props(data, c, DROP_FROM_RUN) if c.is_(W, "rPr") else c.raw(data)
+            parts.append((PPR_ORDER.index(c.local) if c.uri == W and c.local in PPR_ORDER else tail, raw))
+    if numid:
+        parts.append((PPR_ORDER.index("numPr"),
+                      f'<{w}:numPr><{w}:ilvl {w}:val="0"/><{w}:numId {w}:val="{numid}"/></{w}:numPr>'.encode("utf-8")))
+    if ind:
+        parts.append((PPR_ORDER.index("ind"), ind.encode("utf-8")))
+    if jc:
+        parts.append((PPR_ORDER.index("jc"), f'<{w}:jc {w}:val="{jc}"/>'.encode("utf-8")))
+    parts.sort(key=lambda t: t[0])
+    out = f"<{w}:pPr>".encode("utf-8") + b"".join(p for _o, p in parts) + f"</{w}:pPr>".encode("utf-8")
+    return _EXACT_LINE.sub(rb"\1atLeast\2", out)
+
+
+def _jc_of(ppr: Optional[Node]) -> str:
+    jc = ppr.find(W, "jc") if ppr is not None else None
+    return (jc.attr(W, "val") or "") if jc is not None else ""
+
+
+def _table_rows(lines: Sequence[str]) -> List[List[str]]:
+    rows = []
+    for line in lines:
+        cells = [c.strip() for c in re.split(r"[|｜]", line.strip()[1:-1])]
+        if cells and all(_TABLE_RULE.match(c) for c in cells if c):
+            continue  # 見出しの下の区切りの行（|---|---|）
+        rows.append(cells)
+    width = max(len(r) for r in rows)
+    return [r + [""] * (width - len(r)) for r in rows]
+
+
+def _text_table(w: str, rows: List[List[str]], width: int, rpr: bytes) -> bytes:
+    """本文の中の表（1行目は見出し）。細い灰色の罫線、見出しの行だけ薄い灰色。数は右、ほかは左に揃える。"""
+    ncols = len(rows[0])
+    weights = [max(2.0, max(_text_units(r[c]) for r in rows)) for c in range(ncols)]
+    total = sum(weights)
+    widths = [max(600, int(width * x / total)) for x in weights]
+    widths[-1] += width - sum(widths)
+    rpr_text = rpr.decode("utf-8")
+    border = "".join(f'<{w}:{side} {w}:val="single" {w}:sz="4" {w}:space="0" {w}:color="808080"/>'
+                     for side in ("top", "left", "bottom", "right", "insideH", "insideV"))
+    out = [f'<{w}:tbl><{w}:tblPr><{w}:tblW {w}:w="{width}" {w}:type="dxa"/><{w}:tblBorders>{border}</{w}:tblBorders>'
+           f'<{w}:tblLayout {w}:type="fixed"/><{w}:tblCellMar><{w}:left {w}:w="80" {w}:type="dxa"/>'
+           f'<{w}:right {w}:w="80" {w}:type="dxa"/></{w}:tblCellMar><{w}:tblCaption {w}:val="{TABLE_CAPTION}"/></{w}:tblPr>'
+           f'<{w}:tblGrid>' + "".join(f'<{w}:gridCol {w}:w="{x}"/>' for x in widths) + f"</{w}:tblGrid>"]
+    for k, row in enumerate(rows):
+        head = k == 0
+        tr = [f"<{w}:tr><{w}:trPr><{w}:cantSplit/>{f'<{w}:tblHeader/>' if head else ''}</{w}:trPr>"]
+        for c, text in enumerate(row):
+            shade = f'<{w}:shd {w}:val="clear" {w}:color="auto" {w}:fill="F2F2F2"/>' if head else ""
+            jc = "center" if head else ("right" if _NUMERIC_CELL.match(text) else "left")
+            run_pr = rpr_text
+            if head:
+                run_pr = (run_pr.replace(f"</{w}:rPr>", f"<{w}:b/></{w}:rPr>") if run_pr else f"<{w}:rPr><{w}:b/></{w}:rPr>")
+            run = f'<{w}:r>{run_pr}<{w}:t xml:space="preserve">{escape(text)}</{w}:t></{w}:r>' if text else ""
+            tr.append(f'<{w}:tc><{w}:tcPr><{w}:tcW {w}:w="{widths[c]}" {w}:type="dxa"/>{shade}<{w}:vAlign {w}:val="center"/></{w}:tcPr>'
+                      f'<{w}:p><{w}:pPr><{w}:spacing {w}:before="0" {w}:after="0" {w}:line="240" {w}:lineRule="auto"/>'
+                      f'<{w}:ind {w}:left="0" {w}:right="0" {w}:firstLine="0"/><{w}:jc {w}:val="{jc}"/></{w}:pPr>{run}</{w}:p></{w}:tc>')
+        tr.append(f"</{w}:tr>")
+        out.append("".join(tr))
+    out.append(f"</{w}:tbl>")
+    return "".join(out).encode("utf-8")
+
+
+def _is_our_table(node: Node) -> bool:
+    pr = node.find(W, "tblPr") if node.is_(W, "tbl") else None
+    cap = pr.find(W, "tblCaption") if pr is not None else None
+    return cap is not None and cap.attr(W, "val") == TABLE_CAPTION
+
+
+def new_paragraphs(data: bytes, rng: Range, text: str, placed: Optional[Dict[str, Placed]] = None,
+                   width: int = FALLBACK_WIDTH, bullets: bool = False) -> bytes:
+    """範囲を置き換える段落のバイト列。placed の行（図を置く行）は、図の段落にする。
+    bullets なら、行の頭の「・」の行を Word の箇条書きにする（番号の定義は、書く側が numbering.xml に足す）。
+    「|」で区切った行が続く所は表にする（直前の「【表：題】」の行は、表の題の段落にする）。"""
     placed = placed or {}
     nodes = rng.nodes
     paragraphs = [n for n in nodes if n.is_(W, "p")]
@@ -652,19 +847,84 @@ def new_paragraphs(data: bytes, rng: Range, text: str, placed: Optional[Dict[str
     # 行の高さを固定した段落（直近実績の表など）は、書いた文字が罫線に重なって切れるので、最小の高さにする
     # （11/7 の作者の指摘。PDF で「302,000,000円」に罫線が重なった）
     ppr_bytes = _EXACT_LINE.sub(rb"\1atLeast\2", ppr_bytes)
+    centered = _jc_of(ppr) == "center"
     mark = ppr.find(W, "rPr") if ppr is not None else None
     rpr_bytes = _clean_props(data, mark, DROP_FROM_RUN) if mark is not None else b""
     kept = _kept_marks(data, nodes)
     lines = clean_text(text).split("\n")
     out = []
-    for i, line in enumerate(lines):
+    i = 0
+    first = True
+    while i < len(lines):
+        line = lines[i]
+        lead = kept if first else b""
         if line.strip() in placed:
-            out.append(_figure_paragraph(w, placed[line.strip()], kept if i == 0 else b""))
+            out.append(_figure_paragraph(w, placed[line.strip()], lead))
+            first = False
+            i += 1
             continue
+        if _TABLE_LINE.match(line):
+            end = i
+            while end < len(lines) and _TABLE_LINE.match(lines[end]):
+                end += 1
+            if lead:
+                out.append(f"<{w}:p>".encode("utf-8") + ppr_bytes + lead + f"</{w}:p>".encode("utf-8"))
+            out.append(_text_table(w, _table_rows(lines[i:end]), width, rpr_bytes))
+            first = False
+            i = end
+            continue
+        title = _TABLE_TITLE.match(line)
+        bullet = _BULLET_LINE.match(line) if bullets else None
+        p_pr = ppr_bytes
+        if title:
+            line = title.group(1)
+            p_pr = _ppr_with(data, ppr, w, jc="left")
+        elif bullet:
+            line = bullet.group(1)
+            p_pr = _ppr_with(data, ppr, w, numid=BULLET_NUM_ID, jc="left",
+                             ind=f'<{w}:ind {w}:left="{BULLET_IND}" {w}:hanging="{BULLET_IND}"/>')
+        elif centered and _text_units(line) > CENTER_MAX_UNITS:
+            p_pr = _ppr_with(data, ppr, w, jc="both")
         body = _run_text(w, line)
-        run = (f"<{w}:r>".encode("utf-8") + rpr_bytes + body.encode("utf-8") + f"</{w}:r>".encode("utf-8")) if body else b""
-        out.append(f"<{w}:p>".encode("utf-8") + ppr_bytes + (kept if i == 0 else b"") + run + f"</{w}:p>".encode("utf-8"))
+        r_pr = rpr_bytes
+        if title:
+            r_pr = (rpr_bytes.replace(f"</{w}:rPr>".encode("utf-8"), f"<{w}:b/></{w}:rPr>".encode("utf-8"))
+                    if rpr_bytes else f"<{w}:rPr><{w}:b/></{w}:rPr>".encode("utf-8"))
+        run = (f"<{w}:r>".encode("utf-8") + r_pr + body.encode("utf-8") + f"</{w}:r>".encode("utf-8")) if body else b""
+        out.append(f"<{w}:p>".encode("utf-8") + p_pr + lead + run + f"</{w}:p>".encode("utf-8"))
+        first = False
+        i += 1
+    if out and out[-1].endswith(f"</{w}:tbl>".encode("utf-8")):
+        out.append(f"<{w}:p>".encode("utf-8") + ppr_bytes + f"</{w}:p>".encode("utf-8"))  # セルは段落で終える
     return b"".join(out)
+
+
+def ensure_bullets(numbering: bytes) -> bytes:
+    """word/numbering.xml に、この道具の箇条書き（行頭文字「・」）の定義を足したもの。もうあれば、そのまま。"""
+    if f'w:abstractNumId="{BULLET_NUM_ID}"'.encode("utf-8") in numbering:
+        return numbering
+    m = re.search(rb"<(\w+):numbering\b", numbering)
+    if m is None:
+        return numbering
+    w = m.group(1).decode("utf-8")
+    abstract = (f'<{w}:abstractNum {w}:abstractNumId="{BULLET_NUM_ID}"><{w}:multiLevelType {w}:val="singleLevel"/>'
+                f'<{w}:lvl {w}:ilvl="0"><{w}:start {w}:val="1"/><{w}:numFmt {w}:val="bullet"/><{w}:lvlText {w}:val="・"/>'
+                f'<{w}:lvlJc {w}:val="left"/><{w}:pPr><{w}:ind {w}:left="{BULLET_IND}" {w}:hanging="{BULLET_IND}"/></{w}:pPr>'
+                f'</{w}:lvl></{w}:abstractNum>').encode("utf-8")
+    num = (f'<{w}:num {w}:numId="{BULLET_NUM_ID}"><{w}:abstractNumId {w}:val="{BULLET_NUM_ID}"/></{w}:num>').encode("utf-8")
+    first_num = re.search(rb"<" + w.encode() + rb":num\s", numbering)
+    close = numbering.rfind(f"</{w}:numbering>".encode("utf-8"))
+    if close < 0:
+        return numbering
+    nums = [mm.end() for mm in re.finditer(rb"</" + w.encode() + rb":num>", numbering)]
+    after_nums = nums[-1] if nums else close
+    out = numbering[:after_nums] + num + numbering[after_nums:]
+    at = first_num.start() if first_num else after_nums
+    return out[:at] + abstract + out[at:]
+
+
+_OUR_NUMBERING = re.compile(rb'<(\w+:)?abstractNum\b[^>]*abstractNumId="' + BULLET_NUM_ID.encode() + rb'".*?</\1abstractNum>'
+                            rb'|<(\w+:)?num\b[^>]*numId="' + BULLET_NUM_ID.encode() + rb'".*?</\2num>', re.S)
 
 
 # ---------------------------------------------------------------- 図表と写真の置き場所と大きさ
@@ -812,9 +1072,17 @@ def write_item(blob: bytes, position: Dict, text: str, label: str = "",
         raise FormError(f"「{rng.label}」の書いてよい範囲に、範囲の外へまたがるフィールドがあります。書きません")
     removed_blue = sum(1 for n in nodes if n.is_(W, "p") and blue_state(n))
     placed = place_figures(data, root, rng, text, figures)
-    new_data = xml_spans.splice(data, nodes[0].start, nodes[-1].end, new_paragraphs(data, rng, text, placed))
+    numbering = parts.get(NUMBERING)
+    uses_bullets = numbering is not None and any(_BULLET_LINE.match(ln) for ln in clean_text(text).split("\n"))
+    new_data = xml_spans.splice(data, nodes[0].start, nodes[-1].end,
+                                new_paragraphs(data, rng, text, placed, width=available_width(root, rng),
+                                               bullets=uses_bullets))
+    # 範囲の外に残った説明の青字（題の「記載例」など）も消す（様式が「説明の青字は削除の上」と求める）
+    new_data = strip_outside(new_data, [(rng.label, position)] + list(other_positions))
     replace, add, remove = _with_figure_parts(parts, new_data, placed)
     replace[DOC] = new_data
+    if uses_bullets:
+        replace[NUMBERING] = ensure_bullets(numbering)
     # 足す・消す部品（図の画像）があるときだけ渡す（図のない書き込みは、前と同じ呼び方のまま）
     extra = {k: v for k, v in (("additions", add), ("removals", remove)) if v}
     new_blob = rebuild_zip(blob, replace, **extra)
@@ -836,7 +1104,7 @@ def item_text(blob: bytes, position: Dict) -> str:
     rng = resolve(root, position)
     if position.get("範囲") == TABLE:
         return table_text(rng.nodes[0])
-    return "\n".join(text_of(n) or figure_text(n) for n in rng.nodes if n.is_(W, "p"))
+    return "\n".join(text_of(n) or figure_text(n) for n in range_paragraphs(rng))
 
 
 # ---------------------------------------------------------------- スケジュールの表（表ごと作り直す）
@@ -1128,6 +1396,7 @@ def write_schedule(blob: bytes, position: Dict, spec: Dict, label: str = "",
     new_tbl = (tbl.start_tag(data) + (tblpr.raw(data) if tblpr is not None else b"") + grid_xml.encode("utf-8")
                + "".join(out_rows).encode("utf-8") + f"</{tbl.name}>".encode("utf-8"))
     new_data = xml_spans.splice(data, tbl.start, tbl.end, new_tbl)
+    new_data = strip_outside(new_data, [(rng.label, position)] + list(other_positions))  # 範囲の外の説明の青字も消す
     new_blob = rebuild_zip(blob, {DOC: new_data})
     positions = [(rng.label, position)] + [(lab, pos) for lab, pos in other_positions if lab != rng.label]
     differences = compare_docx(blob, new_blob, positions)
@@ -1329,7 +1598,9 @@ def _inside(rng: Optional[Range], tables: Sequence[Node]) -> bool:
 
 
 def compare_document(before: bytes, after: bytes, positions: Sequence[Tuple[str, Dict]]) -> List[str]:
-    """word/document.xml どうしを、書いてよい範囲を覆って比べる。差の説明の一覧を返す。"""
+    """word/document.xml どうしを、書いてよい範囲を覆って比べる。差の説明の一覧を返す。
+    説明の青字は、前と後の両方から消してから比べる（青字を消したことは、範囲の外の変化に数えない）。"""
+    before, after = strip_outside(before, positions), strip_outside(after, positions)
     try:
         root_b = xml_spans.parse(before)
     except xml_spans.SpanError as e:
@@ -1389,8 +1660,8 @@ def compare_document(before: bytes, after: bytes, positions: Sequence[Tuple[str,
 
 
 def _without_figures(parts: Dict[str, bytes]) -> Dict[str, bytes]:
-    """比べる前に、この道具が足す・片付ける図の部品（画像、関係、png・jpeg の種類の登録）を除く。
-    図の段落そのものは書いてよい範囲の中にあり、範囲の比べ方で覆う。"""
+    """比べる前に、この道具が足す・片付ける図の部品（画像、関係、png・jpeg の種類の登録）と、
+    この道具の箇条書きの定義（numbering.xml）を除く。図と箇条書きの段落そのものは書いてよい範囲の中にあり、範囲の比べ方で覆う。"""
     out = {}
     for name, data in parts.items():
         if name.startswith(FIGURE_MEDIA_PREFIX):
@@ -1399,8 +1670,15 @@ def _without_figures(parts: Dict[str, bytes]) -> Dict[str, bytes]:
             data = _FIGURE_RELS.sub(b"", data)
         elif name == CONTENT_TYPES:
             data = _IMAGE_DEFAULTS.sub(b"", data)
+        elif name == NUMBERING:
+            data = _OUR_NUMBERING.sub(b"", data)
         out[name] = data
     return out
+
+
+def _headings(positions: Sequence[Tuple[str, Dict]], *more: Dict) -> List[str]:
+    """書き込む位置の見出し（説明の青字を消すときも、見出しの段落は残す）。"""
+    return [str(p.get("見出し") or "") for _l, p in positions] + [str(p.get("見出し") or "") for p in more]
 
 
 def compare_docx(before: bytes, after: bytes, positions: Sequence[Tuple[str, Dict]]) -> List[str]:
