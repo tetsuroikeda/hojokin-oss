@@ -13,12 +13,15 @@
        --to "<書類>=信用金庫"          依頼先
        --status "<書類>=依頼した"      状態（まだ・依頼した・待っている・届いた・済み）。「依頼した@2026-11-18」で日付も渡せる
        --received "<書類>=原本/…pdf"  届いた（状態を「届いた」にし、整理した後の原本の場所を残す）
-  4. 近い締切の日数を変える（社長・担当者が会話で頼んだとき）
+  4. 通知に日付で書かれた期限を残す（差し戻しの出し直しの期限など。制度データから計算できない期限）
+       --due "<期限の名前>=2027-06-11" --source "原本/役所からの通知/…"   日付と出典（通知の原本の場所。なければ社長の答え）
+       --due "<期限の名前>=済み"                                          出した（「まだ」で取り消す）
+  5. 近い締切の日数を変える（社長・担当者が会話で頼んだとき）
        python3 -B <この場所>/kigen.py --folder "${CLAUDE_PROJECT_DIR}" --near-days 60
 
 - 中身は lib/deadline_tool.py（組み立ては lib/deadlines.py、台帳は lib/task_ledger.py）。
-- 期限の台帳（記録/期限の台帳.json）に残すのは、状態・頼む人・依頼先・目安の日数・依頼した日・届いた日だけ。
-  締切と始める日は、読むたびに制度データと出来事の日付から計算する。
+- 期限の台帳（記録/期限の台帳.json）に残すのは、状態・頼む人・依頼先・目安の日数・依頼した日・届いた日と、
+  通知に日付で書かれた期限（--due。日付・出典・状態）だけ。締切と始める日は、読むたびに制度データと出来事の日付から計算する。
 - 今日の日付は、`.hojokin/設定.json` の「今日の日付」で差し替えられる（lib/dates.py）。
 - 書いた後は、今の状態.html を作り直す。
 - 終了コード：
@@ -56,6 +59,9 @@ def parse(argv):
     parser.add_argument("--to", action="append", default=[], metavar="書類=依頼先", help="依頼先")
     parser.add_argument("--status", action="append", default=[], metavar="書類=状態", help="依頼の状態")
     parser.add_argument("--received", action="append", default=[], metavar="書類=場所", help="届いた書類の場所")
+    parser.add_argument("--due", action="append", default=[], metavar="期限の名前=日付",
+                        help="通知に日付で書かれた期限（差し戻しの出し直しなど）。値を「済み」にすると出したことを残す")
+    parser.add_argument("--source", metavar="場所", help="--due の出典（通知の原本の、会社のフォルダからの場所）。なければ社長の答え")
     parser.add_argument("--near-days", type=int, metavar="日数", help="近い締切の日数（はじめは30日）")
     return parser.parse_args(argv)
 
@@ -112,6 +118,9 @@ def main(argv) -> int:
               "先に、社長の了承を得て会社のフォルダを作ってください。")
         return 2
     editing = any([args.add, args.days, args.who, args.to, args.status, args.received])
+    if args.source and not args.due:
+        print(f"{NOT_DONE}--source は --due と一緒に渡してください（通知に日付で書かれた期限の出典です）。")
+        return 2
     try:
         today = dates.today(folder)
         out = []
@@ -121,12 +130,19 @@ def main(argv) -> int:
             out.append(f"近い締切の日数を{args.near_days}日にしました（前は{before if before is not None else 30}日。"
                        f"{company.MARKER_DIR}/{company.SETTINGS_FILE} に残しました。開いたときの一覧と今の状態.html も、この日数で分けます）。")
         case = None
-        if editing or args.requests:
+        if editing or args.requests or args.due:
             try:
                 case = urakadori.find_case(folder, args.case)
             except case_folder.CaseError as e:
                 print(f"{NOT_DONE}案件を決められませんでした（{e}）。")
                 return 2
+        if args.due:
+            items = [deadline_tool.split_change(text, "--due") for text in args.due]
+            applied = deadline_tool.apply_dues(folder, case, items, args.source)
+            out.append(f"## 期限の台帳に残した期限（{case}）")
+            out += [f"- {line}" for line in applied.lines]
+            out += ["", f"## {case} の、通知に日付で書かれた期限（今日 {dates.format_date(today)}）"]
+            out += deadline_tool.due_rows(folder, case)
         if editing:
             changes = changes_of(args, deadline_tool, today)
             applied = deadline_tool.apply(folder, case, changes)
@@ -139,11 +155,11 @@ def main(argv) -> int:
             text, ask = deadline_tool.requests_text(folder, case)
             out.append(text.rstrip())
             asking = asking or ask
-        if args.show or not (editing or args.requests or args.near_days is not None):
+        if args.show or not (editing or args.requests or args.due or args.near_days is not None):
             text, ask = deadline_tool.show_text(folder)
             out.append(text.rstrip())
             asking = asking or ask
-        if editing or args.near_days is not None:
+        if editing or args.due or args.near_days is not None:
             problem = deadline_tool.refresh_page(folder)
             if problem:
                 out.append(problem)

@@ -185,3 +185,51 @@ def test_near_days_setting_is_written_by_the_tool(folder) -> None:
     assert "近い締切は60日以内" in out and "### 近い締切（60日以内）" in out
     code, out = run(folder, "--near-days", "0")
     assert code == 2 and _json(folder / ".hojokin" / "設定.json")["近い締切の日数"] == 60
+
+
+def test_dated_deadline_from_a_notice_is_kept_and_shown(folder) -> None:
+    """差し戻しの出し直しの期限のように、通知に日付で書かれた期限を台帳に残し、近い締切に「確定」で出す
+    （11/7 の採択後の通し：出し直しの期限 6/11 を台帳に入れる道具がなく、「近い締切（30日以内）：ありません」と出た）。
+    出したら「済み」にすると、済んだものに移る。値と出典は、確かめてから書く（1つでも合わなければ何も書かない）。"""
+    set_today(folder, "2027-06-03")
+    notice = folder / "原本" / "役所からの通知" / "2027-06-02_差し戻し.txt"
+    notice.parent.mkdir(parents=True)
+    notice.write_text("（架空）出し直しの期限は 2027年6月11日（金）です。", encoding="utf-8")
+
+    # 断るとき：日付の形、まだない期限を済みにする、外を指す出典、ない出典、--due のない --source
+    for args, message in [
+        (["--due", "差し戻しの出し直し=6月11日"], "日付（2027-06-11 の形）"),
+        (["--due", "差し戻しの出し直し=2027-13-01"], "日付として正しくありません"),
+        (["--due", "差し戻しの出し直し=済み"], "まだ台帳にありません"),
+        (["--due", "差し戻しの出し直し=2027-06-11", "--source", "../外.txt"], "外を指しています"),
+        (["--due", "差し戻しの出し直し=2027-06-11", "--source", "原本/ない.txt"], "会社のフォルダにありません"),
+        (["--source", "原本/役所からの通知/2027-06-02_差し戻し.txt", "--show"], "--due と一緒に"),
+    ]:
+        code, out = run(folder, "--case", CASE_1, *args)
+        assert code == 2 and message in out and "何も書いていません" in out, (args, out)
+    assert ledger(folder) == []
+
+    source = "原本/役所からの通知/2027-06-02_差し戻し.txt"
+    code, out = run(folder, "--case", CASE_1, "--due", "差し戻しの出し直し=2027-06-11", "--source", source)
+    assert code == 0, out
+    assert f"期限の台帳に残しました：差し戻しの出し直しの期限 2027年6月11日（金）（状態：まだ。出典：{source}）" in out
+    assert ledger(folder) == [{"種類": "提出", "案件": CASE_1, "名前": "差し戻しの出し直し", "期限": "2027-06-11",
+                               "出典": source, "状態": "まだ", "記録した日": "2027-06-03"}]
+    code, out = run(folder, "--show")
+    near = out[out.index("### 近い締切（30日以内）"):out.index("### 遅れている作業")]
+    line = f"- 2027年6月11日（金）（確定）（あと8日）｜{CASE_1}｜差し戻しの出し直しの期限"
+    assert any(x.startswith(line) for x in near.splitlines()), near
+    assert f"出典：{source}" in near and "通知に書かれた日付" in near
+    page = (folder / "今の状態.html").read_text(encoding="utf-8")
+    assert "差し戻しの出し直しの期限" in page
+
+    # 同じ名前で日付を直すと1件のまま書き換わる。出したら済みにすると、近い締切から済んだものに移る
+    code, out = run(folder, "--case", CASE_1, "--due", "差し戻しの出し直し=2027-06-14", "--source", source)
+    assert code == 0 and "前に残っていた 2027年6月11日（金） から直しました" in out, out
+    code, out = run(folder, "--case", CASE_1, "--due", "差し戻しの出し直し=済み")
+    assert code == 0 and "状態：済み" in out, out
+    assert [(e["名前"], e["期限"], e["状態"]) for e in ledger(folder)] == [("差し戻しの出し直し", "2027-06-14", "済み")]
+    code, out = run(folder, "--show")
+    near = out[out.index("### 近い締切（30日以内）"):out.index("### 遅れている作業")]
+    assert "差し戻しの出し直し" not in near
+    assert "差し戻しの出し直しの期限" in out[out.index("### 済んだもの"):]

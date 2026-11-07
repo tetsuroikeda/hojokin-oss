@@ -1,7 +1,8 @@
 """見るだけの Excel（今の状態.xlsx）を、標準のライブラリだけで書く（DESIGN 4.6。TASKS B27）。
 
 - ツールが一から作る、見るだけの表なので、セルは文字か整数だけ（数式・入力規則・図形は使わない）。
-  文字はセルに直接持たせる（inlineStr）。書式は、見出し（太字と灰色）・帯（青）・期限の印（赤）・今日（黄）の4つだけ。
+  文字はセルに直接持たせる（inlineStr）。書式は、見出し（太字と灰色）・帯（青）・期限の印（赤）・今日（黄）・
+  見込みの帯（青の斜線。始まる出来事の日付が未定の段階）の5つだけ。
 - 同じ中身なら同じバイト列になる（zip の日時を固定する）。呼ぶ側が、中身が同じなら書き直さない形にできるようにするため。
 - hook（開いたとき・応答の終わり）からも呼ぶので、同梱の openpyxl は読み込まない（読み込みに時間がかかるため）。
   /usr/bin/python3（3.9）で動く。
@@ -14,7 +15,7 @@ import zipfile
 from typing import List, Sequence, Tuple, Union
 from xml.sax.saxutils import escape
 
-PLAIN, HEAD, BAR, MARK, TODAY = 0, 1, 2, 3, 4  # 書式の番号（styles.xml の cellXfs の順）
+PLAIN, HEAD, BAR, MARK, TODAY, ESTIMATE = 0, 1, 2, 3, 4, 5  # 書式の番号（styles.xml の cellXfs の順。ESTIMATE は見込みの帯の斜線）
 Cell = Union[str, int, None, Tuple[Union[str, int, None], int]]
 FIXED_TIME = (2026, 1, 1, 0, 0, 0)
 
@@ -36,17 +37,19 @@ STYLES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <fonts count="3"><font><sz val="11"/><name val="Yu Gothic"/></font><font><b/><sz val="11"/><name val="Yu Gothic"/></font>
 <font><b/><color rgb="FFCF222E"/><sz val="11"/><name val="Yu Gothic"/></font></fonts>
-<fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>
+<fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FFF6F8FA"/><bgColor indexed="64"/></patternFill></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FF9EC5FE"/><bgColor indexed="64"/></patternFill></fill>
-<fill><patternFill patternType="solid"><fgColor rgb="FFFFF8C5"/><bgColor indexed="64"/></patternFill></fill></fills>
+<fill><patternFill patternType="solid"><fgColor rgb="FFFFF8C5"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="lightUp"><fgColor rgb="FF9EC5FE"/><bgColor rgb="FFFFFFFF"/></patternFill></fill></fills>
 <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"><alignment wrapText="1" vertical="top"/></xf>
+<cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"><alignment wrapText="1" vertical="top"/></xf>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"><alignment wrapText="1" vertical="top"/></xf>
 <xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/>
 <xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
-<xf numFmtId="0" fontId="1" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>
+<xf numFmtId="0" fontId="1" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="0" fontId="0" fillId="5" borderId="0" xfId="0" applyFill="1"/></cellXfs>
 </styleSheet>"""
 
 

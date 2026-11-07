@@ -14,6 +14,8 @@ skills/junbi/scripts/kigen.py から呼ぶ。日付と日数はすべてここ�
   前と違う日数を聞いたときは、会社の記録の値を新しい答えに直す（社長がいま答えた値のため）。
   台帳に足すとき、目安の日数が会社の記録にあれば、それを台帳にも写す（出どころを「会社の記録」とする）。
   書類の名前は、制度データの書類の名前に当たるものだけを受け付け、台帳には制度データの名前で残す（締切を出すため）。
+- 日付で示された期限を残す（apply_dues）：差し戻しの出し直しの期限のように、通知に日付で書かれた期限を、期限の台帳の
+  「作業」（種類「提出」）に、出典（通知の原本の場所か社長の答え）と一緒に残す。出したら「済み」にする（11/7 の採択後の通し）。
 - 近い締切の日数（set_near）：`.hojokin/設定.json` に残す（会社のフォルダの設定が `.hojokin/` の Edit を拒むため）。
 
 書いた後は、今の状態.html を作り直す（lib/status_view）。書く前に、書くものの場所を lib/places.py で確かめる。
@@ -358,6 +360,86 @@ def apply(folder: Path, case: str, changes: List[Change]) -> Applied:
                              + (f"。頼む人：{req.asker}" if req.asker else "")
                              + (f"。目安：{req.days}日" if req.days is not None else "") + "）")
     return applied
+
+
+DEFAULT_SOURCE = "社長の答え"
+_ISO_DAY = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+
+
+def _due_source(folder: Path, raw: Optional[str]) -> str:
+    """日付で示された期限の出典。会社のフォルダの中のファイル（通知の原本・入れ口の文）か「社長の答え」。"""
+    text = unicodedata.normalize("NFC", (raw or "").strip()) or DEFAULT_SOURCE
+    if text == DEFAULT_SOURCE:
+        return text
+    try:
+        rel = places.relative_inside(folder, text)
+    except places.PlaceError as error:
+        raise ToolError(f"出典（{raw}）が会社のフォルダの外を指しています。通知の原本の場所（原本/…）を渡してください") from error
+    if rel == "." or not (places.real(folder) / rel).is_file():
+        raise ToolError(f"出典（{raw}）が会社のフォルダにありません。通知の原本の場所（原本/…）か「{DEFAULT_SOURCE}」を渡してください")
+    return rel
+
+
+def apply_dues(folder: Path, case: str, items: List[Tuple[str, str]], source: Optional[str] = None) -> Applied:
+    """事務局などが日付で示した期限（差し戻しの出し直しの期限など）を、期限の台帳の作業（種類「提出」）に残す。
+
+    items は（期限の名前、値）。値は日付（YYYY-MM-DD）か「済み」（出した）か「まだ」（済みを取り消す）。
+    名前と値をすべて確かめてから書く（1つでも合わなければ何も書かない）。今日より前の日付も受け付ける（期限切れとして示す）。
+    """
+    folder = Path(folder)
+    today = dates.today(folder)
+    current, problem = task_ledger.dues_by_case(folder)
+    if problem:
+        raise ToolError(problem)
+    mine = list(current.get(case, []))
+    planned: List[task_ledger.FixedDue] = []
+    for name, value in items:
+        name = unicodedata.normalize("NFC", name.strip())
+        if not name:
+            raise ToolError("--due には「<期限の名前>=<日付>」の形で、期限の名前を渡してください")
+        old = task_ledger.find_due(planned, name) or task_ledger.find_due(mine, name)
+        if _ISO_DAY.match(value):
+            try:
+                day = date.fromisoformat(value)
+            except ValueError as error:
+                raise ToolError(f"{name}の日付（{value}）が、日付として正しくありません") from error
+            due = task_ledger.FixedDue(case=case, name=old.name if old else name, day=day,
+                                       source=_due_source(folder, source),
+                                       state=old.state if old else task_ledger.NOT_YET, extra=dict(old.extra) if old else {})
+        elif value in task_ledger.DUE_STATES:
+            if old is None:
+                raise ToolError(f"「{name}」の期限は、まだ台帳にありません。先に --due \"{name}=<日付>\" で日付を残してください")
+            due = task_ledger.FixedDue(case=case, name=old.name, day=old.day, source=old.source, state=value,
+                                       extra=dict(old.extra))
+            if source:
+                due.source = _due_source(folder, source)
+        else:
+            raise ToolError(f"--due の値（{value}）は、日付（2027-06-11 の形）か「{'・'.join(task_ledger.DUE_STATES)}」にしてください")
+        due.recorded = today.isoformat()
+        planned = [p for p in planned if not task_ledger.same_doc(p.name, due.name)] + [due]
+    if place_problem(folder):
+        raise ToolError(place_problem(folder))
+    applied = Applied(case=case)
+    for due in planned:
+        try:
+            previous = task_ledger.save_due(folder, due)
+        except task_ledger.TaskLedgerError as error:
+            raise ToolError(str(error)) from error
+        fix = ""
+        if previous is not None and previous.day != due.day:
+            fix = f"。前に残っていた {dates.format_date(previous.day)} から直しました"
+        applied.lines.append(f"期限の台帳に残しました：{due.name}の期限 {dates.format_date(due.day)}"
+                             f"（状態：{due.state}。出典：{due.source}）{fix}")
+    return applied
+
+
+def due_rows(folder: Path, case: str) -> List[str]:
+    """残した後の、その案件の日付で示された期限の一覧（開いたときの文と同じ行。済んだものを含む）。"""
+    ov = deadlines.build(folder)
+    tasks = [t for c in ov.cases if c.name == case for t in c.tasks if t.fixed]
+    rows = [f"- {t.due.label()}｜{t.case}｜{t.what}（済み）" if t.done else status_view.task_line(t, ov.today)
+            for t in sorted(tasks, key=deadlines.Task.sort_key)]
+    return rows or ["- ありません"]
 
 
 def requests_rows(folder: Path, case: str) -> List[str]:

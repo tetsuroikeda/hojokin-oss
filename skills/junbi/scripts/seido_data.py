@@ -11,6 +11,13 @@
 - まとめ方、確かめ方、段階のフォルダの作り方は、lib/seido_data.py の説明のとおり。
 - --merge は、まとめた制度データを裏取りし直して `記録/制度データ/<制度の略称>_<公募回>.json` に置き、
   確かめた結果を出し、形が合えば、いちばん前の段階（申請）のフォルダを作る。置き場所は道具が決める（ほかの場所には書かない）。
+- --merge と --check は、期限が読み取れない手続きの段階について、資料の本文にある期限らしい文（「<段階>は…<出来事>から
+  <数>か月…期限」）を探し、あれば結果の終わりに示す（制度データの抜けかもしれない。終了コードには響かせない）。
+  4. 期限の抜けを足す（Claude がページを読んで、手がかりが当たっていると確かめた後）
+     python3 -B <この場所>/seido_data.py --folder "${CLAUDE_PROJECT_DIR}" [--case <案件>] --add-deadline <段階の id> [--from 要領9:25]
+  その段階の「期限」の欄だけを書く（決め方・出典・根拠の文。状態は要確認）。--merge でまとめ直すと、kaku の様式の書き込む位置など、
+  まとめた後に足したものが消えるので、採択後はこれで足す。終了コード 0 足した、2 足していない（手がかりがない・決め方が資料で違う・
+  もう期限がある・出来事の名前が当たらない など）。
 - --case：案件の名前（`記録/資料の本文/` の下のフォルダの名前）。案件が1つなら、渡さなくてよい。
 - Claude が Bash で動かすコマンドには、CLAUDE_PROJECT_DIR の環境変数が入らないので、--folder で渡す。
 - 終了コード：
@@ -48,7 +55,11 @@ def parse(argv):
     action.add_argument("--merge", action="store_true", help="章ごとの読み取りをまとめ、裏取りし直して置き、確かめる")
     action.add_argument("--check", action="store_true", help="置いた制度データを確かめる（書き換えない）")
     action.add_argument("--stage-folders", action="store_true", help="制度データの手続きの段階から、段階のフォルダを作る")
+    action.add_argument("--add-deadline", metavar="段階",
+                        help="期限が読み取れない段階に、資料の本文の手がかりから期限の決め方を足す（その欄だけを書く）")
     parser.add_argument("--stage", action="append", metavar="フォルダ", help="作る段階のフォルダの名前（2_交付申請 など。いくつ並べてもよい）")
+    parser.add_argument("--from", dest="source", metavar="資料:ページ",
+                        help="--add-deadline で使う手がかりのページ（「要領9:25」。手がかりが資料で違う決め方のとき）")
     return parser.parse_args(argv)
 
 
@@ -92,6 +103,7 @@ def main(argv) -> int:
             rel = verified.out_file
             result = seido_data.check(saved)
             out = seido_data.merge_report(case, merged, verified, rel) + "\n" + seido_data.check_report(result, rel)
+            out += seido_data.clues_report(seido_data.deadline_clues(folder, case, saved))
             stage_ok = True
             if not result.schema_errors:
                 try:
@@ -102,6 +114,23 @@ def main(argv) -> int:
                     stage_ok = False
             print(out, end="")
             return 0 if result.ok and stage_ok else 1
+        if args.add_deadline:
+            from lib import dates, event_ledger, status_view
+            ledger, _problem = event_ledger.events_by_case(folder)
+            try:
+                rel, node, clue = seido_data.add_clue_deadline(
+                    folder, case, args.add_deadline, args.source, [e.name for e in ledger.get(case, [])],
+                    dates.today(folder).isoformat())
+            except (seido_data.ClueError, seido_data.DataMissing) as e:
+                print(f"{NOT_DONE}{e}")
+                return 2
+            page = status_view.refresh_page(folder)
+            print(f"制度データ（{rel}）の「{clue.stage}」の期限の欄だけを書きました（ほかの項目と、様式の書き込む位置は変えていません）。\n\n"
+                  f"- 決め方：{clue.rule}（出来事からの期間）\n- 出典：{clue.where()}\n- 根拠の文：{node['根拠の文']}\n"
+                  f"- 状態：{node['状態']}（{node['注記']}）\n"
+                  + (f"- {page}\n" if page else "")
+                  + "\n期限の日付は、stage_switch.py --show（採択の前なら kigen.py --show）で出してください（頭で計算しない）。\n", end="")
+            return 0
         try:
             path, data = seido_data.load_data(folder, case)
         except seido_data.DataMissing as e:
@@ -110,7 +139,8 @@ def main(argv) -> int:
         rel = str(path.relative_to(folder))
         if args.check:
             result = seido_data.check(data)
-            print(seido_data.check_report(result, rel), end="")
+            print(seido_data.check_report(result, rel) + seido_data.clues_report(seido_data.deadline_clues(folder, case, data)),
+                  end="")
             return 0 if result.ok else 1
         # --stage-folders
         if seido_data.check(data).schema_errors:
