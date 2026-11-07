@@ -613,6 +613,24 @@ def rule_event_names(data: Dict) -> List[str]:
     return out
 
 
+def start_event(stage: Dict, known: Sequence[str]) -> str:
+    """段階が始まる出来事の名前。始まる条件の値に、期限の決め方にある出来事の名前（「交付決定日」。末尾の「日」を除いた
+    「交付決定」でもよい）があればそれ、なければ期限の決め方の出来事（出来事からの期間はその出来事、早いほうは初めの出来事）。
+    どちらもなければ空（工程表の帯は、前の段階の期限の次の日から）。"""
+    node = stage.get("始まる条件") if isinstance(stage, dict) else None
+    text = node.get("値") if isinstance(node, dict) else node
+    if isinstance(text, str):
+        flat = unicodedata.normalize("NFKC", text)
+        for name in sorted(known, key=len, reverse=True):
+            core = unicodedata.normalize("NFKC", name).rstrip("日")
+            if unicodedata.normalize("NFKC", name) in flat or (len(core) >= 2 and core in flat):
+                return name
+    found: List[str] = []
+    rule = stage.get("期限") if isinstance(stage, dict) else None
+    _rule_names(rule.get("値") if isinstance(rule, dict) else None, found)
+    return found[0] if found else ""
+
+
 def repeat_rule(stage: Dict) -> Optional[Dict]:
     """段階の期限の決め方が繰り返しなら、その決め方。ほかは None。"""
     node = stage.get("期限") if isinstance(stage, dict) else None
@@ -677,6 +695,8 @@ class StageRow:
     conditional: bool = False
     years: List[YearRow] = field(default_factory=list)  # 繰り返しの段階の、回ごとの期限（日付が出せないときは空）
     next_year: int = 0  # 繰り返しの段階で、次に出す回（すべて出したら 0）
+    start_event: str = ""  # 段階が始まる出来事（始まる条件にある出来事、なければ期限の決め方の出来事。工程表の帯の始まり）
+    start: Optional[Due] = None  # その出来事の日付（分からなければ None）
 
 
 @dataclass
@@ -703,6 +723,7 @@ class CaseStatus:
     evidence: list = field(default_factory=list)  # 経費ごとの証拠の揃い具合（obligations.EvidenceRow）
     evidence_note: str = ""  # 揃い具合を出せないわけ
     period: str = ""  # 事業期間中・事業後（交付決定の前は空）
+    event_days: List[date] = field(default_factory=list)  # 期限の台帳に残した、この案件の出来事の日付（工程表の見込みの帯の下限）
 
     def next_task(self) -> Optional[Task]:
         dated = sorted((t for t in self.tasks if t.due.dated), key=Task.sort_key)
@@ -983,6 +1004,10 @@ def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Option
         status.problem = "制度データに手続きの段階がないため、期限を組み立てられませんでした"
         return status
     plan = Plan(data, _case_round(folder, case), events, closing=closing_month(facts or []))
+    status.event_days = sorted(e.day for e in plan.events)
+    # 始まる出来事の候補：期限の決め方にある出来事と、台帳に残した出来事（持続化の交付決定のように、期限の決め方にないもの）
+    known_events = rule_event_names(data)
+    known_events += [e.name for e in plan.events if e.name not in known_events]
     with_folder = [s for s in stages if _folder_of(s)]
     base = f"{CASES_DIR}/{case}"
     existing = set(_list_dirs(folder, base))
@@ -1021,6 +1046,9 @@ def case_status(folder: Path, case: str, submissions: List[Dict], ledger: Option
         due = plan.stage_due(stage, application=stage is application)
         row = StageRow(order=order, name=name, folder=_folder_of(stage), state=state, due=due,
                        conditional=stage.get("条件付き") is True, years=years)
+        row.start_event = start_event(stage, known_events)
+        begin = plan.event_due(row.start_event) if row.start_event else None
+        row.start = begin if begin is not None and begin.dated else None
         if repeat is not None:
             pending = next((y for y in years if not y.submitted), None)
             row.next_year = pending.number if pending is not None else 0

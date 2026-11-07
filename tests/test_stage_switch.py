@@ -533,3 +533,56 @@ def test_unread_deadline_shows_clue_from_another_chapter_and_keeps_data(tmp_path
     out = shop.tool("--show", code=1)
     assert "資料の本文に、期限らしい文があります" not in out
     assert "なければ事務局への問い合わせ文の案を作ってください" in out
+
+
+# ---- 工程表の帯の始まり（11/7 の採択後の通し：補助事業の実施の帯が、採択より前・交付決定より前から塗られた） ----
+
+
+def _bars(folder: Path) -> dict:
+    from lib import deadlines, status_book
+    ov = deadlines.build(folder)
+    return {b.label: b for b in status_book.bars(ov) if b.case == CASE}
+
+
+def test_gantt_bars_start_at_the_starting_event(shop) -> None:
+    """帯は、段階が始まる出来事の日付から。交付申請は期限の決め方の出来事（採択発表日）、補助事業の実施は交付決定日から。
+    交付決定日が分からないうちは見込み（斜線）とし、前の段階の期限の次の日より前・採択発表日より前には塗らない。
+    交付決定日を残すと、その日からの確定の帯になる。画面は g-est の斜線、Excel は見込みの帯の書式（5）で区別する。"""
+    from datetime import date
+
+    shop.tool("--event", "採択発表日=2027-03-10")
+    bars = _bars(shop.folder)
+    apply_bar, run_bar = bars["交付申請"], bars["補助事業の実施"]
+    assert (apply_bar.start, apply_bar.end, apply_bar.estimate) == (date(2027, 3, 10), date(2027, 5, 10), False)
+    assert run_bar.estimate and run_bar.start == date(2027, 5, 11), run_bar  # 交付申請の期限の次の日から（見込み）
+    assert run_bar.state == "これから。始まりは見込み"
+    page = (shop.folder / "今の状態.html").read_text(encoding="utf-8")
+    assert 'class="g g-est' in page and "斜線の帯は、始まる日がまだ決まっていないので" in page
+    import zipfile
+    with zipfile.ZipFile(shop.folder / "今の状態.xlsx") as book:
+        sheets = [n for n in book.namelist() if n.startswith("xl/worksheets/")]
+        assert any(' s="5"' in book.read(n).decode("utf-8") for n in sheets)
+
+    # 交付決定日を残すと、その日からの帯（見込みでない）
+    shop.set_today("2027-05-25")
+    shop.tool("--stage", "2_交付申請", "--event", "交付決定日=2027-05-20")
+    run_bar = _bars(shop.folder)["補助事業の実施"]
+    assert (run_bar.start, run_bar.estimate, run_bar.state) == (date(2027, 5, 20), False, "これから")
+
+
+def test_gantt_bar_never_starts_before_the_recorded_award(tmp_path) -> None:
+    """交付申請の期限が制度データにない（読み取れない）とき、前の段階は申請の締切（2027年1月下旬）だけになる。それでも
+    補助事業の実施の帯を、記録した採択発表日より前（申請の締切の次の日 2027-02-01）から塗らない（11/7 の通しの形）。"""
+    from datetime import date
+
+    data = seido()
+    stage = next(s for s in data["手続きの段階"] if s["id"] == "交付申請")
+    stage["期限"] = {"値": None, "状態": "読み取れない", "理由": "期限の定めがない"}
+    shop = Shop(tmp_path, data)
+    shop.set_today("2027-03-16")
+    shop.tool("--event", "採択発表日=2027-03-10", code=1)
+    bars = _bars(shop.folder)
+    assert "交付申請" not in bars
+    run_bar = bars["補助事業の実施"]
+    assert run_bar.estimate and run_bar.start == date(2027, 3, 16), run_bar  # 採択発表日と今日のうち遅い日から
+    assert run_bar.start >= date(2027, 3, 10)

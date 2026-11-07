@@ -271,6 +271,7 @@ ol.flow li{margin:2px 0}
 .gantt th,.gantt td{padding:3px 4px}
 .gantt td.g,.gantt th.g{width:16px;min-width:16px;padding:0;text-align:center;white-space:nowrap}
 .gantt td.g-bar{background:#9ec5fe}
+.gantt td.g-est{background:repeating-linear-gradient(135deg,#9ec5fe 0 3px,#fff 3px 6px)}
 .gantt td.g-mark{background:#9ec5fe;color:#cf222e;font-weight:bold}
 .gantt .g-today{border-left:3px solid #cf222e}
 .gantt th.g-today{background:#fff8c5}
@@ -367,7 +368,8 @@ def gantt_section(ov: deadlines.Overview) -> List[str]:
         return out + ['<p class="note">期限の日付が出せる手続きの段階が、まだありません。</p>']
     today_col = (ov.today.year, ov.today.month)
     out.append(f'<p class="note">横の帯が手続きの段階（効果報告は年ごとの提出期間）、◆ が期限の月、赤い縦線が今日'
-               f"（{_e(dates.format_date(ov.today))}）です。</p>")
+               f"（{_e(dates.format_date(ov.today))}）です。帯は、その段階が始まる日（交付決定の日など）からです。"
+               "斜線の帯は、始まる日がまだ決まっていないので、見込みで置いています。</p>")
     head = ["<tr><th>案件</th><th>手続き</th><th>期限</th>"]
     for y, m in months:
         cls = "g g-today" if (y, m) == today_col else "g"
