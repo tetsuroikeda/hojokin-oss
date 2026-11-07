@@ -110,14 +110,36 @@
 
   <!-- 冒頭：社長の道のり -->
   <div class="scene" id="s-road">
-    <div class="abs" id="road-lead" style="left:0;right:0;top:150px;text-align:center;">
-      <div id="road-l1" style="font-size:70px;font-weight:800;">人手が足りない中小企業。</div>
-      <div id="road-l2" style="font-size:44px;font-weight:700;color:var(--teal);margin-top:18px;">設備やシステムを入れたい。補助金を使いたい。</div>
+    <div class="abs" id="road-lead" style="left:0;right:0;top:120px;text-align:center;">
+      <div id="road-l1" style="font-size:70px;font-weight:800;">人手が足りない。</div>
+      <div id="road-l2" style="font-size:44px;font-weight:700;color:var(--teal);margin-top:18px;">AI の仕組みで、楽にしたい。</div>
     </div>
     <svg class="abs" id="road-svg" width="1920" height="1080" style="left:0;top:0"></svg>
     <div id="road-signs"></div>
+    <div id="road-papers"></div>
     <div id="road-qs"></div>
-    <div class="abs" id="road-walker" style="width:64px;height:64px;margin:-32px 0 0 -32px;border-radius:50%;background:var(--teal);color:#fff;font-size:22px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 18px rgba(14,110,102,.35)">社長</div>
+    <!-- 社長のねがい（吹き出し） -->
+    <div class="abs" id="road-wish" style="left:1080px;top:330px;width:420px;height:150px;">
+      <svg width="420" height="150" style="position:absolute;left:0;top:0"><circle cx="18" cy="138" r="8" fill="#fff" stroke="#d9d1c0" stroke-width="3"/><circle cx="42" cy="118" r="13" fill="#fff" stroke="#d9d1c0" stroke-width="3"/>
+        <rect x="62" y="6" width="350" height="104" rx="52" fill="#fff" stroke="#d9d1c0" stroke-width="3"/></svg>
+      <div style="position:absolute;left:62px;top:6px;width:350px;height:104px;display:flex;align-items:center;justify-content:center;gap:14px;font-size:32px;font-weight:800;color:var(--teal)">
+        <svg width="46" height="46" viewBox="0 0 46 46"><g fill="none" stroke="#0e6e66" stroke-width="5"><circle cx="23" cy="23" r="9"/><path d="M23 3v8M23 35v8M3 23h8M35 23h8M8.9 8.9l5.7 5.7M31.4 31.4l5.7 5.7M8.9 37.1l5.7-5.7M31.4 14.6l5.7-5.7"/></g></svg>AI で楽に！</div>
+    </div>
+    <!-- 社長（オリジナルの簡単な絵。足元を基準に置く） -->
+    <div class="abs" id="boss" style="width:120px;height:180px;transform-origin:50% 100%;">
+      <svg width="120" height="180" viewBox="0 0 120 180" style="position:absolute;left:0;top:0;overflow:visible">
+        <rect x="24" y="96" width="72" height="84" rx="24" fill="#2c3e66"/>
+        <path d="M46 96 L60 118 L74 96 Z" fill="#fff"/><path d="M57 104 L63 104 L66 140 L60 148 L54 140 Z" fill="#e2553b"/>
+        <circle cx="60" cy="56" r="34" fill="#f6d7b8"/>
+        <path d="M27 50 C28 22, 92 18, 93 50 C86 36, 72 30, 60 34 C46 30, 34 38, 27 50 Z" fill="#3a2f2a"/>
+        <path id="boss-brow-l" d="M40 47 L52 43" stroke="#3a2f2a" stroke-width="3.5" stroke-linecap="round"/>
+        <path id="boss-brow-r" d="M68 43 L80 47" stroke="#3a2f2a" stroke-width="3.5" stroke-linecap="round"/>
+        <ellipse cx="47" cy="56" rx="3.6" ry="4.6" fill="#2a2522"/><ellipse cx="73" cy="56" rx="3.6" ry="4.6" fill="#2a2522"/>
+        <path id="boss-mouth" d="M50 74 Q55 70 60 74 Q65 78 70 74" stroke="#9a5a45" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path id="boss-sweat" d="M98 40 C94 48, 92 52, 95 56 C98 59, 103 57, 103 52 C103 48, 100 44, 98 40 Z" fill="#7cc4e8"/>
+      </svg>
+      <div id="boss-q" style="position:absolute;right:104px;top:-6px;text-align:right;font-size:64px;font-weight:900;color:var(--coral);letter-spacing:-6px;white-space:nowrap;transform-origin:100% 100%"></div>
+    </div>
   </div>
 
   <!-- 題名 -->
@@ -125,6 +147,7 @@
     <div class="abs" id="logo" style="left:0;right:0;top:330px;text-align:center;font-size:200px;font-weight:800;letter-spacing:2px;">hojokin</div>
     <div class="abs" id="logo-bar" style="left:50%;top:632px;height:10px;border-radius:5px;background:var(--teal);"></div>
     <div class="abs" id="tag" style="left:0;right:0;top:684px;text-align:center;font-size:42px;font-weight:700;color:var(--sub);">補助金の申請を、自社で。Claude と話しながら最初から最後まで</div>
+    <div class="abs" id="title-badge" style="left:50%;top:790px;transform-origin:50% 50%;margin-left:-210px;width:420px;text-align:center;padding:14px 0;border-radius:999px;background:var(--teal);color:#fff;font-size:30px;font-weight:800;box-shadow:0 12px 26px rgba(14,110,102,.3)">Claude Code のプラグイン</div>
   </div>
 
   <!-- 段階1〜5 -->
@@ -137,7 +160,7 @@
   </div>
 
   <div class="scene" id="s-s2">
-    <div class="step"><div class="no">STEP 2 ・ 調べる</div><div class="prob">ルールが多く、調べる時間がない<span class="strike"></span></div>
+    <div class="step"><div class="no">STEP 2 ・ 調べる</div><div class="prob">ルールが多すぎて分からない<span class="strike"></span></div>
       <div class="sol">公募要領を読み込み<br>ページつきで整理</div>
       <div class="pts"><div class="pt">要件・特例・必要な書類・締切</div><div class="pt">決まりごとに資料のページ</div><div class="pt">資料にないことは推測しない</div></div></div>
     <div class="sheet" id="s2-sheet" style="left:900px;top:200px;width:910px;height:720px;"><div class="cap"><span class="ic">W</span>概要と流れ.docx</div>
@@ -186,7 +209,7 @@
     <div class="abs" id="ny-no" style="left:110px;top:200px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">STEP 4 ・ 申請の画面に入れる</div>
     <div class="abs" id="ny-sol" style="left:110px;top:250px;font-size:58px;font-weight:800;line-height:1.25">入力シートの値を、<br>申請の画面へ</div>
     <div class="abs" id="ny-pts" style="left:110px;top:440px;display:flex;flex-direction:column;gap:14px"><div class="pt">1画面ずつ入れ、一時保存まで</div><div class="pt">ログイン・提出・誓約のチェックは人</div><div class="pt">入れた後に読み直して照らす</div></div>
-    <div class="sheet" id="ny-sheet" style="left:900px;top:200px;width:910px;height:520px;"><div class="cap"><span class="ic">🌐</span>模擬の申請画面（手元の練習用・架空）</div><div class="view"><img id="ny-img" src="out/assets/nyuryoku_screen.png"></div><div class="real">実際の入力の結果</div></div>
+    <div class="sheet" id="ny-sheet" style="left:900px;top:200px;width:910px;height:520px;"><div class="cap"><span class="ic">🌐</span>模擬の申請画面（手元の練習用・架空）</div><div class="view"><img id="ny-img" src="out/assets/nyuryoku_screen.png" onerror="this.style.display='none'"></div><div class="real">実際の入力の結果</div></div>
     <div class="card" id="ny-quote" style="left:900px;top:745px;width:910px;padding:16px 22px;"></div>
   </div>
 
@@ -326,40 +349,66 @@ const scenes = {};
   const path = $('road-path'), dash = $('road-dash');
   const L = path.getTotalLength();
   const at = [0.13, 0.33, 0.52, 0.71, 0.9];
-  const QS = ['どれが使える？', '調べる時間がない', '書類が膨大', '計画書が書けない', '採択後も大変'];
+  const QS = ['どれが使える？', 'ルールが多すぎる', '書類が膨大', '計画書が書けない', '採択後も大変'];
   const signs = at.map((a, i) => { const p = path.getPointAtLength(L * a); const s = mk('div', 'sign', `<div class="pin"></div>${STAGES[i]}`, $('road-signs')); s.style.left = p.x + 'px'; s.style.top = (p.y + 34) + 'px'; return s; });
   const qs = at.map((a, i) => { const p = path.getPointAtLength(L * a); const q = mk('div', 'q', QS[i], $('road-qs')); q.dataset.x = p.x; q.dataset.y = p.y; return q; });
+  // 書類の山（「書類が膨大」の所で、紙が1枚ずつ積み上がる）
+  const p2 = path.getPointAtLength(L * at[2]);
+  const papers = [...Array(9)].map((_, k) => { const e = mk('div', null, null, $('road-papers')); e.style.cssText = `position:absolute;width:86px;height:16px;background:#fff;border:2px solid #cfc6b4;border-radius:3px;box-shadow:0 2px 0 #e7dfcf;left:${p2.x + 64 + ((k * 7) % 11) - 5}px;top:${p2.y + 74 - k * 14}px;`; return e; });
+  const boss = $('boss'), bossQ = $('boss-q'), sweat = $('boss-sweat');
   scenes.road = (l, d) => {
     const caps = capsOf('road');
+    const c = i => (caps[i] !== undefined ? caps[i] : 2 * i);
     show($('road-l1'), eOut(prog(l, 0.3, 1.0)), 30);
-    show($('road-l2'), eOut(prog(l, (caps[1] || 2) - 0.1, (caps[1] || 2) + 0.6)), 20);
-    const up = eInOut(prog(l, (caps[2] || 4) - 0.2, (caps[2] || 4) + 0.8));
+    show($('road-l2'), eOut(prog(l, c(1) - 0.1, c(1) + 0.6)), 20);
+    const up = eInOut(prog(l, c(2) - 0.2, c(2) + 0.8));
     $('road-lead').style.transform = `translateY(${-up * 40}px) scale(${1 - up * 0.25})`;
-    const draw = eInOut(prog(l, (caps[2] || 4) - 0.2, (caps[2] || 4) + 1.4));
+    const draw = eInOut(prog(l, c(2) - 0.2, c(2) + 1.4));
     path.style.strokeDasharray = L; path.style.strokeDashoffset = L * (1 - draw);
     dash.style.opacity = draw;
     signs.forEach((s, i) => show(s, eOut(prog(draw, at[i] - 0.05, at[i] + 0.05)), 10));
-    let walk = 0;
+    // 社長は、問いが出るたびに次の所へ歩く（問いの吹き出しと重ならないよう、少し手前で止まる）
+    let walk = 0.03, shown = 0;
     qs.forEach((q, i) => {
-      const t0 = (caps[3 + i] !== undefined ? caps[3 + i] : 6 + i) - 0.15;
+      const t0 = c(3 + i) - 0.15;
       const x = eBack(prog(l, t0, t0 + 0.45));
-      if (l > t0) walk = at[i];
+      if (l > t0) { shown = i + 1; walk = lerp(i ? at[i - 1] - 0.08 : 0.03, at[i] - 0.08, eInOut(prog(l, t0, t0 + 0.7))); }
       q.style.opacity = clamp(x);
       q.style.left = (q.dataset.x - q.offsetWidth / 2) + 'px';
-      q.style.top = (q.dataset.y - 150 - (i % 2) * 40) + 'px';
+      q.style.top = (q.dataset.y - 190 - (i % 2) * 40) + 'px';
       q.style.transform = `scale(${0.6 + 0.4 * x})`;
       q.style.transformOrigin = '50% 100%';
     });
-    // 社長の印は、問いが出た所まで進む
-    const wp = path.getPointAtLength(L * lerp(0.02, 1, 1) * (walk ? walk : 0.02) * clamp(draw * 3));
-    const w = $('road-walker'); w.style.left = wp.x + 'px'; w.style.top = wp.y + 'px'; w.style.opacity = draw;
+    // 社長の絵：初めは真ん中に大きく、道が出ると小さくなって道の上へ
+    const mv = eInOut(prog(l, c(2) - 0.1, c(2) + 1.2));
+    const wp = path.getPointAtLength(L * walk);
+    const bob = Math.abs(Math.sin(l * 7)) * 6 * (shown && l < c(3 + shown - 1) + 0.6 ? 1 : 0);   // 歩くときだけ少し弾む
+    const fx = lerp(960, wp.x, mv), fy = lerp(660, wp.y + 6, mv) - bob;
+    const sc = lerp(1.5, 0.62, mv);
+    boss.style.left = (fx - 60) + 'px'; boss.style.top = (fy - 180) + 'px';
+    boss.style.transform = `scale(${sc}) rotate(${shown ? Math.sin(l * 3) * 3 : 0}deg)`;
+    boss.style.opacity = eOut(prog(l, 0.2, 0.8));
+    // 汗（人手が足りない）と、問いが増えるほど増える「？」
+    sweat.style.opacity = 0.5 + 0.5 * Math.sin(l * 4);
+    sweat.style.transform = `translateY(${(l * 14) % 10}px)`;
+    bossQ.textContent = '？'.repeat(Math.min(3, shown));
+    bossQ.style.transform = `rotate(${Math.sin(l * 5) * 10}deg) scale(${1 + 0.08 * Math.sin(l * 6)})`;
+    // ねがいの吹き出し（2つ目の文で出て、道が出ると消える）
+    const wish = eBack(prog(l, c(1), c(1) + 0.5)) * (1 - prog(l, c(2) - 0.2, c(2) + 0.3));
+    const wv = $('road-wish'); wv.style.opacity = clamp(wish); wv.style.transform = `scale(${0.7 + 0.3 * clamp(wish)})`; wv.style.transformOrigin = '0 100%';
+    // 書類の山
+    papers.forEach((e, k) => { const t = c(5) - 0.1 + k * 0.12; const x = eBack(prog(l, t, t + 0.3)); e.style.opacity = clamp(x); e.style.transform = `translateY(${(1 - clamp(x)) * -60}px) rotate(${((k * 37) % 9) - 4}deg)`; });
   };
 })();
 
 // ===== 題名 =====
 scenes.title = (l, d) => {
   const x = eOut(prog(l, 0.1, 0.9));
-  $('logo').style.opacity = x; $('logo').style.transform = `translateY(${(1 - x) * 40}px)`;
+  // ロゴは止めずに、ゆっくり寄る
+  $('logo').style.opacity = x; $('logo').style.transform = `translateY(${(1 - x) * 40}px) scale(${1 + 0.06 * prog(l, 0, d)})`;
+  const caps = capsOf('title');
+  const bd = eBack(prog(l, (caps[1] !== undefined ? caps[1] : 3) - 0.1, (caps[1] !== undefined ? caps[1] : 3) + 0.4));
+  $('title-badge').style.opacity = clamp(bd); $('title-badge').style.transform = `scale(${0.5 + 0.5 * bd})`;
   const b = eInOut(prog(l, 0.6, 1.4)); $('logo-bar').style.width = 360 * b + 'px'; $('logo-bar').style.marginLeft = -180 * b + 'px';
   show($('tag'), eOut(prog(l, 1.2, 1.9)), 20);
 };
@@ -470,16 +519,24 @@ scenes.s2 = (l, d) => {
     stepHead($('s-s4'), l);
     const caps = capsOf('s4');
     const tz = (caps[2] !== undefined ? caps[2] : 7) - 0.4;   // 「財務モデルは…」の文から
-    const out = eInOut(prog(l, tz - 0.3, tz + 0.3));
-    [['s4-plan', 0.8], ['s4-sono3', 1.6]].forEach(([id, t0]) => { sheetIn($(id), l, t0); $(id).style.opacity *= (1 - out); });
+    // 様式から財務モデルへは、左から右へぬぐって入れ替える
+    const w = eInOut(prog(l, tz - 0.3, tz + 0.5));
+    [['s4-plan', 0.8], ['s4-sono3', 1.6]].forEach(([id, t0]) => { sheetIn($(id), l, t0); $(id).style.opacity *= (1 - w); $(id).style.transform += ` translateX(${-w * 120}px)`; });
     $('s4-planimg').style.transform = `translateY(${-eInOut(prog(l, 2.5, tz)) * 120}px)`;
-    sheetIn($('s4-zaimu'), l, tz);
-    $('s4-zaimu').style.opacity *= out;
+    const z = $('s4-zaimu');
+    z.style.opacity = w > 0 ? 1 : 0; z.style.transform = 'none';
+    z.style.clipPath = `inset(0 ${(1 - w) * 100}% 0 0 round 18px)`;
+    // 最後に、結果の表に寄る（「満たさない」を目立たせる）
+    const zoom = eInOut(prog(l, tz + 4.4, tz + 5.4));
+    const sim = $('s4-sim'); sim.style.transformOrigin = '70% 100%';
     // P-02（注文になる割合の上げ幅）の行に印を引く（画像の上の位置）
     const mx = eOut(prog(l, tz + 1.0, tz + 1.6));
     $('s4-zmark').style.cssText = `left:30px;top:144px;width:${845 * mx}px;height:32px;opacity:${mx}`;
-    show($('s4-sim'), eOut(prog(l, tz + 1.6, tz + 2.2)), 30);
+    show(sim, eOut(prog(l, tz + 1.6, tz + 2.2)), 30);
+    sim.style.transform += ` scale(${1 + 0.07 * zoom})`;
+    sim.style.boxShadow = `0 1px 0 var(--line), 0 14px 34px rgba(60,48,20,${0.12 + 0.18 * zoom})`;
     rows.forEach((r, i) => r.forEach(e => show(e, eOut(prog(l, tz + 2.3 + i * 0.6, tz + 2.7 + i * 0.6)), 0, 20)));
+    const last = rows[rows.length - 1][2]; last.style.background = `rgba(251,224,216,${zoom})`; last.style.borderRadius = '8px';
   };
 })();
 
@@ -491,6 +548,9 @@ scenes.s2 = (l, d) => {
   // 実際の記録の数（審査役の結果と完成の記録から）
   const band = mk('div', null, `<span style="color:var(--sub);font-weight:700">実際の記録：</span>1回目の確かめで要修正 <b style="color:var(--coral)">${D.shinsa.firstFix}件</b> → ${D.shinsa.doneRound}回目で <b style="color:var(--teal)">0件</b>、完成`, $('s4-checks'));
   band.style.cssText = 'position:absolute;top:530px;font-size:24px;font-weight:700;background:var(--paper);border-radius:12px;padding:10px 18px';
+  // 要修正の数が、実際の記録の数から0へ減る大きな数（審査役の札の右上）
+  const counter = mk('div', null, '', $('s4-review'));
+  counter.style.cssText = 'position:absolute;right:40px;top:26px;text-align:right;line-height:1';
   scenes.shinsa = (l, d) => {
     show($('sh-no'), eOut(prog(l, 0, 0.5)), 10);
     show($('sh-sol'), eOut(prog(l, 0.3, 1.0)), 30);
@@ -510,6 +570,9 @@ scenes.s2 = (l, d) => {
     verdict.textContent = '要修正の指摘を直すまで、完成にしない';
     show(verdict, eOut(prog(l, 4.6, 5.1)), 15);
     show(band, eOut(prog(l, 5.4, 5.9)), 15);
+    const n = Math.round(lerp(D.shinsa.firstFix, 0, eInOut(prog(l, 1.4, 4.4))));
+    counter.innerHTML = `<div style="font-size:18px;color:var(--sub);font-weight:700">要修正</div><div style="font-size:88px;font-weight:900;color:${n ? 'var(--coral)' : 'var(--teal)'}">${n}<span style="font-size:30px">件</span></div>`;
+    show(counter, eOut(prog(l, 1.1, 1.6)), 10);
   };
 })();
 
@@ -544,6 +607,9 @@ scenes.s2 = (l, d) => {
     const caps = capsOf('s5');
     const at = [1.8, 3.4, (caps[1] !== undefined ? caps[1] : 6.5) - 0.2];
     cards.forEach((c, i) => show(c, eOut(prog(l, at[i], at[i] + 0.5)), 0, 40));
+    // 期限の日数（1つ目の札の太字）は、跳ねて出し、色を付ける
+    const b = cards[0].querySelector('b');
+    if (b) { const p = eBack(prog(l, at[0] + 0.5, at[0] + 1.0)); b.style.display = 'inline-block'; b.style.transform = `scale(${1 + 0.18 * Math.sin(Math.PI * clamp(p))})`; b.style.color = p > 0.05 ? 'var(--coral)' : 'var(--ink)'; }
   };
 })();
 
@@ -576,7 +642,10 @@ async function seekTerm(local, d) {
   // 仕組み：開いたときのフックが Claude に渡す指示（実際の出力）
   $('pm-hook').innerHTML = `<div style="font-size:17px;color:var(--teal);font-weight:800;margin-bottom:6px">仕組み：フォルダを開くたびに、フック（SessionStart）が締切・書類・公式サイトの改訂を調べて渡す指示（実際の出力）</div><div style="font-size:19px;line-height:1.5">「${D.how.quote}」</div>`;
   scenes.pm = async (l, d) => {
-    const tw = eOut(prog(l, 0.1, 0.7)); $('pm-term').style.opacity = tw; $('pm-term').style.transform = `translateY(${(1 - tw) * 40}px)`;
+    // 答えが出そろうころ、端末に少し寄る
+    const push = eInOut(prog(l, d * 0.55, d - 0.5));
+    const tw = eOut(prog(l, 0.1, 0.7)); $('pm-term').style.opacity = tw; $('pm-term').style.transformOrigin = '0 100%';
+    $('pm-term').style.transform = `translateY(${(1 - tw) * 40}px) scale(${1 + 0.035 * push})`;
     $('xterm').style.transform = 'scale(1.0)';
     // フックの指示は「フォルダを開くたびに…」の所で先に出し、答えの札は端末の答えが出てから
     show($('pm-hook'), eOut(prog(l, 1.6, 2.2)), 0, 40);

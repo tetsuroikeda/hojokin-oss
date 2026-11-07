@@ -29,8 +29,8 @@ ASSETS = OUT / "assets"
 VOICE = OUT / "voice"
 
 # 場面ごとの、絵の動きに要る最短の長さ（秒）。台詞が短くても、絵が見終わるまで次へ行かない
-MIN_DUR = {"road": 15.0, "title": 6.5, "s1": 11.5, "s2": 11.5, "s3": 12.5, "hear": 10.0, "s4": 14.0, "shinsa": 9.5,
-           "nyuryoku": 10.0, "s5": 11.0, "pm": 17.0, "learn": 11.0, "start": 8.0, "built": 12.5, "end": 6.0}
+MIN_DUR = {"road": 15.0, "title": 6.5, "s1": 10.5, "s2": 11.5, "s3": 12.5, "hear": 10.0, "s4": 14.0, "shinsa": 9.5,
+           "nyuryoku": 10.0, "s5": 11.0, "pm": 16.0, "learn": 11.0, "start": 8.0, "built": 12.5, "end": 6.0}
 VOICE_LEAD = {"road": 0.4, "title": 0.6}  # 台詞を場面の頭から何秒遅らせるか（ほかは 0.3 秒）
 
 
@@ -148,7 +148,10 @@ def render_assets(company: Path, extra: Path, material: dict) -> None:
             p.rename(ASSETS / f"{stem}-{i}.png")
     # 別の段階の画像（採択のお知らせ、模擬の申請画面に保存された値の画面）
     for n in ("saitaku_tsuuchi.png", "nyuryoku_screen.png"):
-        shutil.copy(extra / n, ASSETS / n)
+        if (extra / n).exists():
+            shutil.copy(extra / n, ASSETS / n)
+        else:
+            print(f"注意：材料のフォルダに {n} がありません（その画面は空のまま撮ります）")
 
 
 def find_page(pdf: Path, text: str) -> int:
