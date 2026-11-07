@@ -53,9 +53,6 @@
           font-size: 17px; font-weight: 600; box-shadow: 0 8px 20px rgba(60,48,20,.18); white-space: nowrap; overflow: hidden; }
   .file .ic { width: 32px; height: 40px; border-radius: 5px; flex: none; color: #fff; font-size: 11px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 4px; font-weight: 800; }
   .tree { position: absolute; font-size: 15px; line-height: 1.4; white-space: nowrap; }
-  .fixp { position: absolute; top: 250px; width: 830px; height: 640px; }
-  .fixp .view img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; object-position: 50% 0; }
-  .fixp .cap b { color: var(--ink); }
   .tree .dir { color: var(--teal); font-weight: 800; }
   .check { position: absolute; font-size: 25px; font-weight: 600; display: flex; align-items: center; gap: 16px; }
   .check .box { width: 36px; height: 36px; border-radius: 10px; border: 3px solid var(--line); display: flex; align-items: center; justify-content: center; font-weight: 800; background: #fff; }
@@ -114,8 +111,8 @@
   <!-- 冒頭：社長の道のり -->
   <div class="scene" id="s-road">
     <div class="abs" id="road-lead" style="left:0;right:0;top:150px;text-align:center;">
-      <div id="road-l1" style="font-size:70px;font-weight:800;">人手が足りない町工場。</div>
-      <div id="road-l2" style="font-size:44px;font-weight:700;color:var(--teal);margin-top:18px;">見積の仕組みを入れたい。補助金を使いたい。</div>
+      <div id="road-l1" style="font-size:70px;font-weight:800;">人手が足りない中小企業。</div>
+      <div id="road-l2" style="font-size:44px;font-weight:700;color:var(--teal);margin-top:18px;">設備やシステムを入れたい。補助金を使いたい。</div>
     </div>
     <svg class="abs" id="road-svg" width="1920" height="1080" style="left:0;top:0"></svg>
     <div id="road-signs"></div>
@@ -132,7 +129,7 @@
 
   <!-- 段階1〜5 -->
   <div class="scene" id="s-s1">
-    <div class="step"><div class="no">STEP 1 ・ 探す</div><div class="prob">どれを使えばいいか分からない<span class="strike"></span></div>
+    <div class="step"><div class="no">STEP 1 ・ 探す</div><div class="prob">どの補助金が使えるか分からない<span class="strike"></span></div>
       <div class="sol">会社に合う補助金を<br>分けて、比べる</div>
       <div class="pts"><div class="pt">公募中・公募予定（発表済み）</div><div class="pt">要件・義務・返還の条件・自己負担</div><div class="pt">すべてに出典</div></div></div>
     <div class="sheet" id="s1-sheet" style="left:900px;top:200px;width:910px;height:720px;"><div class="cap"><span class="ic">W</span>補助金の候補.docx</div>
@@ -140,7 +137,7 @@
   </div>
 
   <div class="scene" id="s-s2">
-    <div class="step"><div class="no">STEP 2 ・ 調べる</div><div class="prob">ルールと書類が多すぎる<span class="strike"></span></div>
+    <div class="step"><div class="no">STEP 2 ・ 調べる</div><div class="prob">ルールが多く、調べる時間がない<span class="strike"></span></div>
       <div class="sol">公募要領を読み込み<br>ページつきで整理</div>
       <div class="pts"><div class="pt">要件・特例・必要な書類・締切</div><div class="pt">決まりごとに資料のページ</div><div class="pt">資料にないことは推測しない</div></div></div>
     <div class="sheet" id="s2-sheet" style="left:900px;top:200px;width:910px;height:720px;"><div class="cap"><span class="ic">W</span>概要と流れ.docx</div>
@@ -148,37 +145,44 @@
   </div>
 
   <div class="scene" id="s-s3">
-    <div class="step" style="width:760px"><div class="no">STEP 3 ・ 書類をそろえる</div><div class="prob">何が足りない？何が不備？<span class="strike"></span></div>
+    <div class="step" style="width:760px"><div class="no">STEP 3 ・ 書類をそろえる</div><div class="prob">書類が膨大で、管理が大変<span class="strike"></span></div>
       <div class="sol" id="s3-sol">原本を守って整理し<br>不備を見つける</div></div>
     <div id="s3-files"></div>
     <div class="tree" id="s3-tree" style="left:110px;top:480px;"></div>
     <div class="abs" id="s3-fubi" style="left:900px;top:200px;width:910px;"></div>
   </div>
 
+  <!-- 聞きながら進める（選択肢の画面） -->
+  <div class="scene" id="s-hear">
+    <div class="abs" id="hear-no" style="left:110px;top:200px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">STEP 3〜4 ・ 聞きながら進める</div>
+    <div class="abs" id="hear-sol" style="left:110px;top:250px;font-size:58px;font-weight:800;line-height:1.25">選択肢の画面で、<br>社長に聞く</div>
+    <div class="abs" id="hear-pts" style="left:110px;top:440px;display:flex;flex-direction:column;gap:14px"><div class="pt">勧める案に（推奨）</div><div class="pt">なぜ聞くのかを添える</div><div class="pt">「分からない」も選べる</div></div>
+    <div id="hear-cards"></div>
+  </div>
+
   <div class="scene" id="s-s4">
-    <div class="step"><div class="no">STEP 4 ・ 申請書を書く</div><div class="prob">これで採択される？<span class="strike"></span></div>
-      <div class="sol">書いて、<br>別の目で確かめる</div>
-      <div class="pts"><div class="pt">根拠のある数字の計画から書く</div><div class="pt">審査役のサブエージェントが確かめる</div><div class="pt">直すまで完成にしない</div></div></div>
-    <div class="sheet" id="s4-zaimu" style="left:900px;top:220px;width:430px;height:560px;"><div class="cap"><span class="ic">X</span>財務モデル.xlsx</div><div class="view"><img src="out/assets/zaimu-1.png"></div></div>
-    <div class="sheet" id="s4-plan" style="left:1120px;top:200px;width:430px;height:560px;"><div class="cap"><span class="ic">W</span>計画書</div><div class="view"><img id="s4-planimg" src="out/assets/keikaku-1.png"></div></div>
-    <div class="sheet" id="s4-konkyo" style="left:1340px;top:240px;width:470px;height:560px;"><div class="cap"><span class="ic">X</span>根拠対照表.xlsx</div><div class="view"><img src="out/assets/konkyo-1.png"></div><div class="real">実際の出力</div></div>
+    <div class="step"><div class="no">STEP 4 ・ 申請書を書く</div><div class="prob">採択される計画書が書けない<span class="strike"></span></div>
+      <div class="sol">公式の様式に書き、<br>数字は前提から計算</div>
+      <div class="pts"><div class="pt">Word・Excel の様式を壊さずに書く</div><div class="pt">書いてよい欄の外が変われば保存しない</div><div class="pt">前提を変えて試算できる収支計画</div></div></div>
+    <div class="sheet" id="s4-plan" style="left:900px;top:200px;width:440px;height:620px;"><div class="cap"><span class="ic">W</span>その1・2.docx（参考様式）</div><div class="view"><img id="s4-planimg" src="out/assets/keikaku-1.png"></div></div>
+    <div class="sheet" id="s4-sono3" style="left:1370px;top:230px;width:440px;height:620px;"><div class="cap"><span class="ic">X</span>その3.xlsx（指定様式）</div><div class="view"><img src="out/assets/sono3-1.png"></div><div class="real">実際の出力</div></div>
+    <div class="sheet" id="s4-zaimu" style="left:900px;top:200px;width:910px;height:470px;"><div class="cap"><span class="ic">X</span>財務モデル.xlsx ・ 前提のシート（黄色の値だけを書き換える）</div><div class="view"><img id="s4-zimg" src="out/assets/zaimu-1.png"><div class="mark" id="s4-zmark"></div></div><div class="real">実際の出力</div></div>
+    <div class="card" id="s4-sim" style="left:900px;top:695px;width:910px;padding:16px 26px;"></div>
+  </div>
+
+  <!-- 書いたものを、別の目で確かめる -->
+  <div class="scene" id="s-shinsa">
+    <div class="abs" id="sh-no" style="left:110px;top:200px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">STEP 4 ・ 確かめる</div>
+    <div class="abs" id="sh-sol" style="left:110px;top:250px;font-size:58px;font-weight:800;line-height:1.25">書いたときとは<br>別の目で確かめる</div>
+    <div class="abs" id="sh-pts" style="left:110px;top:440px;display:flex;flex-direction:column;gap:14px"><div class="pt">審査役のサブエージェント</div><div class="pt">要修正を直すまで完成にしない</div></div>
     <div class="card" id="s4-review" style="left:900px;top:200px;width:910px;height:720px;padding:34px 40px;">
       <div style="display:flex;align-items:center;gap:16px;margin-bottom:26px"><span class="sev chk" style="font-size:20px">審査役 shinsa</span><span style="font-size:22px;color:var(--sub)">書いたときとは別の文脈で確かめる</span></div>
       <div id="s4-checks" style="position:relative;height:500px"></div>
     </div>
   </div>
 
-  <!-- 指摘を受けて直す（前と後） -->
-  <div class="scene" id="s-fix">
-    <div class="abs" style="left:110px;top:186px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">社長の指摘を受けて、直す</div>
-    <div class="abs" id="fix-title" style="left:560px;top:174px;font-size:40px;font-weight:800;white-space:nowrap"></div>
-    <div class="sheet fixp" id="fix-before" style="left:110px;"><div class="cap"><span class="ic" style="background:var(--sub)">前</span><span id="fix-bnote"></span></div><div class="view" id="fix-bview"></div></div>
-    <div class="sheet fixp" id="fix-after" style="left:980px;"><div class="cap"><span class="ic">後</span><span id="fix-anote"></span></div><div class="view" id="fix-aview"></div><div class="real">実際の出力</div></div>
-    <div class="abs" id="fix-arrow" style="left:931px;top:540px;width:58px;height:58px;border-radius:50%;background:var(--teal);color:#fff;font-size:34px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 18px rgba(14,110,102,.35)">→</div>
-  </div>
-
   <div class="scene" id="s-s5">
-    <div class="step"><div class="no">STEP 5 ・ 採択の後</div><div class="prob">まだ手続きが続く<span class="strike"></span></div>
+    <div class="step"><div class="no">STEP 5 ・ 採択の後</div><div class="prob">採択の後も、手続きが大変<span class="strike"></span></div>
       <div class="sol">期限を出し、<br>発注を止める</div>
       <div class="pts"><div class="pt">通知から期限と出典ページ</div><div class="pt">資料の版の食い違いに気づく</div><div class="pt">指摘にない費用の重なりも</div></div></div>
     <div class="sheet" id="s5-sheet" style="left:900px;top:200px;width:520px;height:264px;"><div class="cap"><span class="ic">P</span>採択のお知らせ（架空）</div><div class="view"><img src="out/assets/saitaku_tsuuchi.png"></div></div>
@@ -194,22 +198,8 @@
       <div class="tbody" id="xterm"></div>
       <div class="real" id="pm-real">実際の Claude Code（待ち時間を詰めて再生）</div>
     </div>
-    <div id="pm-call" class="abs" style="left:1320px;top:230px;width:490px;"></div>
-  </div>
-
-  <!-- 仕組み -->
-  <div class="scene" id="s-how">
-    <div class="abs" style="left:110px;top:70px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">しくみ</div>
-    <div class="abs" style="left:110px;top:110px;font-size:52px;font-weight:800">フォルダを開くたびに、フックが調べる</div>
-    <div class="flow" id="how-flow" style="left:110px;right:110px;top:300px;">
-      <div class="box" id="hw1" style="width:330px"><div class="big" style="white-space:nowrap">📂 フォルダを開く</div><div class="small">社長は何もしない</div></div>
-      <div class="arrow" id="ha1"></div>
-      <div class="box" id="hw2" style="width:660px;text-align:left"><div class="big" style="color:var(--teal)">フック <span class="mono" style="font-size:22px;color:var(--sub)">SessionStart</span></div>
-        <div id="how-items" style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px 18px;font-size:21px;font-weight:600;white-space:nowrap"></div></div>
-      <div class="arrow" id="ha2"></div>
-      <div class="box" id="hw3" style="width:360px"><div class="big">💬 Claude が<br>最初の返事で知らせる</div></div>
-    </div>
-    <div class="quote" id="how-quote" style="left:110px;right:110px;top:640px;"></div>
+    <div id="pm-call" class="abs" style="left:1320px;top:220px;width:490px;"></div>
+    <div class="card" id="pm-hook" style="left:1320px;top:690px;width:490px;padding:16px 22px;border-left:8px solid var(--teal);"></div>
   </div>
 
   <!-- 学習 -->
@@ -327,7 +317,7 @@ const scenes = {};
   const path = $('road-path'), dash = $('road-dash');
   const L = path.getTotalLength();
   const at = [0.13, 0.33, 0.52, 0.71, 0.9];
-  const QS = ['どれを使えばいい？', 'ルールが多すぎる', '書類がそろわない', 'これで通るの？', '採択後も手続き…'];
+  const QS = ['どれが使える？', '調べる時間がない', '書類が膨大', '計画書が書けない', '採択後も大変'];
   const signs = at.map((a, i) => { const p = path.getPointAtLength(L * a); const s = mk('div', 'sign', `<div class="pin"></div>${STAGES[i]}`, $('road-signs')); s.style.left = p.x + 'px'; s.style.top = (p.y + 34) + 'px'; return s; });
   const qs = at.map((a, i) => { const p = path.getPointAtLength(L * a); const q = mk('div', 'q', QS[i], $('road-qs')); q.dataset.x = p.x; q.dataset.y = p.y; return q; });
   scenes.road = (l, d) => {
@@ -429,22 +419,76 @@ scenes.s2 = (l, d) => {
   };
 })();
 
-// ===== STEP 4 =====
+// ===== 聞きながら進める：選択肢の画面（AskUserQuestion）の問いを、その形に描き直す =====
 (() => {
-  const checks = ['聞き取りの答えと、本文の事実が食い違っていないか', '根拠のない数字・固有名詞・日付はないか', '現状 → 課題 → 解決策 → 効果 の筋が通っているか', '審査項目と加点項目を、1つ残らず採点', '投資の効果が、数字で伝わるか', '過去の指摘と、会社の書き方の決まりに沿っているか'];
+  const host = $('hear-cards');
+  const tops = [200, 545];
+  const cards = D.hear.map((q, i) => {
+    const opts = q.options.map(([label, desc], k) => `<div class="hopt" style="display:flex;gap:14px;align-items:baseline;padding:5px 10px;border-radius:8px;${k === 0 ? 'background:var(--tealL);' : ''}">
+        <span style="font-family:Menlo,monospace;font-size:18px;color:var(--sub);width:22px">${k === 0 ? '❯' : ''}</span><span style="font-size:20px;font-weight:800;white-space:nowrap;min-width:150px;color:${k === 0 ? 'var(--teal)' : 'var(--ink)'}">${k + 1}. ${label}</span><span style="font-size:18px;color:var(--sub)">${desc}</span></div>`).join('');
+    // 問いの「（理由：…）」は、別の行にして色を付ける
+    const m = q.question.match(/^(.*?)(（理由：.*）)$/);
+    const body = m ? `${m[1]}<div class="hwhy" style="font-size:18px;color:#a06b00;font-weight:700;margin-top:4px">${m[2]}</div>` : q.question;
+    const e = mk('div', 'card', `<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px"><span style="font-size:18px;color:var(--teal);font-weight:800">${q.when}</span><span class="tag" style="font-size:16px">${q.header}</span><span style="margin-left:auto;font-size:15px;color:var(--sub)">選択肢の画面（AskUserQuestion）の実際の問い・描き直し</span></div>
+      <div style="font-size:21px;font-weight:700;line-height:1.45;margin-bottom:8px">${body}</div>${opts}`, host);
+    e.style.left = '900px'; e.style.top = tops[i] + 'px'; e.style.width = '910px'; e.style.padding = '16px 22px';
+    return e;
+  });
+  scenes.hear = (l, d) => {
+    show($('hear-no'), eOut(prog(l, 0, 0.5)), 10);
+    show($('hear-sol'), eOut(prog(l, 0.3, 1.0)), 30);
+    [...$('hear-pts').children].forEach((e, i) => show(e, eOut(prog(l, 1.4 + i * 0.5, 1.9 + i * 0.5)), 0, -30));
+    const caps = capsOf('hear');
+    cards.forEach((c, i) => show(c, eOut(prog(l, 0.6 + i * 1.8, 1.2 + i * 1.8)), 0, 50));
+    // 2つ目の文（勧める案と理由）で、推奨の行と理由を強める
+    const hi = eOut(prog(l, (caps[1] !== undefined ? caps[1] : 5) - 0.2, (caps[1] !== undefined ? caps[1] : 5) + 0.4));
+    $('s-hear').querySelectorAll('.hwhy').forEach(w => { w.style.background = `rgba(242,184,75,${0.35 * hi})`; w.style.borderRadius = '6px'; });
+  };
+})();
+
+// ===== STEP 4：公式の様式に書く、前提から計算する財務モデル =====
+(() => {
+  const s = D.zaimuSim;
+  $('s4-sim').innerHTML = `<div style="font-size:19px;font-weight:800;color:var(--teal);margin-bottom:8px">前提を1つ変えると、計画が計算し直される<span style="color:var(--sub);font-weight:600;font-size:16px">　作業用の写しを LibreOffice で開き直した結果</span></div>
+    <div style="font-size:20px;font-weight:700;margin-bottom:8px">${s.change[0]}：<b>${s.change[1]}</b> → <b style="color:var(--coral)">${s.change[2]}</b></div>
+    <div id="s4-simrows" style="display:grid;grid-template-columns:1.6fr 1fr 1fr;gap:4px 16px;font-size:20px"></div>`;
+  const rows = s.rows.map(([k, a, b]) => {
+    const host = $('s4-simrows');
+    const e = [mk('div', null, k, host), mk('div', null, a, host), mk('div', null, `→ <b style="color:${b.includes('満たさない') ? 'var(--coral)' : 'var(--ink)'}">${b}</b>`, host)];
+    return e;
+  });
+  scenes.s4 = (l, d) => {
+    stepHead($('s-s4'), l);
+    const caps = capsOf('s4');
+    const tz = (caps[2] !== undefined ? caps[2] : 7) - 0.4;   // 「財務モデルは…」の文から
+    const out = eInOut(prog(l, tz - 0.3, tz + 0.3));
+    [['s4-plan', 0.8], ['s4-sono3', 1.6]].forEach(([id, t0]) => { sheetIn($(id), l, t0); $(id).style.opacity *= (1 - out); });
+    $('s4-planimg').style.transform = `translateY(${-eInOut(prog(l, 2.5, tz)) * 120}px)`;
+    sheetIn($('s4-zaimu'), l, tz);
+    $('s4-zaimu').style.opacity *= out;
+    // P-02（注文になる割合の上げ幅）の行に印を引く（画像の上の位置）
+    const mx = eOut(prog(l, tz + 1.0, tz + 1.6));
+    $('s4-zmark').style.cssText = `left:30px;top:144px;width:${845 * mx}px;height:32px;opacity:${mx}`;
+    show($('s4-sim'), eOut(prog(l, tz + 1.6, tz + 2.2)), 30);
+    rows.forEach((r, i) => r.forEach(e => show(e, eOut(prog(l, tz + 2.3 + i * 0.6, tz + 2.7 + i * 0.6)), 0, 20)));
+  };
+})();
+
+// ===== STEP 4：審査役が確かめる =====
+(() => {
+  const checks =['聞き取りの答えと、本文の事実が食い違っていないか', '根拠のない数字・固有名詞・日付はないか', '現状 → 課題 → 解決策 → 効果 の筋が通っているか', '審査項目と加点項目を、1つ残らず採点', '投資の効果が、数字で伝わるか', '過去の指摘と、会社の書き方の決まりに沿っているか'];
   const rows = checks.map((c, i) => { const e = mk('div', 'check', `<span class="box"></span><span>${c}</span>`, $('s4-checks')); e.style.top = i * 76 + 'px'; return e; });
   const verdict = mk('div', null, '', $('s4-checks')); verdict.style.cssText = 'position:absolute;top:470px;font-size:27px;font-weight:800;color:var(--teal)';
   // 実際の記録の数（審査役の結果と完成の記録から）
   const band = mk('div', null, `<span style="color:var(--sub);font-weight:700">実際の記録：</span>1回目の確かめで要修正 <b style="color:var(--coral)">${D.shinsa.firstFix}件</b> → ${D.shinsa.doneRound}回目で <b style="color:var(--teal)">0件</b>、完成`, $('s4-checks'));
   band.style.cssText = 'position:absolute;top:530px;font-size:24px;font-weight:700;background:var(--paper);border-radius:12px;padding:10px 18px';
-  scenes.s4 = (l, d) => {
-    stepHead($('s-s4'), l);
-    const out = eInOut(prog(l, 6.2, 7.0));
-    [['s4-zaimu', 0.8], ['s4-plan', 1.6], ['s4-konkyo', 2.4]].forEach(([id, t0]) => { sheetIn($(id), l, t0); $(id).style.opacity *= (1 - out); });
-    $('s4-planimg').style.transform = `translateY(${-eInOut(prog(l, 2.5, 6.2)) * 160}px)`;
-    const rv = $('s4-review'); const rx = eOut(prog(l, 6.6, 7.3)); rv.style.opacity = rx; rv.style.transform = `translateY(${(1 - rx) * 50}px)`;
+  scenes.shinsa = (l, d) => {
+    show($('sh-no'), eOut(prog(l, 0, 0.5)), 10);
+    show($('sh-sol'), eOut(prog(l, 0.3, 1.0)), 30);
+    [...$('sh-pts').children].forEach((e, i) => show(e, eOut(prog(l, 1.4 + i * 0.5, 1.9 + i * 0.5)), 0, -30));
+    const rv = $('s4-review'); const rx = eOut(prog(l, 0.4, 1.1)); rv.style.opacity = rx; rv.style.transform = `translateY(${(1 - rx) * 50}px)`;
     rows.forEach((r, i) => {
-      const t0 = 7.4 + i * 0.45;
+      const t0 = 1.1 + i * 0.45;
       show(r, eOut(prog(l, t0, t0 + 0.35)), 0, 20);
       const done = l > t0 + 0.7 + (i === 4 ? 1.3 : 0);
       const fix = i === 4 && l > t0 + 0.5 && !done;
@@ -455,36 +499,8 @@ scenes.s2 = (l, d) => {
       box.style.color = done ? 'var(--teal)' : 'var(--coral)';
     });
     verdict.textContent = '要修正の指摘を直すまで、完成にしない';
-    show(verdict, eOut(prog(l, 10.6, 11.1)), 15);
-    show(band, eOut(prog(l, 11.2, 11.7)), 15);
-  };
-})();
-
-// ===== 指摘を受けて直す：前と後を4組、順に入れ替える =====
-(() => {
-  const bv = $('fix-bview'), av = $('fix-aview');
-  const imgs = D.fix.map(([title, bnote, anote, bimg, aimg]) => [mk('img', null, null, bv), mk('img', null, null, av)].map((e, k) => { e.src = 'out/assets/' + (k ? aimg : bimg); return e; }));
-  scenes.fix = (l, d) => {
-    const x = eOut(prog(l, 0.1, 0.7));
-    ['fix-before', 'fix-after'].forEach((id, k) => { const e = $(id); e.style.opacity = x; e.style.transform = `translateY(${(1 - x) * 50}px)`; });
-    show($('fix-arrow'), eOut(prog(l, 0.5, 1.0)), 0, -20);
-    // 組 i は、字幕の i 番目の文が出る時刻から（台詞の文と組の順をそろえてある）。
-    // その0.25秒前から0.45秒かけて入れ替える（前の組は、その間だけ下に残す）
-    const caps = capsOf('fix');
-    const starts = D.fix.map((_, i) => i === 0 ? 0 : (caps[i] !== undefined ? caps[i] : 0.3 + i * (d - 0.6) / D.fix.length));
-    let cur = 0;
-    starts.forEach((s, i) => { if (l >= s - 0.25) cur = i; });
-    const t0 = starts[cur];
-    const o = cur === 0 ? 1 : eOut(prog(l, t0 - 0.25, t0 + 0.2));
-    imgs.forEach(([b, a], i) => {
-      const vis = i === cur ? o : (i === cur - 1 ? 1 - o : 0);
-      b.style.opacity = vis; a.style.opacity = vis;
-    });
-    const [title, bnote, anote] = D.fix[cur];
-    $('fix-title').textContent = title;
-    $('fix-bnote').innerHTML = `直す前：<b>${bnote}</b>`;
-    $('fix-anote').innerHTML = `直した後：<b>${anote}</b>`;
-    show($('fix-title'), cur === 0 ? eOut(prog(l, 0.2, 0.6)) : o, 8);
+    show(verdict, eOut(prog(l, 4.6, 5.1)), 15);
+    show(band, eOut(prog(l, 5.4, 5.9)), 15);
   };
 })();
 
@@ -531,28 +547,16 @@ async function seekTerm(local, d) {
 }
 (() => {
   const call = $('pm-call');
-  const items = D.pm.callouts.map(([k, v]) => { const c = mk('div', 'card', `<div style="font-size:20px;color:var(--sub);font-weight:700">${k}</div><div style="font-size:30px;font-weight:800;margin-top:6px;line-height:1.35">${v}</div>`, call); c.style.position = 'relative'; c.style.marginBottom = '18px'; return c; });
+  const items = D.pm.callouts.map(([k, v]) => { const c = mk('div', 'card', `<div style="font-size:20px;color:var(--sub);font-weight:700">${k}</div><div style="font-size:28px;font-weight:800;margin-top:6px;line-height:1.35">${v}</div>`, call); c.style.position = 'relative'; c.style.marginBottom = '16px'; return c; });
+  // 仕組み：開いたときのフックが Claude に渡す指示（実際の出力）
+  $('pm-hook').innerHTML = `<div style="font-size:17px;color:var(--teal);font-weight:800;margin-bottom:6px">仕組み：フォルダを開くたびに、フック（SessionStart）が締切・書類・公式サイトの改訂を調べて渡す指示（実際の出力）</div><div style="font-size:19px;line-height:1.5">「${D.how.quote}」</div>`;
   scenes.pm = async (l, d) => {
     const tw = eOut(prog(l, 0.1, 0.7)); $('pm-term').style.opacity = tw; $('pm-term').style.transform = `translateY(${(1 - tw) * 40}px)`;
     $('xterm').style.transform = 'scale(1.0)';
+    // フックの指示は「フォルダを開くたびに…」の所で先に出し、答えの札は端末の答えが出てから
+    show($('pm-hook'), eOut(prog(l, 1.6, 2.2)), 0, 40);
     items.forEach((c, i) => show(c, eOut(prog(l, d * 0.45 + i * 1.1, d * 0.45 + i * 1.1 + 0.5)), 0, 40));
     await seekTerm(l, d);
-  };
-})();
-
-// ===== 仕組み =====
-(() => {
-  const host = $('how-items');
-  const its = D.how.items.map(s => mk('div', null, `✓ ${s}`, host));
-  $('how-quote').innerHTML = `<div style="font-size:19px;color:var(--sub);font-weight:700;margin-bottom:6px">フックが Claude に渡す指示（実際の出力）</div>「${D.how.quote}」`;
-  scenes.how = (l, d) => {
-    show($('hw1'), eOut(prog(l, 0.3, 0.9)), 20);
-    $('ha1').style.transform = `scaleX(${eOut(prog(l, 0.9, 1.4))})`; $('ha1').style.transformOrigin = '0 50%';
-    show($('hw2'), eOut(prog(l, 1.3, 1.9)), 20);
-    its.forEach((e, i) => show(e, eOut(prog(l, 2.0 + i * 0.35, 2.4 + i * 0.35)), 0, -16));
-    $('ha2').style.transform = `scaleX(${eOut(prog(l, 4.6, 5.1))})`; $('ha2').style.transformOrigin = '0 50%';
-    show($('hw3'), eOut(prog(l, 5.0, 5.6)), 20);
-    show($('how-quote'), eOut(prog(l, 6.4, 7.1)), 30);
   };
 })();
 

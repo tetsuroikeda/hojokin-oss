@@ -17,6 +17,8 @@ import os
 import re
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -47,8 +49,22 @@ def gemini(text: str, model: str, voice: str, key: str, raw: Path) -> Path:
         data=json.dumps(body).encode("utf-8"),
         headers={"x-goog-api-key": key, "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=180) as res:
-        data = json.loads(res.read())
+    # 1分あたりの上限（429）や混み合い（503）のときは、待って送り直す
+    for wait in (20, 40, 60, 90, 0):
+        try:
+            with urllib.request.urlopen(req, timeout=180) as res:
+                data = json.loads(res.read())
+            break
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 503) or not wait:
+                raise
+            # 理由の文（上限の種類）だけを出す。鍵は返りの文に入らない
+            try:
+                reason = json.loads(e.read().decode("utf-8", "ignore"))["error"]["message"][:160]
+            except Exception:
+                reason = ""
+            print(f"  声の API が {e.code} を返したので、{wait} 秒待って送り直す（{reason}）")
+            time.sleep(wait)
     parts = data["candidates"][0]["content"]["parts"]
     inline = next(p["inlineData"] for p in parts if "inlineData" in p)
     audio = base64.b64decode(inline["data"])

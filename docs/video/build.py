@@ -6,7 +6,7 @@
 - デモの会社のフォルダは、申請書を書き終えた段階の会社のフォルダ（架空の株式会社みずなら精工）。
   その中の実物の出力（補助金の候補.docx・計画書・根拠対照表・財務モデル）と、審査役の結果・質問の記録を使う。
 - 材料のフォルダ（リポの外）には、別の段階で作った実物を置く（README の「作り方」）：
-  概要と流れ.docx、指摘の前後の画像（fix_*.png）、採択のお知らせの画像（saitaku_tsuuchi.png）、
+  概要と流れ.docx、採択のお知らせの画像（saitaku_tsuuchi.png）、
   学習の場面の数を取る会社の記録（会社の記録_練習.json）。
 - 実際の対話の文は docs/video/対話/ に置き、素材.json の引用がその中にそのままあるかを確かめる（作り話を入れないため）。
 - 出来たものは docs/video/out/（Git の外）。最後の mp4 は out/hojokin_demo.mp4。
@@ -29,8 +29,8 @@ ASSETS = OUT / "assets"
 VOICE = OUT / "voice"
 
 # 場面ごとの、絵の動きに要る最短の長さ（秒）。台詞が短くても、絵が見終わるまで次へ行かない
-MIN_DUR = {"road": 15.0, "title": 6.5, "s1": 11.5, "s2": 11.5, "s3": 12.5, "s4": 13.0, "fix": 13.0, "s5": 11.0,
-           "pm": 18.0, "how": 11.0, "learn": 11.0, "start": 9.5, "built": 14.0, "end": 6.0}
+MIN_DUR = {"road": 15.0, "title": 6.5, "s1": 11.5, "s2": 11.5, "s3": 12.5, "hear": 10.0, "s4": 14.0, "shinsa": 9.5,
+           "s5": 11.0, "pm": 17.0, "learn": 11.0, "start": 9.5, "built": 14.0, "end": 6.0}
 VOICE_LEAD = {"road": 0.4, "title": 0.6}  # 台詞を場面の頭から何秒遅らせるか（ほかは 0.3 秒）
 
 
@@ -95,7 +95,7 @@ def terminal_text(path: Path) -> str:
 
 def check_quotes(material: dict) -> None:
     # 素材.json の引用が、実際の対話の記録にそのままあるかを確かめる
-    for key in ("pm", "shorui", "learn", "how", "saitaku"):
+    for key in ("pm", "shorui", "learn", "how", "saitaku", "hear"):
         src = (HERE / material[key]["source"]).read_text(encoding="utf-8")
         if src.lstrip().startswith("{"):
             src = terminal_text(HERE / material[key]["source"])
@@ -108,6 +108,9 @@ def check_quotes(material: dict) -> None:
             quotes = [s[2] for s in material[key]["second"]]
         elif key == "saitaku":
             quotes = [q[1] for q in material[key]["quotes"]]
+        elif key == "hear":
+            quotes = [q["question"] for q in material[key]["questions"]] + \
+                     [s for q in material[key]["questions"] for opt in q["options"] for s in opt]
         else:
             quotes = [material[key]["quote"]]
         for q in quotes:
@@ -125,6 +128,7 @@ def render_assets(company: Path, extra: Path, material: dict) -> None:
         "kouho.docx": (company / "補助金の候補.docx", 1, 2),
         "gaiyou.docx": (extra / "概要と流れ.docx", "満たす要件・当てはまらない要件", None),
         "keikaku.docx": (case1 / "1_申請" / "申請書" / "その1・2.docx", 1, 3),
+        "sono3.xlsx": (case1 / "1_申請" / "申請書" / "その3.xlsx", 1, 1),
         "konkyo.xlsx": (case1 / "1_申請" / "申請書" / "根拠対照表.xlsx", 1, 1),
         "zaimu.xlsx": (company / "財務モデル.xlsx", 1, 1),
     }
@@ -140,10 +144,8 @@ def render_assets(company: Path, extra: Path, material: dict) -> None:
         made = sorted(ASSETS.glob(f"{stem}_p-*.png"), key=lambda p: int(p.stem.rsplit("-", 1)[1]))
         for i, p in enumerate(made, 1):
             p.rename(ASSETS / f"{stem}-{i}.png")
-    # 別の段階で作った画像（指摘の前後、採択のお知らせ）
-    names = [n for pair in material["fix"]["pairs"] for n in pair[3:5]] + ["saitaku_tsuuchi.png"]
-    for n in names:
-        shutil.copy(extra / n, ASSETS / n)
+    # 別の段階の画像（採択のお知らせ）
+    shutil.copy(extra / "saitaku_tsuuchi.png", ASSETS / "saitaku_tsuuchi.png")
 
 
 def find_page(pdf: Path, text: str) -> int:
@@ -201,7 +203,8 @@ def write_data(timeline, captions, total, material, cdata) -> None:
         "built": material["built"],
         "shorui": {k: material["shorui"][k] for k in ("inputs", "tree", "fubi", "summary")},
         "learn": learn,
-        "fix": material["fix"]["pairs"],
+        "hear": material["hear"]["questions"],
+        "zaimuSim": {k: material["zaimu_sim"][k] for k in ("change", "rows")},
         "saitaku": [[label, bold(q)] for label, q in material["saitaku"]["quotes"]],
         "shinsa": cdata["shinsa"],
     }
