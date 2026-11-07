@@ -1,7 +1,7 @@
 """説明の練習（想定問答）の材料を出す道具（SPEC F11、DESIGN 4.2・6章。TASKS M9）。
 
 使い方（--folder "${CLAUDE_PROJECT_DIR}" を付ける。なければ今いるフォルダ）：
-  python3 -B <この場所>/renshu.py [--case <案件>] [--stage <段階>] [--seido <制度データ>] [--count <数>]
+  python3 -B <この場所>/renshu.py [--case <案件>] [--stage <段階>] [--seido <制度データ>] [--count <数>] [--oral]
 
 出すもの（何も書かない。読むだけ）：
 1. 進め方：この skill の別ファイル `説明の練習.md` の中身。ファイルの道具はプラグインの中を読めないので、
@@ -9,6 +9,9 @@
 2. 練習で問う審査項目：制度データの「審査項目」のすべて（SPEC T11-2「質問がすべての審査項目にわたる」。TASKS B30）。
    並べ方は pick_items のとおり。答えてもらうのは3問ずつなので、問1〜3、問4〜6…の組に分けて示す。
    --count を付けたときだけ、その数に絞り、残りは「そのほかの審査項目」として並べる。
+   --oral（口頭審査・面接の練習）を付けたときは、制度データの口頭審査の観点に名前が挙がった審査項目だけを問い、ほかの項目
+   （政策面など、書面審査だけの項目）は「そのほかの審査項目」に置く（省力化 第9回の要領 p.33：口頭審査は適格性・技術面・
+   計画面の観点。11/7 の通しで、口頭審査の練習に政策面を混ぜていた）。挙がった項目がなければ、すべてを問い、そのことを示す。
 3. 計画書の本文：申請書（`案件/<案件>/<段階>/申請書/`）から道具が取り出した文字（lib/kakunin.py の plan_text。
    様式の説明の青字は除く）と、財務モデル.xlsx の前提。答えと照らすのは Claude が行う（DESIGN 6章「想定問答」）。
 4. 申請書の状態：今の申請書が、完成の記録（記録/完成の記録.json）にある版と同じか。違っても練習はできる。
@@ -26,6 +29,7 @@ import sys
 sys.dont_write_bytecode = True
 
 import argparse  # noqa: E402
+import unicodedata  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
@@ -56,6 +60,8 @@ def parse(argv):
     parser.add_argument("--stage", help="段階のフォルダ（1_申請 など）。省くと番号のいちばん小さい段階")
     parser.add_argument("--seido", help="制度データ（記録/制度データ/ の中の JSON）。1つなら省いてよい")
     parser.add_argument("--count", type=int, help="練習で問う審査項目の数（省くと、すべての審査項目）")
+    parser.add_argument("--oral", action="store_true",
+                        help="口頭審査（面接）の練習。制度データの口頭審査の観点に名前が挙がった審査項目だけを問う")
     args = parser.parse_args(argv)
     if args.count is not None and args.count < 1:
         raise Refused("--count は1以上にしてください")
@@ -82,20 +88,41 @@ def _viewpoints(item: dict) -> list:
     return []
 
 
-def pick_items(items: list, count=None):
+def oral_items(items: list) -> list:
+    """区分が「口頭審査」の項目の観点に名前が挙がった、ほかの審査項目（制度データの並び順）。
+
+    観点は、名前を1つずつ並べた形（第8回の読み取り）のほか、「補助対象事業としての適格性、技術面、計画面の観点から審査」の
+    ような1つの文（第9回の読み取り）のこともあるので、観点の文の中に審査項目の名前があるかで見る（11/7 の通しで、第9回の
+    形では1つも当たらず、口頭審査の練習に政策面が混ざった）。
+    """
+    oral = [it for it in items if str(it.get("区分") or "") == ORAL]
+    views = [unicodedata.normalize("NFKC", v) for it in oral for v in _viewpoints(it)]
+    found = []
+    for it in items:
+        if it in oral:
+            continue
+        name = unicodedata.normalize("NFKC", str(it["名前"]).strip())
+        if name and any(name in v for v in views):
+            found.append(it)
+    return found
+
+
+def pick_items(items: list, count=None, oral_only: bool = False):
     """練習で問う審査項目と、そのほかの審査項目に分ける（count が None なら、すべてを問う）。
 
     - 区分が「口頭審査」の項目の観点に、ほかの審査項目の名前が挙がっていれば、それを先に選ぶ（口頭審査で問われる
-      項目のため。省力化 第8回では、適格性・技術面・計画面）。
+      項目のため。省力化 第8回・第9回では、適格性・技術面・計画面。第9回の要領 p.33）。
     - 残りは、制度データの並び順に選ぶ。口頭審査の項目そのもの（口頭審査で何を見るかの説明）は、ほかに問える
       項目がないときだけ選ぶ。
+    - oral_only（口頭審査の練習）なら、口頭審査の観点に挙がった項目だけを問い、ほかの審査項目（政策面など、書面審査だけの
+      項目）は「そのほか」に回す。挙がった項目がなければ（口頭審査のない制度など）、すべてを問う（呼ぶ側が一言添える）。
     """
     oral = [it for it in items if str(it.get("区分") or "") == ORAL]
     written = [it for it in items if it not in oral] or oral
-    named = set()
-    for it in oral:
-        named.update(v.strip() for v in _viewpoints(it))
-    first = [it for it in written if str(it["名前"]).strip() in named]
+    first = oral_items(items)
+    if oral_only and first:
+        chosen = first[:count] if count is not None else first
+        return chosen, [it for it in items if it not in chosen]
     order = first + [it for it in written if it not in first]
     if count is None:  # すべての審査項目を問う（口頭審査の説明の項目は、ほかに問える項目があれば問わずに残す）
         return order, [it for it in items if it not in order]
@@ -216,23 +243,36 @@ def materials(folder: Path, args, kk) -> str:
         raise Refused(f"{case}／{stage} の申請書（申請書/ の中の計画書・入力シート）がまだありません。"
                       "先に計画書を書いてから練習してください")
     guide = _guide_lines()
-    chosen, rest = pick_items(items, args.count)
+    oral_only = bool(getattr(args, "oral", False))
+    chosen, rest = pick_items(items, args.count, oral_only=oral_only)
     names = _source_names(seido)
     out = [f"# 説明の練習の材料（案件：{case}　段階：{stage}）", "",
            f"申請書の状態：{_state_line(folder, case, stage, kk)}", "",
            "下の「進め方」に従って、「練習で問う審査項目」の問1・問2…の項目から1問ずつ作り（どの項目も飛ばさない）、"
            "社長の答えを「計画書の本文」と照らしてください。",
            f"始めに問いの全体の一覧（問1〜問{len(chosen)}）を示し、答えてもらうのは{PER_ROUND}問ずつにしてください。",
-           "この出力は社長にそのまま見せず、問いと結果だけを普段の言葉で伝えてください。", "",
-           "## 進め方（kaku の別ファイル「説明の練習」）", ""] + guide + [
-           "", f"## 練習で問う審査項目（{len(chosen)}つ。制度データ：{seido_rel}）", ""]
+           "この出力は社長にそのまま見せず、問いと結果だけを普段の言葉で伝えてください。", ""]
+    if oral_only:
+        oral = [it for it in items if str(it.get("区分") or "") == ORAL]
+        if oral_items(items):
+            where = "、".join(s for s in (_sources(it, names) for it in oral) if s)
+            out += ["口頭審査の練習です。問うのは、制度データの口頭審査の観点に名前が挙がった審査項目（"
+                    + "・".join(str(it["名前"]) for it in chosen) + (f"。出典：{where}" if where else "") + "）だけです。"
+                    "ほかの審査項目（書面審査だけの項目）は「そのほかの審査項目」に置いたので、口頭審査の練習では問いません。", ""]
+        else:
+            out += ["口頭審査の練習を頼まれましたが、制度データに、口頭審査の観点に名前が挙がった審査項目がありません"
+                    "（口頭審査のない制度か、読み取っていない）。すべての審査項目から問います。このことを社長に一言伝えてください。", ""]
+    out += ["## 進め方（kaku の別ファイル「説明の練習」）", ""] + guide + [
+            "", f"## 練習で問う審査項目（{len(chosen)}つ。制度データ：{seido_rel}）", ""]
     for n, item in enumerate(chosen, 1):
         if (n - 1) % PER_ROUND == 0:
             last = min(n + PER_ROUND - 1, len(chosen))
             out.append(f"（{(n - 1) // PER_ROUND + 1}回目に答えてもらう問い：問{n}〜問{last}）")
         out += _item_lines(item, f"問{n}：", names)
     out.append("")
-    if rest:
+    if rest and oral_only and oral_items(items):
+        out += ["## そのほかの審査項目（口頭審査の観点にないので、口頭審査の練習では、続けるときも問わない）", ""]
+    elif rest:
         out += ["## そのほかの審査項目（今回は問わない。続けて練習するときに使う）", ""]
         for item in rest:
             out += _item_lines(item, "- ", names)
