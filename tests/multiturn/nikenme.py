@@ -195,7 +195,7 @@ def reflect(values: Dict[str, str]) -> Dict[str, dict]:
         if k in names:
             continue
         if "概要" in k:  # 概要の欄の最初の文で会社を名乗るのは、ふだんの書き方（「今回だけ」の指示が残ったものと見ない）
-            v = re.split(r"(?<=。)", v, 1)[-1] if "。" in v else ""
+            v = re.split(r"(?<=。)", v, maxsplit=1)[-1] if "。" in v else ""
         texts.append(v)
     company_as_subject = re.findall(r"やまぶき惣菜(は|が)", "\n".join(texts))
     last = list(values.values())[-1] if values else ""
