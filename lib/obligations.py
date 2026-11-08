@@ -43,10 +43,6 @@ from typing import Any, Dict, List, Optional, Tuple
 EVIDENCE_KIND = "証拠"  # lib/task_ledger.py の KINDS
 DUTY_KIND = "義務"
 COLLECT = "証拠をそろえる"
-APPLY_FIRST = "事前に申請する"
-REPORT = "報告する"
-KEEP_DOING = "守り続ける"
-KEEP_FILES = "残す"
 DURING = "事業期間中"
 AFTER = "事業後"
 DECISION_WORD = "交付決定"

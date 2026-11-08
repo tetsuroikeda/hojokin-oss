@@ -44,7 +44,6 @@ KINDS = ("前後比較", "数値計画", "工程表", "推移")
 TREND_SOURCES = ("合算", "指標", "投資の効果の見え方", "人数")
 TREND_MAX = 3  # 4つ並べると、棒の上の数が隣と重なった
 NUMBERS_FILE = "記録/財務モデルの数字.json"  # lib/zaimu.py の NUMBERS_FILE と同じ
-PHOTO_TYPES = {b"\x89PNG": "png", b"\xff\xd8\xff": "jpeg"}
 
 # 色と文字（作図の手引きの既定の色から。灰色は「今」を控えめに見せる）
 SURFACE = "#ffffff"

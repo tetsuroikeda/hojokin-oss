@@ -70,15 +70,6 @@ def allowed_place(rel: object, kind: Optional[str] = None) -> bool:
     return is_original or is_official
 
 
-def kind_of_place(rel: str) -> str:
-    """場所から種類（原本・公式資料）を決める。決まりの外なら空。"""
-    if allowed_place(rel, ORIGINAL):
-        return ORIGINAL
-    if allowed_place(rel, OFFICIAL):
-        return OFFICIAL
-    return ""
-
-
 def real_place_problem(folder: Path, rel: str) -> str:
     """rel までのフォルダに別名（エイリアス）がないかを確かめる。問題がなければ空、あれば理由。
 

@@ -107,7 +107,6 @@ import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from lib import youken
@@ -2540,7 +2539,3 @@ def compare(expected: Dict[Tuple[str, str], Any], got: Dict[Tuple[str, str], Any
         if not same(value, other):
             wrong.append(f"{sheet}!{ref}：Python {value!r} ／ 計算し直し {other!r}")
     return wrong
-
-
-def decimal_text(value: Optional[Decimal]) -> str:
-    return "" if value is None else format(value, "f")

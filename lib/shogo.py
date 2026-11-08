@@ -102,10 +102,8 @@ def covered(token: str, descriptions: Sequence[str]) -> bool:
 
 # ---------------------------------------------------------------- 財務モデルの数字
 
-YEAR_RE = re.compile(r"(基準年度|[0-9]+年目)")
 _REF_IN_PAREN = re.compile(r"財務モデル(?:\.xlsx)?\s*[（(]([^）)]+)[）)]")
 _REF_AFTER = re.compile(r"財務モデル(?:\.xlsx)?\s+(.+)$")
-BUSINESS_KEYS = ("売上", "原材料費", "給与支給総額", "その他の人件費", "減価償却費", "その他の経費", "人件費", "営業利益")
 SHORYOKU_KEYS = ("省力化指数", "投資回収期間", "削減工数", "増加した付加価値額", "削減される業務に要していた時間",
                  "導入後に発生する業務に要する時間")
 
@@ -165,8 +163,7 @@ def model_value(numbers: Dict[str, Any], ref: str) -> Optional[Tuple[float, str]
 
     if len(names) == 1:
         key = names[0]
-        aliases = {"労働生産性の伸び": "労働生産性の伸び", "1人当たり給与支給総額": "1人当たり給与",
-                   "1人当たり給与支給総額の伸び": "1人当たり給与の伸び", "付加価値額の伸び": "付加価値額の伸び"}
+        aliases = {"1人当たり給与支給総額": "1人当たり給与", "1人当たり給与支給総額の伸び": "1人当たり給与の伸び"}
         key = aliases.get(key, key)
         if key in indicators:
             v = pick(indicators[key])

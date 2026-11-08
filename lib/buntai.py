@@ -28,7 +28,7 @@ CAUTION = "注意"
 WEAK = "弱い注意"
 B_HIT = "避ける言い回し"
 COMPANY_HIT = "避けたい言い方"
-LONG_MUST, LONG_CAUTION = 100, 60
+LONG_SPLIT, LONG_CAUTION = 100, 60
 TOO_MANY_COMMAS = 4
 KANJI_RUN = 7
 KANJI_SHARE = 0.4
@@ -114,8 +114,8 @@ def count(texts: Dict[str, str], criteria: Criteria, avoid: Sequence[str] = (), 
         sents = sentences(text)
         for s in sents:
             n = len(s)
-            if n > LONG_MUST:  # 11/7 の作者の決定で、要修正から注意に下げた
-                add(CAUTION, where, s, f"一文が{LONG_MUST}字を超える（{n}字）", "読みにくければ分ける")
+            if n > LONG_SPLIT:  # 11/7 の作者の決定で、要修正から注意に下げた
+                add(CAUTION, where, s, f"一文が{LONG_SPLIT}字を超える（{n}字）", "読みにくければ分ける")
             elif n > LONG_CAUTION:
                 add(CAUTION, where, s, f"一文が{LONG_CAUTION}字を超える（{n}字）")
             if s.count("、") >= TOO_MANY_COMMAS:

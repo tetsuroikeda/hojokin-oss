@@ -2,9 +2,11 @@
 
 hooks.json の matcher で、書き込みの道具（Write・Edit・NotebookEdit）、Bash、
 ブラウザの道具・画面を操作する機能を受け取る（Python が動かないときは run.sh が拒む）。
+Bash を受け取るのは、この run.sh の拒みのため。Python が動くときは、Bash の中身は見ずに通す
+（Bash で作られた版の名前のファイルは、応答の終わりに Stop で見つける。version_hooks.py）。
 別の matcher で、読む道具（Read・Grep・Glob など）も受け取り、会社のフォルダの外を読むことを拒む（outside_read.py）。
 ブラウザの道具・画面を操作する機能は、画面入力の守り（lib/browser_guard.py）が判定する。
-版の名前のファイルを拒むことは、後のタスクでここに足す。
+書き込みの道具で、版の名前（「_v2」「最終」など）の新しいファイル・フォルダを作ることも拒む（version_hooks.py）。
 
 会社のフォルダの外への書き込みは、設定の blockWritesOutsideWorkingDirectories で止める決まりだが、
 デスクトップアプリの Claude Code（2.1.309）では効かなかった（実験 E6）。そのため、ここでも拒む。

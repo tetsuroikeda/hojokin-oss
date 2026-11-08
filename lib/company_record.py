@@ -407,7 +407,7 @@ def evidence_label(item: dict) -> str:
 
 
 def needs_check(fact: dict, today: date) -> bool:
-    """使い回す前に社長に確かめるか：変わりうる事実で、今日まだ確かめていないもの（仮。TASKS M11 の質問）。"""
+    """使い回す前に社長に確かめるか：変わりうる事実で、今日まだ確かめていないもの。"""
     return bool(fact["変わりうる"]) and fact["最後に確かめた日"] < today.isoformat()
 
 

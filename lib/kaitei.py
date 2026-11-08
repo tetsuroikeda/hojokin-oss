@@ -612,12 +612,6 @@ def _has_page(value: Optional[Dict], kinds: Dict[str, str]) -> bool:
     return all(isinstance(s.get("ページ"), int) or kinds.get(str(s.get("資料")), "PDF") not in ("PDF", "") for s in sources)
 
 
-def top_key(where: str) -> str:
-    """値の場所（社長に分かる書き方）の、いちばん上の項目（「数値の要件」のように「の」を含む名前もある）。"""
-    props = sorted(urakadori.load_schema()["properties"], key=len, reverse=True)
-    return next((k for k in props if where.startswith(k)), re.split(r"[「の]", where, 1)[0])
-
-
 def diff_data(old: Dict, new: Dict, kinds: Dict[str, str], renames: Optional[List[Rename]] = None) -> List[ValueChange]:
     """前と後の制度データの、出典つき値ごとの差。
 

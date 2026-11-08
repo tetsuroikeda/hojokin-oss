@@ -46,7 +46,6 @@ MODEL_FILE = "財務モデル.xlsx"
 NUMBER_PREFIX = "確かめ-"
 NUMBER = re.compile(r"^確かめ-([0-9]{4,})$")
 SHINSA = "shinsa"
-HANDBACK_TOOL = "SubagentHandback"
 FROM_STOP = "SubagentStop.last_assistant_message"
 FROM_HANDBACK = "PreToolUse.SubagentHandback.tool_input.message"
 

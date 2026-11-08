@@ -1,7 +1,7 @@
 """デモ動画を組み立てる（台詞の声 → 時刻表 → BGM → 映像 → 音を重ねた mp4）。
 
 使い方（リポの根で）：
-  uv run --with numpy python docs/video/build.py <デモの会社のフォルダ> <材料のフォルダ> [--provider vertex]
+  uv run --with numpy python docs/video/build.py <デモの会社のフォルダ> <材料のフォルダ> [--provider vertex] [--4k]
 
 - デモの会社のフォルダは、申請書を書き終えた段階の会社のフォルダ（架空の株式会社みずなら精工）。
   その中の実物の出力（補助金の候補.docx・計画書・根拠対照表・財務モデル）と、審査役の結果・質問の記録を使う。
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -30,14 +31,17 @@ ASSETS = OUT / "assets"
 VOICE = OUT / "voice"
 
 # 場面ごとの、絵の動きに要る最短の長さ（秒）。台詞が短くても、絵が見終わるまで次へ行かない
-MIN_DUR = {"road": 11.0, "title": 6.5, "s1": 15.6, "s2": 11.5, "s3": 11.0, "s4": 16.0, "shinsa": 8.5,
-           "nyuryoku": 11.0, "s5": 11.0, "pm": 16.0, "learn": 8.5, "start": 6.5, "built": 7.0, "end": 6.0}
+MIN_DUR = {"road": 11.0, "title": 6.5, "s1": 14.5, "s2": 10.8, "s3": 10.8, "s4": 15.0, "shinsa": 8.3,
+           "nyuryoku": 10.4, "s5": 11.0, "pm": 13.5, "learn": 8.1, "start": 6.5, "built": 6.8, "end": 6.0}
 MAX_TOTAL = 179.5   # 提出の条件は3分以内。超えたら止める
 VOICE_LEAD = {"road": 0.4, "title": 0.6, "built": 0.2}  # 台詞を場面の頭から何秒遅らせるか（ほかは 0.3 秒）
 # 計画書は、文字と図表の多いページを何枚もめくって見せる（提出用の PDF の何ページ目から何ページ目か）
 PLAN_PAGES = (3, 12)
 CLIP_FPS = 15   # 録画から切り出した画面を、1秒に何コマの画像にするか
 ZAIMU_MAX_PAGES = 10
+# --4k：3840×2160 で撮る（画面の倍率 2）。PDF の画像は倍の細かさで作り、録画は材料のフォルダの <名前>_clip_4k.mp4 を使う。
+# 出来たものは out/hojokin_demo_4k.mp4（1080p の out/hojokin_demo.mp4 は上書きしない）
+SCALE = 2 if "--4k" in sys.argv else 1
 
 
 def run(cmd, **kw):
@@ -173,7 +177,7 @@ def render_assets(company: Path, extra: Path, material: dict) -> dict:
             last = first
         last = min(last, total)
         info[f"{stem}Pages"] = total
-        run(["pdftoppm", "-r", "110", "-png", "-f", str(first), "-l", str(last), f"{stem}.pdf", str(ASSETS / f"{stem}_p")], cwd=pdf)
+        run(["pdftoppm", "-r", str(110 * SCALE), "-png", "-f", str(first), "-l", str(last), f"{stem}.pdf", str(ASSETS / f"{stem}_p")], cwd=pdf)
         # pdftoppm はページの数で名前の桁を変えるので、元の文書の何ページ目かによらず 1 から番号を振り直す
         made = sorted(ASSETS.glob(f"{stem}_p-*.png"), key=lambda p: int(p.stem.rsplit("-", 1)[1]))
         for i, p in enumerate(made, 1):
@@ -194,6 +198,10 @@ def render_assets(company: Path, extra: Path, material: dict) -> dict:
     for name in ("sagasu", "shirabe", "nyuryoku"):
         info[f"{name}Frames"] = 0
         clip = extra / f"{name}_clip.mp4"
+        if SCALE == 2 and (extra / f"{name}_clip_4k.mp4").exists():
+            clip = extra / f"{name}_clip_4k.mp4"
+        elif SCALE == 2 and clip.exists():
+            print(f"注意：材料のフォルダに {name}_clip_4k.mp4 がありません（{name}_clip.mp4 を拡大して出すので、粗くなります）")
         if not clip.exists():
             continue
         frames = ASSETS / name
@@ -373,11 +381,13 @@ def main() -> None:
     audio = mix_audio(timeline, total)
     if skip_render:
         return
-    silent = OUT / "video_silent.mp4"
+    tag = "_4k" if SCALE == 2 else ""
+    silent = OUT / f"video_silent{tag}.mp4"
     # --keep-video：撮った映像があれば撮り直さず、音だけ重ね直す（台詞と絵の時刻を変えていないとき）
     if not ("--keep-video" in sys.argv and silent.exists()):
-        run(["node", str(HERE / "render.mjs"), str(HERE / "video.html"), str(silent), str(total)])
-    final = OUT / "hojokin_demo.mp4"
+        subprocess.run(["node", str(HERE / "render.mjs"), str(HERE / "video.html"), str(silent), str(total)],
+                       check=True, env={**os.environ, "HOJOKIN_VIDEO_SCALE": str(SCALE)})
+    final = OUT / f"hojokin_demo{tag}.mp4"
     run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(silent), "-i", str(audio), "-c:v", "copy", "-c:a", "copy", "-shortest", str(final)])
     print(f"できました：{final}")
 

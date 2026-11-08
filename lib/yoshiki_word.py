@@ -596,7 +596,6 @@ def _kept_marks(data: bytes, nodes: Sequence[Node]) -> bytes:
     return b"".join(out)
 
 
-_EXACT_LINE = re.compile(rb'(:lineRule=")exact(")')
 _SPACING = re.compile(rb"<(\w+:)?spacing\b[^>]*/>")
 _LINE_GRID = re.compile(rb'(<(?:\w+:)?docGrid\b[^>]*?)\s(?:\w+:)?type="lines(?:AndChars)?"')
 
