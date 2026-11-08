@@ -17,6 +17,8 @@ import os
 import re
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -26,11 +28,12 @@ def load_key() -> str:
     if key:
         return key
     env = Path(os.environ.get("HOJOKIN_TTS_ENV", str(Path.home() / "Projects/movie-remotion/.env.local")))
+    # 値が空の行（置き場だけの行など）は飛ばす
     for line in env.read_text(encoding="utf-8").splitlines():
-        m = re.match(r"\s*GEMINI_API_KEY\s*=\s*(.*)\s*$", line)
-        if m:
+        m = re.match(r"\s*(?:export\s+)?GEMINI_API_KEY\s*=\s*(.*)\s*$", line)
+        if m and m.group(1).strip().strip("'\""):
             return m.group(1).strip().strip("'\"")
-    sys.exit("GEMINI_API_KEY が見つかりません")
+    sys.exit("GEMINI_API_KEY が見つかりません（値の入った行がありません）")
 
 
 def gemini(text: str, model: str, voice: str, key: str, raw: Path) -> Path:
@@ -46,8 +49,22 @@ def gemini(text: str, model: str, voice: str, key: str, raw: Path) -> Path:
         data=json.dumps(body).encode("utf-8"),
         headers={"x-goog-api-key": key, "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=180) as res:
-        data = json.loads(res.read())
+    # 1分あたりの上限（429）や混み合い（503）のときは、待って送り直す
+    for wait in (20, 40, 60, 90, 0):
+        try:
+            with urllib.request.urlopen(req, timeout=180) as res:
+                data = json.loads(res.read())
+            break
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 503) or not wait:
+                raise
+            # 理由の文（上限の種類）だけを出す。鍵は返りの文に入らない
+            try:
+                reason = json.loads(e.read().decode("utf-8", "ignore"))["error"]["message"][:160]
+            except Exception:
+                reason = ""
+            print(f"  声の API が {e.code} を返したので、{wait} 秒待って送り直す（{reason}）")
+            time.sleep(wait)
     parts = data["candidates"][0]["content"]["parts"]
     inline = next(p["inlineData"] for p in parts if "inlineData" in p)
     audio = base64.b64decode(inline["data"])
@@ -66,8 +83,10 @@ def gemini(text: str, model: str, voice: str, key: str, raw: Path) -> Path:
 
 def vertex(text: str, model: str, voice: str, raw: Path) -> Path:
     # Vertex AI 経由。gcloud でログインしてあること（gcloud auth login）。プロジェクトは HOJOKIN_TTS_PROJECT で渡す
+    # gcloud の既定と別のアカウントで送るときは HOJOKIN_TTS_ACCOUNT で渡す（gcloud の設定は変えない）
     project = os.environ["HOJOKIN_TTS_PROJECT"]
-    token = subprocess.check_output(["gcloud", "auth", "print-access-token"], text=True).strip()
+    account = os.environ.get("HOJOKIN_TTS_ACCOUNT")
+    token = subprocess.check_output(["gcloud", "auth", "print-access-token"] + ([f"--account={account}"] if account else []), text=True).strip()
     body = {
         "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {
