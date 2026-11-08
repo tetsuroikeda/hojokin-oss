@@ -197,6 +197,9 @@
       <div class="sol" id="s3-sol">原本を守って整理し<br>不備を見つける</div></div>
     <div id="s3-files"></div>
     <div class="tree" id="s3-tree" style="left:110px;top:480px;"></div>
+    <!-- 実際の画面：/hojokin:shorui（会話の列だけ。許可の画面・ほかのセッションが前に出ていた所は入れない。早送り） -->
+    <div class="sheet" id="s3-rec" style="left:930px;top:164px;width:880px;height:781px;display:none"><div class="cap" style="height:44px">Claude Code（デスクトップアプリ）・ /hojokin:shorui</div>
+      <div class="view" style="top:44px"><img id="s3-recimg" style="width:880px"></div><div class="real" style="top:7px;bottom:auto">実際の画面（早送り）</div></div>
     <div class="abs" id="s3-fubi" style="left:900px;top:200px;width:910px;"></div>
   </div>
 
@@ -608,10 +611,14 @@ function recPlayer(name, panel, img, R0) {
     const e = mk('div', 'card', `<div style="margin-bottom:6px"><span class="sev ${sev === '重大' ? 'big' : 'chk'}">${sev}</span><b style="font-size:21px">${label}</b></div><div style="font-size:21px;line-height:1.5">${text}</div>${note}`, fubi);
     e.style.position = 'relative'; e.style.marginBottom = '12px'; e.style.padding = '14px 20px'; return e;
   });
-  scenes.s3 = (l, d) => {
+  // 録画があれば、書類の札を散らす絵の代わりに、実際の画面（書類を読む → 原本へ移す → 不備の一覧）を出す
+  const rec = recPlayer('shorui', 's3-rec', 's3-recimg', 0.6);
+  if (rec.N) host.style.display = 'none';
+  scenes.s3 = async (l, d) => {
     stepHead($('s-s3'), l);
+    await rec.draw(l, rec.end - 0.2);
     const sort = eInOut(prog(l, 4.0, 5.6));
-    files.forEach((f, i) => {
+    if (!rec.N) files.forEach((f, i) => {
       const t0 = 0.6 + i * 0.1;
       const x = eBack(prog(l, t0, t0 + 0.5));
       const sx = 120 + (i * 263) % 1600, sy = 520 + ((i * 7) % 4) * 100 + (i % 2) * 30;
