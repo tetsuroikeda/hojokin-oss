@@ -195,7 +195,7 @@ def render_assets(company: Path, extra: Path, material: dict) -> dict:
     # 実際の画面（デスクトップアプリの録画から、会話の列だけを切り出してつないだもの）を、1コマずつの画像にする。
     # sagasu：STEP 1（選択肢で聞く・調べる・候補の一覧）、shirabe：STEP 2 の入口（公募要領を読んで、要件・義務をページつきの表に）
     info["clipFps"] = CLIP_FPS
-    for name in ("sagasu", "shirabe", "nyuryoku"):
+    for name in ("sagasu", "shirabe", "shorui", "nyuryoku"):
         info[f"{name}Frames"] = 0
         clip = extra / f"{name}_clip.mp4"
         if SCALE == 2 and (extra / f"{name}_clip_4k.mp4").exists():
