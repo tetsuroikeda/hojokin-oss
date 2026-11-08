@@ -236,8 +236,8 @@
 
   <div class="scene" id="s-s5">
     <div class="step"><div class="no">STEP 5 ・ 採択の後</div><div class="prob">採択の後も、手続きが大変<span class="strike"></span></div>
-      <div class="sol">期限を出し、<br>発注を止める</div>
-      <div class="pts"><div class="pt">通知から期限と出典ページ</div><div class="pt">資料の版の食い違いに気づく</div><div class="pt">指摘にない費用の重なりも</div></div></div>
+      <div class="sol">期限を出し、<br>差し戻しにも応える</div>
+      <div class="pts"><div class="pt">通知から期限と出典ページ</div><div class="pt">指摘にない費用の重なりも</div><div class="pt">業者への依頼の文の案まで</div></div></div>
     <div class="sheet" id="s5-sheet" style="left:900px;top:200px;width:520px;height:264px;"><div class="cap"><span class="ic">P</span>採択のお知らせ（架空）</div><div class="view"><img src="out/assets/saitaku_tsuuchi.png"></div></div>
     <div id="s5-quotes"></div>
   </div>
@@ -774,13 +774,32 @@ function recPlayer(name, panel, img, R0) {
     e.style.left = pos[i][0] + 'px'; e.style.top = pos[i][1] + 'px'; e.style.width = pos[i][2] + 'px'; e.style.padding = '16px 22px';
     return e;
   });
+  // 採択の後に続く手続き（制度の段階の名前。道具の出力ではない）。3つ目の札が出るまで、その場所に並べる
+  const STAGES = ['交付申請', '実績報告', '効果報告'];
+  const flow = mk('div', 'abs', '', host);
+  flow.style.left = '900px'; flow.style.top = '705px'; flow.style.width = '910px'; flow.style.display = 'flex'; flow.style.alignItems = 'center'; flow.style.gap = '18px';
+  const arrows = [];
+  const chips = STAGES.map((s, i) => {
+    if (i) { const a = mk('div', '', '→', flow); a.style.cssText = 'font-size:34px;color:var(--sub);font-weight:700;opacity:0'; arrows.push(a); }
+    const e = mk('div', 'card', s, flow);
+    e.style.cssText += ';position:static;padding:18px 34px;font-size:32px;font-weight:800;color:var(--teal)';
+    return e;
+  });
   const cc = ccPanel('s5', 's5', 110, CC_TOP);
   scenes.s5 = (l, d) => {
     stepHead($('s-s5'), l);
     sheetIn($('s5-sheet'), l, 0.8);
     cc(l, 2.4, d - 1.0);
-    const caps = capsOf('s5');
-    const at = [1.8, 3.4, (caps[1] !== undefined ? caps[1] : 6.5) - 0.2];
+    // 語りの中で、その言葉を言う時刻（字幕の始めと終わりを、文字の位置で割る）
+    const capL = D.captions.filter(c => c.start >= T.s5.start && c.start < T.s5.start + T.s5.dur);
+    const sayAt = (word, dflt) => { const c = capL.find(c => c.text.includes(word)); return c ? c.start - T.s5.start + (c.end - c.start) * c.text.indexOf(word) / c.text.length : dflt; };
+    const at = [sayAt('通知から', 4.4) - 0.1, sayAt('差し戻し', 6.0) - 0.1, sayAt('重なり', 8.0) + 0.2];
+    STAGES.forEach((s, i) => {
+      const a = sayAt(s, 0.8 + i * 0.9) - 0.1;
+      show(chips[i], eBack(prog(l, a, a + 0.4)), 0, 24);
+      if (i) arrows[i - 1].style.opacity = prog(l, a - 0.2, a + 0.2);
+    });
+    flow.style.opacity = 1 - prog(l, at[2] - 0.4, at[2]);
     cards.forEach((c, i) => show(c, eOut(prog(l, at[i], at[i] + 0.5)), 0, 40));
     // 期限の日数（1つ目の札の太字）は、跳ねて出し、色を付ける
     const b = cards[0].querySelector('b');
