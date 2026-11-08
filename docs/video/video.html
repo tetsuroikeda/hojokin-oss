@@ -389,13 +389,19 @@ const scenes = {};
   const chips = CHIPS.map(([w, x, y]) => { const e = mk('div', 'pill', w, $('road-chips')); e.dataset.x = x; e.dataset.y = y; e.style.borderColor = 'var(--teal)'; e.style.color = 'var(--teal)'; return e; });
   scenes.road = (l, d) => {
     const caps = capsOf('road');
-    // 文の順：ねがい（0：効率化、新しい事業、販路開拓）→ 補助金がたくさん（1）→ でも、手間が大きすぎる（2）
-    //   → 探す、調べる、書類、計画書、採択の後（3：言うたびに、その丸へ歩く）→ 本当は、事業に集中したいのに（4）→ 100件以上の相談（5）
+    // 文の順：ねがい（効率化、新しい事業、販路開拓）→ 補助金がたくさん → でも、手間が大きすぎる
+    //   → 5つの壁（どれが使えるか分からない、…、採択の後も手続きが続く：言うたびに、その丸へ歩く）→ 本当は、事業に集中したいのに → 100件以上の相談。
+    // 長い文は字幕が2つに分かれるので、時刻は番号ではなく、字幕の頭の文字で探す
+    const capR = D.captions.filter(c => c.start >= T.road.start && c.start < T.road.start + T.road.dur);
+    const atText = (head, dflt) => { const c = capR.find(c => c.text.startsWith(head)); return c ? c.start - T.road.start : dflt; };
     const cs = i => (caps[i] !== undefined ? caps[i] : 2.5 * i);
-    const tw = cs(2);                                   // 道を出す時刻
-    const wallAt = k => cs(3) + (cs(4) - cs(3)) * k / 5;  // 5つの段階を言う時刻（文の中で等分）
+    const tw = atText('でも', 8);                        // 道を出す時刻
+    const tWall = atText('どれが', 10), tHon = atText('本当は', 19), te = atText('補助金の申請や', 21.5);
+    // 5つの壁を言う時刻：文の中の、それぞれの言葉の頭の文字の位置で割る
+    const WALL_TEXT = 'どれが使えるか分からない、ルールが多すぎる、書類が膨大、計画書が書けない、採択の後も手続きが続く。';
+    const WALL_HEAD = ['どれが', 'ルール', '書類', '計画書', '採択'];
+    const wallAt = k => tWall + (tHon - tWall) * WALL_TEXT.indexOf(WALL_HEAD[k]) / WALL_TEXT.length;
     const c = i => (i < 5 ? cs(i) : i === 5 ? tw + 0.2 : wallAt(i - 6));
-    const te = cs(5);                                   // 作者の実務の文
     // ねがい：1つ目の文の中で、3つを順に出す
     wishes.forEach((e, i) => {
       const ti = lerp(cs(0), cs(1), i / 3) - 0.1;
@@ -415,8 +421,8 @@ const scenes = {};
     // 上の1行：補助金がたくさん（1）→ でも、手間（2）→ 本当は、事業に集中（4）。作者の実務（5）で消す
     const sw = (a, b) => eOut(prog(l, a - 0.1, a + 0.4)) * (1 - prog(l, b - 0.3, b));
     $('road-lead').style.opacity = sw(cs(1), tw); show($('road-l2'), 1, 0);
-    $('road-l3').style.opacity = sw(tw, cs(4)); $('road-l3').style.transform = 'none';
-    $('road-l4').style.opacity = sw(cs(4), te); $('road-l4').style.transform = 'none';
+    $('road-l3').style.opacity = sw(tw, tHon); $('road-l3').style.transform = 'none';
+    $('road-l4').style.opacity = sw(tHon, te); $('road-l4').style.transform = 'none';
     // 作者の実務（最後の文）：道の絵を消し、「100件以上」を出す（数は動かさず、弾ませて出す）
     const ex = eOut(prog(l, te - 0.1, te + 0.5));
     $('road-exp').style.opacity = ex; $('road-exp').style.transform = `translateY(${(1 - ex) * 30}px)`;
@@ -656,8 +662,9 @@ function recPlayer(name, panel, img, R0) {
   scenes.s4 = (l, d) => {
     stepHead($('s-s4'), l);
     cc(l, 2.4, d - 1.2);
-    const caps = capsOf('s4');
-    const tz = (caps[2] !== undefined ? caps[2] : 7) - 0.4;   // 「財務モデルは…」の文から
+    // 「財務モデルは…」の文（字幕の文字で探す）から、財務モデルへ切り替える。その前の「AI に任せた数字は…」の間は、計画書をめくり続ける
+    const zc = D.captions.find(c => c.start >= T.s4.start && c.start < T.s4.start + T.s4.dur && c.text.startsWith('財務モデル'));
+    const tz = (zc ? zc.start - T.s4.start : 7) - 0.4;
     // 様式から財務モデルへは、左から右へぬぐって入れ替える
     const w = eInOut(prog(l, tz - 0.3, tz + 0.5));
     sheetIn($('s4-plan'), l, 0.6); $('s4-plan').style.opacity *= (1 - w);
