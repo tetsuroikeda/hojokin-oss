@@ -123,16 +123,19 @@
 
   <!-- 冒頭：社長の道のり -->
   <div class="scene" id="s-road">
-    <!-- 作者の実務（冒頭の1文） -->
+    <!-- 作者の実務（冒頭の終わり。この経験から作った、と題名へつなぐ） -->
     <div class="abs" id="road-exp" style="left:0;right:0;top:300px;text-align:center;">
       <div style="font-size:44px;font-weight:700;color:var(--sub)">補助金の申請や報告に困る経営者の相談を</div>
       <div style="font-size:170px;font-weight:900;color:var(--teal);line-height:1.15"><span id="road-n" style="display:inline-block">100</span><span style="font-size:80px">件以上</span></div>
       <div style="font-size:44px;font-weight:700;color:var(--sub)">受けてきました</div>
     </div>
+    <!-- 国や自治体の補助金（たくさんある） -->
+    <div id="road-chips"></div>
     <div class="abs" id="road-lead" style="left:0;right:0;top:130px;text-align:center;">
-      <div id="road-l2" style="font-size:64px;font-weight:800;color:var(--teal);">本当は、事業に集中したい。</div>
+      <div id="road-l2" style="font-size:64px;font-weight:800;color:var(--teal);">国や自治体には、補助金がたくさん。</div>
     </div>
-    <div class="abs" id="road-l3" style="left:0;right:0;top:130px;text-align:center;font-size:64px;font-weight:800;color:var(--coral)">でも、補助金には5つの壁がある。</div>
+    <div class="abs" id="road-l3" style="left:0;right:0;top:130px;text-align:center;font-size:64px;font-weight:800;color:var(--coral)">でも、使うまでの手間が大きすぎる。</div>
+    <div class="abs" id="road-l4" style="left:0;right:0;top:130px;text-align:center;font-size:64px;font-weight:800;color:var(--teal)">本当は、事業に集中したいのに。</div>
     <svg class="abs" id="road-svg" width="1920" height="1080" style="left:0;top:0"></svg>
     <div id="road-signs"></div>
     <div id="road-papers"></div>
@@ -168,7 +171,7 @@
   <div class="scene" id="s-s1">
     <div class="step"><div class="no">STEP 1 ・ 探す</div><div class="prob">どの補助金が使えるか分からない<span class="strike"></span></div>
       <div class="sol">会社に合う補助金を<br>分けて、比べる</div>
-      <div class="pts"><div class="pt">国・東京都・葛飾区まで</div><div class="pt">公募中・公募予定・例年公募がある</div><div class="pt">要件・義務・返還の条件に出典</div></div></div>
+      <div class="pts"><div class="pt">国・都道府県・市区町村まで</div><div class="pt">公募中・公募予定・例年公募がある</div><div class="pt">要件・義務・返還の条件に出典</div></div></div>
     <!-- 実際の画面：デスクトップアプリで /hojokin:sagasu を呼んだときの録画（会話の列だけ・早送り） -->
     <div class="sheet" id="s1-rec" style="left:930px;top:164px;width:880px;height:781px;display:none"><div class="cap" style="height:44px">Claude Code（デスクトップアプリ）・ /hojokin:sagasu</div>
       <div class="view" style="top:44px"><img id="s1-recimg" style="width:880px"></div><div class="real" style="top:7px;bottom:auto">実際の画面（早送り）</div></div>
@@ -233,8 +236,8 @@
 
   <div class="scene" id="s-s5">
     <div class="step"><div class="no">STEP 5 ・ 採択の後</div><div class="prob">採択の後も、手続きが大変<span class="strike"></span></div>
-      <div class="sol">期限を出し、<br>発注を止める</div>
-      <div class="pts"><div class="pt">通知から期限と出典ページ</div><div class="pt">資料の版の食い違いに気づく</div><div class="pt">指摘にない費用の重なりも</div></div></div>
+      <div class="sol">期限を出し、<br>差し戻しにも応える</div>
+      <div class="pts"><div class="pt">通知から期限と出典ページ</div><div class="pt">指摘にない費用の重なりも</div><div class="pt">業者への依頼の文の案まで</div></div></div>
     <div class="sheet" id="s5-sheet" style="left:900px;top:200px;width:520px;height:264px;"><div class="cap"><span class="ic">P</span>採択のお知らせ（架空）</div><div class="view"><img src="out/assets/saitaku_tsuuchi.png"></div></div>
     <div id="s5-quotes"></div>
   </div>
@@ -287,6 +290,8 @@
     <div class="abs" id="built-p" style="left:110px;top:252px;font-size:32px;font-weight:800;color:var(--coral)"></div>
     <div class="abs" id="built-uses" style="left:110px;top:320px;width:860px"></div>
     <div class="abs" id="built-checks" style="left:1060px;top:330px;width:760px"></div>
+    <!-- 確かめた制度（作者の直し） -->
+    <div class="abs" id="built-scope" style="left:110px;top:885px;width:1700px;font-size:25px;font-weight:700;color:var(--ink);background:var(--paper2);border-radius:12px;padding:12px 20px"></div>
   </div>
 
   <!-- 終わり -->
@@ -380,32 +385,53 @@ const scenes = {};
   // 3つのねがい（社長の頭の左上・真上・右上に、順に出す）
   const WISH = [['効率化', 'l', 590, 350], ['新しい事業', 'c', 960, 290], ['販路開拓', 'r', 1330, 350]];
   const wishes = WISH.map(([w, side, x, y]) => { const e = mk('div', `wish ${side}`, w, $('road-wishes')); e.dataset.x = x; e.dataset.y = y; return e; });
+  // 国や自治体の補助金（中身は架空の一般名）。社長のまわりに散らす
+  const CHIPS = [['国の補助金', 300, 250], ['都道府県の助成金', 1540, 260], ['市区町村の補助金', 250, 560], ['国の補助金', 1640, 560],
+                 ['都道府県の補助金', 420, 800], ['市区町村の助成金', 1480, 800], ['国の補助金', 960, 860]];
+  const chips = CHIPS.map(([w, x, y]) => { const e = mk('div', 'pill', w, $('road-chips')); e.dataset.x = x; e.dataset.y = y; e.style.borderColor = 'var(--teal)'; e.style.color = 'var(--teal)'; return e; });
   scenes.road = (l, d) => {
     const caps = capsOf('road');
-    // 文の順：作者の実務（0）→ ねがい3つ（1〜3）→ 本当は、事業に集中したい（4）→ でも、5つの壁（5）。壁は語らず、絵で続けて出す
-    const cs = i => (caps[i] !== undefined ? caps[i] : 2 * i);
-    const tw = cs(5) + 0.3;
-    // 壁を出す時刻（道が出てから、0.55 秒おき）
-    const c = i => (i < 5 ? cs(i) : i === 5 ? tw - 0.6 : tw + 0.2 + (i - 6) * 0.45);
-    // 作者の実務：「100件以上」を数え上げ、ねがいの文で消す
-    const ex = eOut(prog(l, 0.1, 0.6)) * (1 - prog(l, cs(1) - 0.4, cs(1) - 0.05));
-    $('road-exp').style.opacity = ex; $('road-exp').style.transform = `translateY(${(1 - eOut(prog(l, 0.1, 0.6))) * 30}px)`;
-    // 「100件以上」は作者の言葉どおりに（数え上げると途中で違う数が出るので、数は動かさず、弾ませて出す）
-    { const p = eBack(prog(l, 0.4, 0.9)); $('road-n').style.transform = `scale(${0.6 + 0.4 * p})`; }
+    // 文の順：ねがい（効率化、新しい事業、販路開拓）→ 補助金がたくさん → でも、手間が大きすぎる
+    //   → 5つの壁（どれが使えるか分からない、…、採択の後も手続きが続く：言うたびに、その丸へ歩く）→ 本当は、事業に集中したいのに → 100件以上の相談。
+    // 長い文は字幕が2つに分かれるので、時刻は番号ではなく、字幕の頭の文字で探す
+    const capR = D.captions.filter(c => c.start >= T.road.start && c.start < T.road.start + T.road.dur);
+    const atText = (head, dflt) => { const c = capR.find(c => c.text.startsWith(head)); return c ? c.start - T.road.start : dflt; };
+    const cs = i => (caps[i] !== undefined ? caps[i] : 2.5 * i);
+    const tw = atText('でも', 8);                        // 道を出す時刻
+    const tWall = atText('どれが', 10), tHon = atText('本当は', 19), te = atText('補助金の申請や', 21.5);
+    // 5つの壁を言う時刻：文の中の、それぞれの言葉の頭の文字の位置で割る
+    const WALL_TEXT = 'どれが使えるか分からない、ルールが多すぎる、書類が膨大、計画書が書けない、採択の後も手続きが続く。';
+    const WALL_HEAD = ['どれが', 'ルール', '書類', '計画書', '採択'];
+    const wallAt = k => tWall + (tHon - tWall) * WALL_TEXT.indexOf(WALL_HEAD[k]) / WALL_TEXT.length;
+    const c = i => (i < 5 ? cs(i) : i === 5 ? tw + 0.2 : wallAt(i - 6));
+    // ねがい：1つ目の文の中で、3つを順に出す
     wishes.forEach((e, i) => {
-      const ti = cs(1 + i) - 0.1;
-      const x = eBack(prog(l, ti, ti + 0.4)) * (1 - prog(l, tw - 0.8, tw - 0.3));
+      const ti = lerp(cs(0), cs(1), i / 3) - 0.1;
+      const x = eBack(prog(l, ti, ti + 0.4)) * (1 - prog(l, tw - 0.2, tw + 0.3));
       e.style.opacity = clamp(x);
       e.style.left = (e.dataset.x - e.offsetWidth / 2) + 'px'; e.style.top = e.dataset.y + 'px';
       e.style.transform = `scale(${0.6 + 0.4 * clamp(x)}) translateY(${Math.sin(l * 2 + i) * 4}px)`;
     });
-    show($('road-l2'), eOut(prog(l, cs(4) - 0.1, cs(4) + 0.5)), 20);
-    // 「でも、5つの壁」で、「でも、補助金には5つの壁がある。」に入れ替える
-    const up = eInOut(prog(l, tw - 0.7, tw - 0.2));
-    $('road-lead').style.opacity = 1 - up;
-    $('road-lead').style.transform = `translateY(${-up * 30}px)`;
-    show($('road-l3'), eOut(prog(l, tw - 0.3, tw + 0.3)), 20);
-    const draw = eInOut(prog(l, tw - 0.7, tw + 0.6));
+    // 補助金がたくさん：まわりに次々と出て、「でも」で消える
+    chips.forEach((e, i) => {
+      const ti = cs(1) + 0.2 + i * 0.25;
+      const x = eBack(prog(l, ti, ti + 0.4)) * (1 - prog(l, tw - 0.2, tw + 0.3));
+      e.style.opacity = clamp(x);
+      e.style.left = (e.dataset.x - e.offsetWidth / 2) + 'px'; e.style.top = (Number(e.dataset.y) + Math.sin(l * 1.5 + i) * 6) + 'px';
+      e.style.transform = `scale(${0.6 + 0.4 * clamp(x)})`;
+    });
+    // 上の1行：補助金がたくさん（1）→ でも、手間（2）→ 本当は、事業に集中（4）。作者の実務（5）で消す
+    const sw = (a, b) => eOut(prog(l, a - 0.1, a + 0.4)) * (1 - prog(l, b - 0.3, b));
+    $('road-lead').style.opacity = sw(cs(1), tw); show($('road-l2'), 1, 0);
+    $('road-l3').style.opacity = sw(tw, tHon); $('road-l3').style.transform = 'none';
+    $('road-l4').style.opacity = sw(tHon, te); $('road-l4').style.transform = 'none';
+    // 作者の実務（最後の文）：道の絵を消し、「100件以上」を出す（数は動かさず、弾ませて出す）
+    const ex = eOut(prog(l, te - 0.1, te + 0.5));
+    $('road-exp').style.opacity = ex; $('road-exp').style.transform = `translateY(${(1 - ex) * 30}px)`;
+    { const p = eBack(prog(l, te + 0.2, te + 0.7)); $('road-n').style.transform = `scale(${0.6 + 0.4 * p})`; }
+    const fade = 1 - prog(l, te - 0.3, te + 0.1);
+    ['road-svg', 'road-signs', 'road-papers', 'road-qs', 'boss'].forEach(id => { $(id).style.filter = fade < 1 ? `opacity(${fade})` : 'none'; });
+    const draw = eInOut(prog(l, tw - 0.1, tw + 1.0));
     path.style.strokeDasharray = L; path.style.strokeDashoffset = L * (1 - draw);
     dash.style.opacity = draw;
     signs.forEach((s, i) => show(s, eOut(prog(draw, at[i] - 0.05, at[i] + 0.05)), 10));
@@ -429,7 +455,7 @@ const scenes = {};
     const sc = lerp(1.5, 0.62, mv);
     boss.style.left = (fx - 60) + 'px'; boss.style.top = (fy - 180) + 'px';
     boss.style.transform = `scale(${sc}) rotate(${shown ? Math.sin(l * 3) * 3 : 0}deg)`;
-    boss.style.opacity = eOut(prog(l, cs(1) - 0.3, cs(1) + 0.3));
+    boss.style.opacity = eOut(prog(l, 0.1, 0.6));
     // 汗（人手が足りない）と、問いが増えるほど増える「？」
     sweat.style.opacity = 0.5 + 0.5 * Math.sin(l * 4);
     sweat.style.transform = `translateY(${(l * 14) % 10}px)`;
@@ -638,8 +664,9 @@ function recPlayer(name, panel, img, R0) {
   scenes.s4 = (l, d) => {
     stepHead($('s-s4'), l);
     cc(l, 2.4, d - 1.2);
-    const caps = capsOf('s4');
-    const tz = (caps[2] !== undefined ? caps[2] : 7) - 0.4;   // 「財務モデルは…」の文から
+    // 「財務モデルは…」の文（字幕の文字で探す）から、財務モデルへ切り替える。その前の「AI に任せた数字は…」の間は、計画書をめくり続ける
+    const zc = D.captions.find(c => c.start >= T.s4.start && c.start < T.s4.start + T.s4.dur && c.text.startsWith('財務モデル'));
+    const tz = (zc ? zc.start - T.s4.start : 7) - 0.4;
     // 様式から財務モデルへは、左から右へぬぐって入れ替える
     const w = eInOut(prog(l, tz - 0.3, tz + 0.5));
     sheetIn($('s4-plan'), l, 0.6); $('s4-plan').style.opacity *= (1 - w);
@@ -747,13 +774,32 @@ function recPlayer(name, panel, img, R0) {
     e.style.left = pos[i][0] + 'px'; e.style.top = pos[i][1] + 'px'; e.style.width = pos[i][2] + 'px'; e.style.padding = '16px 22px';
     return e;
   });
+  // 採択の後に続く手続き（制度の段階の名前。道具の出力ではない）。3つ目の札が出るまで、その場所に並べる
+  const STAGES = ['交付申請', '実績報告', '効果報告'];
+  const flow = mk('div', 'abs', '', host);
+  flow.style.left = '900px'; flow.style.top = '705px'; flow.style.width = '910px'; flow.style.display = 'flex'; flow.style.alignItems = 'center'; flow.style.gap = '18px';
+  const arrows = [];
+  const chips = STAGES.map((s, i) => {
+    if (i) { const a = mk('div', '', '→', flow); a.style.cssText = 'font-size:34px;color:var(--sub);font-weight:700;opacity:0'; arrows.push(a); }
+    const e = mk('div', 'card', s, flow);
+    e.style.cssText += ';position:static;padding:18px 34px;font-size:32px;font-weight:800;color:var(--teal)';
+    return e;
+  });
   const cc = ccPanel('s5', 's5', 110, CC_TOP);
   scenes.s5 = (l, d) => {
     stepHead($('s-s5'), l);
     sheetIn($('s5-sheet'), l, 0.8);
     cc(l, 2.4, d - 1.0);
-    const caps = capsOf('s5');
-    const at = [1.8, 3.4, (caps[1] !== undefined ? caps[1] : 6.5) - 0.2];
+    // 語りの中で、その言葉を言う時刻（字幕の始めと終わりを、文字の位置で割る）
+    const capL = D.captions.filter(c => c.start >= T.s5.start && c.start < T.s5.start + T.s5.dur);
+    const sayAt = (word, dflt) => { const c = capL.find(c => c.text.includes(word)); return c ? c.start - T.s5.start + (c.end - c.start) * c.text.indexOf(word) / c.text.length : dflt; };
+    const at = [sayAt('通知から', 4.4) - 0.1, sayAt('差し戻し', 6.0) - 0.1, sayAt('重なり', 8.0) + 0.2];
+    STAGES.forEach((s, i) => {
+      const a = sayAt(s, 0.8 + i * 0.9) - 0.1;
+      show(chips[i], eBack(prog(l, a, a + 0.4)), 0, 24);
+      if (i) arrows[i - 1].style.opacity = prog(l, a - 0.2, a + 0.2);
+    });
+    flow.style.opacity = 1 - prog(l, at[2] - 0.4, at[2]);
     cards.forEach((c, i) => show(c, eOut(prog(l, at[i], at[i] + 0.5)), 0, 40));
     // 期限の日数（1つ目の札の太字）は、跳ねて出し、色を付ける
     const b = cards[0].querySelector('b');
@@ -835,12 +881,14 @@ scenes.start = (l, d) => {
     <div style="font-size:21px;font-weight:600;color:var(--sub);margin-top:8px">${B.ablation.note}</div>
     <div style="font-size:26px;font-weight:800;color:var(--ink);margin-top:40px">自動のテスト（pytest）</div><div style="font-size:72px;font-weight:900;line-height:1.1"><span id="bc-tests">0</span><span style="font-size:32px">件が通過</span></div>`;
   $('built-p').textContent = B.principle;
+  $('built-scope').textContent = B.scope || '';
   scenes.built = (l, d) => {
     show($('built-no'), eOut(prog(l, 0, 0.4)), 10);
     show($('built-h'), eOut(prog(l, 0.1, 0.6)), 20);
     show($('built-p'), eOut(prog(l, 0.3, 0.8)), 15);
     uses.forEach((e, i) => show(e, eOut(prog(l, 0.4 + i * 0.35, 0.8 + i * 0.35)), 0, -30));
     show($('built-checks'), eOut(prog(l, 1.2, 1.7)), 20);
+    show($('built-scope'), eOut(prog(l, 2.4, 2.9)), 15);
     const x = eOut(prog(l, 1.4, 3.2));
     $('bc-with').textContent = Math.round(B.ablation.with * x) + '%';
     $('bc-without').textContent = Math.round(B.ablation.without * x) + '%';
