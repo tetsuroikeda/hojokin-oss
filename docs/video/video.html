@@ -224,6 +224,9 @@
     <div class="abs" id="ny-no" style="left:110px;top:200px;font-size:24px;font-weight:800;letter-spacing:4px;color:var(--teal)">STEP 4 ・ 申請の画面に入れる</div>
     <div class="abs" id="ny-sol" style="left:110px;top:250px;font-size:58px;font-weight:800;line-height:1.25">入力シートの値を、<br>申請の画面へ</div>
     <div class="abs" id="ny-pts" style="left:110px;top:440px;display:flex;flex-direction:column;gap:14px"><div class="pt">1画面ずつ入れ、一時保存まで</div><div class="pt">ログイン・提出・誓約のチェックは人</div><div class="pt">入れた後に読み直して照らす</div></div>
+    <!-- 実際の画面：/hojokin:nyuryoku（左に会話、右に模擬の申請画面。許可の画面・待ち時間・ほかのセッションは入れない。早送り） -->
+    <div class="sheet" id="ny-rec" style="left:720px;top:150px;width:1090px;height:811px;display:none"><div class="cap" style="height:40px">Claude Code（デスクトップアプリ）・ /hojokin:nyuryoku ＋ 模擬の申請画面（架空）</div>
+      <div class="view" style="top:40px"><img id="ny-recimg" style="width:1090px"></div><div class="real" style="top:6px;bottom:auto">実際の画面（早送り）</div></div>
     <div class="sheet" id="ny-sheet" style="left:900px;top:200px;width:910px;height:520px;"><div class="cap" id="ny-cap">模擬の申請画面（手元の練習用・架空）</div><div class="view"><img id="ny-img" src="out/assets/nyuryoku_screen.png" onerror="this.style.display='none'"><div id="ny-rows" style="position:absolute;left:0;top:0;width:910px"></div></div><div class="real" id="ny-real">実際の入力の結果</div></div>
     <div class="card" id="ny-quote" style="left:900px;top:745px;width:910px;padding:16px 22px;"></div>
   </div>
@@ -719,12 +722,15 @@ function recPlayer(name, panel, img, R0) {
       ['画面', '欄', '値'].map(c => `<div style="font-size:16px;color:var(--sub);font-weight:700;padding-bottom:4px;border-bottom:2px solid var(--line)">${c}</div>`).join('') +
       D.assets.nyuryokuSheet.map(r => r.map((c, i) => `<div style="padding:6px 0;border-bottom:1px solid #eee7da;${i === 2 ? 'background:rgba(242,184,75,.22);padding-left:8px;font-weight:700' : ''}">${c}</div>`).join('')).join('') + '</div>';
   }
-  scenes.nyuryoku = (l, d) => {
+  // 実際の画面（デスクトップアプリで /hojokin:nyuryoku を呼び、左に会話・右に組み込みのブラウザの模擬の申請画面）があれば、それを大きく出す
+  const rec = recPlayer('nyuryoku', 'ny-rec', 'ny-recimg', 0.6);
+  scenes.nyuryoku = async (l, d) => {
     $('ny-rows').style.transform = `translateY(${-eInOut(prog(l, 2.5, d - 1)) * 160}px)`;
     show($('ny-no'), eOut(prog(l, 0, 0.5)), 10);
     show($('ny-sol'), eOut(prog(l, 0.3, 1.0)), 30);
     [...$('ny-pts').children].forEach((e, i) => show(e, eOut(prog(l, 1.4 + i * 0.5, 1.9 + i * 0.5)), 0, -30));
-    sheetIn($('ny-sheet'), l, 0.6);
+    sheetIn($('ny-sheet'), l, rec.N ? 1e9 : 0.6);
+    await rec.draw(l, 1e9);
     $('ny-img').style.transform = `translateY(${-eInOut(prog(l, 2.5, d - 1)) * 220}px)`;
     const caps = capsOf('nyuryoku');
     const t = (caps[1] !== undefined ? caps[1] : 4.5) - 0.2;
