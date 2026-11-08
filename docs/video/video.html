@@ -169,6 +169,9 @@
     <div class="step"><div class="no">STEP 1 ・ 探す</div><div class="prob">どの補助金が使えるか分からない<span class="strike"></span></div>
       <div class="sol">会社に合う補助金を<br>分けて、比べる</div>
       <div class="pts"><div class="pt">国・東京都・葛飾区まで</div><div class="pt">公募中・公募予定・例年公募がある</div><div class="pt">要件・義務・返還の条件に出典</div></div></div>
+    <!-- 実際の画面：デスクトップアプリで /hojokin:sagasu を呼んだときの録画（会話の列だけ・早送り） -->
+    <div class="sheet" id="s1-rec" style="left:930px;top:164px;width:880px;height:781px;display:none"><div class="cap" style="height:44px">Claude Code（デスクトップアプリ）・ /hojokin:sagasu</div>
+      <div class="view" style="top:44px"><img id="s1-recimg" style="width:880px"></div><div class="real">実際の画面（早送り）</div></div>
     <div class="sheet" id="s1-sheet" style="left:900px;top:200px;width:910px;height:720px;"><div class="cap"><span class="ic">W</span>補助金の候補.docx</div>
       <div class="view"><img id="s1-img" src="out/assets/kouho-1.png"><img id="s1-img2" src="out/assets/kouho-2.png"></div><div class="real">実際の出力</div></div>
   </div>
@@ -482,15 +485,28 @@ const CC_TOP = 668;
 
 // ===== STEP 1 =====
 (() => {
-  const cc = ccPanel('s1', 's1', 110, CC_TOP);
-  scenes.s1 = (l, d) => {
+  // 録画があれば、実際の画面を主にし、その後に補助金の候補（その画面のセッションで作ったもの）を重ねる。
+  // 録画は会話そのものなので、左下の呼び出しの行は出さない
+  const N = D.assets.sagasuFrames || 0, FPS = D.assets.clipFps || 15, R0 = 0.7;
+  const recEnd = N ? R0 + N / FPS : 0;
+  const cc = N ? () => {} : ccPanel('s1', 's1', 110, CC_TOP);
+  if (N) $('s1-rec').style.display = 'block';
+  const recImg = $('s1-recimg');
+  scenes.s1 = async (l, d) => {
     stepHead($('s-s1'), l);
-    sheetIn($('s1-sheet'), l, 0.8);
     cc(l, 2.4, d - 1.2);
-    const sc = eInOut(prog(l, 4.5, d - 0.8));
+    const t0 = N ? recEnd - 0.3 : 0.8;   // 補助金の候補の Word を出す時刻
+    sheetIn($('s1-sheet'), l, t0);
+    const sc = eInOut(prog(l, t0 + 1.2, d - 0.6));
     const h = $('s1-img').offsetHeight;
     $('s1-img').style.transform = `translateY(${-sc * 760}px)`;
     $('s1-img2').style.top = h + 'px'; $('s1-img2').style.transform = `translateY(${-sc * 760}px)`;
+    if (!N) return;
+    const rx = eOut(prog(l, R0 - 0.5, R0)) * (1 - prog(l, t0 + 0.3, t0 + 0.8));
+    $('s1-rec').style.opacity = rx; $('s1-rec').style.transform = `translateY(${(1 - eOut(prog(l, R0 - 0.5, R0))) * 40}px)`;
+    const k = Math.max(1, Math.min(N, 1 + Math.floor((l - R0) * FPS)));
+    const src = `out/assets/sagasu/f_${String(k).padStart(4, '0')}.jpg`;
+    if (recImg.dataset.src !== src) { recImg.dataset.src = src; recImg.src = src; await recImg.decode().catch(() => {}); }
   };
 })();
 

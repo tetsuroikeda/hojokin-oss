@@ -30,12 +30,13 @@ ASSETS = OUT / "assets"
 VOICE = OUT / "voice"
 
 # 場面ごとの、絵の動きに要る最短の長さ（秒）。台詞が短くても、絵が見終わるまで次へ行かない
-MIN_DUR = {"road": 11.0, "title": 6.5, "s1": 11.0, "s2": 11.0, "s3": 11.5, "s4": 16.0, "shinsa": 8.5,
+MIN_DUR = {"road": 11.0, "title": 6.5, "s1": 13.0, "s2": 11.0, "s3": 11.5, "s4": 16.0, "shinsa": 8.5,
            "nyuryoku": 10.0, "s5": 11.0, "pm": 17.0, "learn": 8.5, "start": 6.5, "built": 7.0, "end": 6.0}
 MAX_TOTAL = 179.5   # 提出の条件は3分以内。超えたら止める
 VOICE_LEAD = {"road": 0.4, "title": 0.6, "built": 0.2}  # 台詞を場面の頭から何秒遅らせるか（ほかは 0.3 秒）
 # 計画書は、文字と図表の多いページを何枚もめくって見せる（提出用の PDF の何ページ目から何ページ目か）
 PLAN_PAGES = (3, 12)
+CLIP_FPS = 15   # 録画から切り出した画面を、1秒に何コマの画像にするか
 ZAIMU_MAX_PAGES = 10
 
 
@@ -149,8 +150,10 @@ def render_assets(company: Path, extra: Path, material: dict) -> dict:
     case1 = company / "案件" / "2026_省力化（一般型）第9回"
     # 写す元と、画像にするページ（最初・最後。文字のときは、その文字があるページ。None は最後のページ）。
     # 概要と流れは、書体の置き換わりでページ割りが動くので、見出しの文字でページを探す
+    # 補助金の候補は、STEP 1 の画面を撮ったセッションで作ったもの（材料のフォルダにあれば）を使う
+    kouho = extra / "補助金の候補_探す.docx"
     sources = {
-        "kouho.docx": (company / "補助金の候補.docx", 1, 2),
+        "kouho.docx": (kouho if kouho.exists() else company / "補助金の候補.docx", 1, 2),
         "gaiyou.docx": (extra / "概要と流れ.docx", GAIYOU_HEAD, None),
         "sono3.xlsx": (case1 / "1_申請" / "申請書" / "その3.xlsx", 1, 1),
         "zaimu.xlsx": (company / "財務モデル.xlsx", 1, ZAIMU_MAX_PAGES),
@@ -185,6 +188,16 @@ def render_assets(company: Path, extra: Path, material: dict) -> dict:
         else:
             print(f"注意：材料のフォルダに {n} がありません（その画面は空のまま撮ります）")
     info["nyuryokuScreen"] = (ASSETS / "nyuryoku_screen.png").exists()
+    # STEP 1 の実際の画面（デスクトップアプリの録画から、会話の列だけを切り出してつないだもの）を、1コマずつの画像にする
+    info["sagasuFrames"] = 0
+    clip = extra / "sagasu_clip.mp4"
+    if clip.exists():
+        frames = ASSETS / "sagasu"
+        shutil.rmtree(frames, ignore_errors=True)
+        frames.mkdir(parents=True)
+        run(["ffmpeg", "-v", "error", "-i", str(clip), "-vf", f"fps={CLIP_FPS}", "-q:v", "3", str(frames / "f_%04d.jpg")])
+        info["sagasuFrames"] = len(list(frames.glob("f_*.jpg")))
+        info["clipFps"] = CLIP_FPS
     # 入力シート（製品の yoshiki.py sheet が作ったもの）の値の行。画面を撮れなかったときは、これを見せる
     info["nyuryokuSheet"] = nyuryoku_sheet(extra / "入力シート.xlsx") if (extra / "入力シート.xlsx").exists() else []
     return info
