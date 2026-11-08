@@ -171,7 +171,7 @@
       <div class="pts"><div class="pt">国・東京都・葛飾区まで</div><div class="pt">公募中・公募予定・例年公募がある</div><div class="pt">要件・義務・返還の条件に出典</div></div></div>
     <!-- 実際の画面：デスクトップアプリで /hojokin:sagasu を呼んだときの録画（会話の列だけ・早送り） -->
     <div class="sheet" id="s1-rec" style="left:930px;top:164px;width:880px;height:781px;display:none"><div class="cap" style="height:44px">Claude Code（デスクトップアプリ）・ /hojokin:sagasu</div>
-      <div class="view" style="top:44px"><img id="s1-recimg" style="width:880px"></div><div class="real">実際の画面（早送り）</div></div>
+      <div class="view" style="top:44px"><img id="s1-recimg" style="width:880px"></div><div class="real" style="top:7px;bottom:auto">実際の画面（早送り）</div></div>
     <div class="sheet" id="s1-sheet" style="left:900px;top:200px;width:910px;height:720px;"><div class="cap"><span class="ic">W</span>補助金の候補.docx</div>
       <div class="view"><img id="s1-img" src="out/assets/kouho-1.png"><img id="s1-img2" src="out/assets/kouho-2.png"></div><div class="real">実際の出力</div></div>
   </div>
@@ -180,6 +180,9 @@
     <div class="step"><div class="no">STEP 2 ・ 調べる</div><div class="prob">ルールが多すぎて分からない<span class="strike"></span></div>
       <div class="sol">何を、いつまでに<br>するかをまとめる</div>
       <div class="pts"><div class="pt">手続きの流れと期限</div><div class="pt">出す書類と、手元にあるか</div><div class="pt">人に頼む書類は、締切から逆算</div></div></div>
+    <!-- 実際の画面：/hojokin:sagasu の続きで、公募要領を読んで要件・義務をページつきの表にした所（会話の列だけ・早送り） -->
+    <div class="sheet" id="s2-rec" style="left:930px;top:164px;width:880px;height:781px;display:none"><div class="cap" style="height:44px">Claude Code（デスクトップアプリ）・ 公募要領（全38ページ）を読む</div>
+      <div class="view" style="top:44px"><img id="s2-recimg" style="width:880px"></div><div class="real" style="top:7px;bottom:auto">実際の画面（早送り）</div></div>
     <div class="sheet" id="s2-sheet" style="left:900px;top:200px;width:910px;height:720px;"><div class="cap"><span class="ic">W</span>概要と流れ.docx ・ 申請から効果報告までの流れと期限</div>
       <div class="view"><div id="s2-wrap" style="position:absolute;left:0;top:0;width:910px;transform-origin:0 0"><img id="s2-img" src="out/assets/gaiyou-1.png" style="width:910px"></div></div><div class="real">実際の出力</div></div>
     <div class="card" id="s2-docs" style="left:900px;top:196px;width:910px;padding:16px 22px;"></div>
@@ -483,30 +486,42 @@ function ccPanel(sceneId, key, left, top, rows = 6) {
 }
 const CC_TOP = 668;
 
+// 実際の画面の録画（build.py が 1コマずつの画像にしたもの）を、場面の時刻に合わせて出す。
+// name：画像のフォルダ、panel・img：出す枠と画像、R0：場面の頭から何秒で始めるか。録画が無ければ N = 0
+function recPlayer(name, panel, img, R0) {
+  const N = D.assets[name + 'Frames'] || 0, FPS = D.assets.clipFps || 15;
+  if (N) $(panel).style.display = 'block';
+  const end = N ? R0 + N / FPS : 0;
+  return {
+    N, end,
+    async draw(l, hideAt) {
+      if (!N) return;
+      const rx = eOut(prog(l, R0 - 0.5, R0)) * (1 - prog(l, hideAt, hideAt + 0.5));
+      $(panel).style.opacity = rx; $(panel).style.transform = `translateY(${(1 - eOut(prog(l, R0 - 0.5, R0))) * 40}px)`;
+      const k = Math.max(1, Math.min(N, 1 + Math.floor((l - R0) * FPS)));
+      const src = `out/assets/${name}/f_${String(k).padStart(4, '0')}.jpg`;
+      const im = $(img);
+      if (im.dataset.src !== src) { im.dataset.src = src; im.src = src; await im.decode().catch(() => {}); }
+    },
+  };
+}
+
 // ===== STEP 1 =====
 (() => {
-  // 録画があれば、実際の画面を主にし、その後に補助金の候補（その画面のセッションで作ったもの）を重ねる。
-  // 録画は会話そのものなので、左下の呼び出しの行は出さない
-  const N = D.assets.sagasuFrames || 0, FPS = D.assets.clipFps || 15, R0 = 0.7;
-  const recEnd = N ? R0 + N / FPS : 0;
-  const cc = N ? () => {} : ccPanel('s1', 's1', 110, CC_TOP);
-  if (N) $('s1-rec').style.display = 'block';
-  const recImg = $('s1-recimg');
+  // 録画があれば、実際の画面（選択肢で聞く → 調べる → 候補の一覧 → 省力化で進める）を主にする。
+  // 録画の後に時間が余れば、補助金の候補の Word（その画面のセッションで作ったもの）を重ねる。録画は会話そのものなので、左下の呼び出しの行は出さない
+  const rec = recPlayer('sagasu', 's1-rec', 's1-recimg', 0.7);
+  const cc = rec.N ? () => {} : ccPanel('s1', 's1', 110, CC_TOP);
   scenes.s1 = async (l, d) => {
     stepHead($('s-s1'), l);
     cc(l, 2.4, d - 1.2);
-    const t0 = N ? recEnd - 0.3 : 0.8;   // 補助金の候補の Word を出す時刻
+    const t0 = rec.N ? (d - rec.end > 1.5 ? rec.end - 0.3 : 1e9) : 0.8;   // 補助金の候補の Word を出す時刻
     sheetIn($('s1-sheet'), l, t0);
     const sc = eInOut(prog(l, t0 + 1.2, d - 0.6));
     const h = $('s1-img').offsetHeight;
     $('s1-img').style.transform = `translateY(${-sc * 760}px)`;
     $('s1-img2').style.top = h + 'px'; $('s1-img2').style.transform = `translateY(${-sc * 760}px)`;
-    if (!N) return;
-    const rx = eOut(prog(l, R0 - 0.5, R0)) * (1 - prog(l, t0 + 0.3, t0 + 0.8));
-    $('s1-rec').style.opacity = rx; $('s1-rec').style.transform = `translateY(${(1 - eOut(prog(l, R0 - 0.5, R0))) * 40}px)`;
-    const k = Math.max(1, Math.min(N, 1 + Math.floor((l - R0) * FPS)));
-    const src = `out/assets/sagasu/f_${String(k).padStart(4, '0')}.jpg`;
-    if (recImg.dataset.src !== src) { recImg.dataset.src = src; recImg.src = src; await recImg.decode().catch(() => {}); }
+    await rec.draw(l, t0 + 0.3);
   };
 })();
 
@@ -522,16 +537,20 @@ const CC_TOP = 668;
     tbl(g.schedHead, g.sched, '2.4fr 2.1fr 1.7fr');
   const docRows = [...$('s2-docs').querySelectorAll('.gcell')], schRows = [...$('s2-sched').querySelectorAll('.gcell')];
   const cc = ccPanel('s2', 's2', 110, CC_TOP);
-  scenes.s2 = (l, d) => {
+  // 入口：公募要領（全38ページ）を読み、要件・義務をページつきの表にした実際の画面（録画があれば）
+  const rec = recPlayer('shirabe', 's2-rec', 's2-recimg', 0.6);
+  scenes.s2 = async (l, d) => {
     stepHead($('s-s2'), l);
-    sheetIn($('s2-sheet'), l, 0.8);
+    const ts = rec.N ? rec.end - 0.3 : 0.8;   // 概要と流れの Word を出す時刻
+    sheetIn($('s2-sheet'), l, ts);
     cc(l, 2.4, d - 1.2);
     // 「申請から効果報告までの流れと期限」の見出しから、流れの文と期日の表へ流す
     const y0 = D.assets.gaiyouY * $('s2-img').offsetHeight - 24;
-    $('s2-wrap').style.transform = `translateY(${-(y0 + eInOut(prog(l, 1.6, 4.4)) * 260)}px)`;
+    $('s2-wrap').style.transform = `translateY(${-(y0 + eInOut(prog(l, ts + 0.8, ts + 3.6)) * 260)}px)`;
     // 書類の一覧と日程の札を重ね、後ろの Word は少し下げる
     const caps = capsOf('s2');
-    const t1 = Math.max(3.6, (caps[1] !== undefined ? caps[1] : 2) + 2.2);
+    const t1 = Math.max(rec.N ? rec.end + 1.0 : 3.6, (caps[1] !== undefined ? caps[1] : 2) + 2.2);
+    await rec.draw(l, ts + 0.3);
     const back = eInOut(prog(l, t1 - 0.2, t1 + 0.6));
     $('s2-sheet').style.opacity = Math.min(parseFloat($('s2-sheet').style.opacity), 1 - back);
     show($('s2-docs'), eOut(prog(l, t1, t1 + 0.6)), 0, 60);
