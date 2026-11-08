@@ -123,10 +123,16 @@
 
   <!-- 冒頭：社長の道のり -->
   <div class="scene" id="s-road">
-    <div class="abs" id="road-lead" style="left:0;right:0;top:130px;text-align:center;">
-      <div id="road-l2" style="font-size:64px;font-weight:800;color:var(--teal);">補助金は、その後押し。</div>
+    <!-- 作者の実務（冒頭の1文） -->
+    <div class="abs" id="road-exp" style="left:0;right:0;top:300px;text-align:center;">
+      <div style="font-size:44px;font-weight:700;color:var(--sub)">補助金の申請や報告に困る経営者の相談を</div>
+      <div style="font-size:170px;font-weight:900;color:var(--teal);line-height:1.15"><span id="road-n" style="display:inline-block">100</span><span style="font-size:80px">件以上</span></div>
+      <div style="font-size:44px;font-weight:700;color:var(--sub)">受けてきました</div>
     </div>
-    <div class="abs" id="road-l3" style="left:0;right:0;top:130px;text-align:center;font-size:64px;font-weight:800;color:var(--coral)">でも、申請には5つの壁がある。</div>
+    <div class="abs" id="road-lead" style="left:0;right:0;top:130px;text-align:center;">
+      <div id="road-l2" style="font-size:64px;font-weight:800;color:var(--teal);">本当は、事業に集中したい。</div>
+    </div>
+    <div class="abs" id="road-l3" style="left:0;right:0;top:130px;text-align:center;font-size:64px;font-weight:800;color:var(--coral)">でも、補助金には5つの壁がある。</div>
     <svg class="abs" id="road-svg" width="1920" height="1080" style="left:0;top:0"></svg>
     <div id="road-signs"></div>
     <div id="road-papers"></div>
@@ -154,7 +160,7 @@
   <div class="scene" id="s-title">
     <div class="abs" id="logo" style="left:0;right:0;top:330px;text-align:center;font-size:200px;font-weight:800;letter-spacing:2px;">hojokin</div>
     <div class="abs" id="logo-bar" style="left:50%;top:632px;height:10px;border-radius:5px;background:var(--teal);"></div>
-    <div class="abs" id="tag" style="left:0;right:0;top:684px;text-align:center;font-size:42px;font-weight:700;color:var(--sub);">中小企業の社長が、補助金の申請を自分で進められるように</div>
+    <div class="abs" id="tag" style="left:0;right:0;top:684px;text-align:center;font-size:40px;font-weight:700;color:var(--sub);">中小企業の社長と担当者が、補助金の申請を自分で進め、本業に力を注げるように</div>
     <div class="abs" id="title-badge" style="left:50%;top:790px;transform-origin:50% 50%;margin-left:-210px;width:420px;text-align:center;padding:14px 0;border-radius:999px;background:var(--teal);color:#fff;font-size:30px;font-weight:800;box-shadow:0 12px 26px rgba(14,110,102,.3)">Claude Code のプラグイン</div>
   </div>
 
@@ -269,17 +275,19 @@
   <div class="scene" id="s-built">
     <div class="abs" id="built-no" style="left:110px;top:120px;font-size:26px;font-weight:800;letter-spacing:4px;color:var(--teal)">つくり方</div>
     <div class="abs" id="built-h" style="left:110px;top:166px;font-size:56px;font-weight:800">Claude Code の機能を、目的で使い分けて作った</div>
-    <div class="abs" id="built-uses" style="left:110px;top:290px;width:860px"></div>
-    <div class="abs" id="built-checks" style="left:1060px;top:300px;width:760px"></div>
+    <div class="abs" id="built-p" style="left:110px;top:252px;font-size:32px;font-weight:800;color:var(--coral)"></div>
+    <div class="abs" id="built-uses" style="left:110px;top:320px;width:860px"></div>
+    <div class="abs" id="built-checks" style="left:1060px;top:330px;width:760px"></div>
   </div>
 
   <!-- 終わり -->
   <div class="scene" id="s-end">
-    <div class="abs" id="end-use" style="left:0;right:0;top:120px;text-align:center;font-size:36px;font-weight:700;color:var(--teal)">公募のたびに、採択の後の報告まで、社長と担当者が使い続けられる。</div>
-    <div class="abs" id="end-lead" style="left:0;right:0;top:200px;text-align:center;font-size:50px;font-weight:800;line-height:1.5">複雑で分かりにくかった補助金の手続きを、<br>どの中小企業も、自分で進められるように。</div>
-    <div class="abs" id="end-logo" style="left:0;right:0;top:400px;text-align:center;font-size:170px;font-weight:800;letter-spacing:2px;">hojokin</div>
-    <div class="abs" id="end-url" style="left:0;right:0;top:650px;text-align:center;font-size:38px;color:var(--teal);font-weight:700" class="mono">github.com/tetsuroikeda/hojokin-oss</div>
-    <div class="abs" id="end-by" style="left:0;right:0;top:730px;text-align:center;font-size:26px;color:var(--sub);">Built with Claude Code ・ 会社と書類はすべて架空です</div>
+    <div class="abs" id="end-use" style="left:0;right:0;top:90px;text-align:center;font-size:34px;font-weight:700;color:var(--teal)">公募のたびに、採択の後の報告まで、社長と担当者が使い続けられる。</div>
+    <div class="abs" id="end-lead" style="left:0;right:0;top:160px;text-align:center;font-size:48px;font-weight:800;line-height:1.5">複雑で分かりにくかった補助金の手続きを、<br>どの中小企業も、自分で進められるように。</div>
+    <div class="abs" id="end-honbu" style="left:0;right:0;top:325px;text-align:center;font-size:56px;font-weight:900;color:var(--coral)">本業に、もっと力を。</div>
+    <div class="abs" id="end-logo" style="left:0;right:0;top:420px;text-align:center;font-size:170px;font-weight:800;letter-spacing:2px;">hojokin</div>
+    <div class="abs" id="end-url" style="left:0;right:0;top:665px;text-align:center;font-size:38px;color:var(--teal);font-weight:700" class="mono">github.com/tetsuroikeda/hojokin-oss</div>
+    <div class="abs" id="end-by" style="left:0;right:0;top:740px;text-align:center;font-size:26px;color:var(--sub);">Built with Claude Code ・ 会社と書類はすべて架空です</div>
   </div>
 
   <div id="journey"></div>
@@ -365,22 +373,25 @@ const scenes = {};
   const wishes = WISH.map(([w, side, x, y]) => { const e = mk('div', `wish ${side}`, w, $('road-wishes')); e.dataset.x = x; e.dataset.y = y; return e; });
   scenes.road = (l, d) => {
     const caps = capsOf('road');
-    // 文は2つ：「効率化、新しい事業、販路開拓。」「補助金はその後押しですが、申請には5つの壁があります。」
-    // 1つ目の文の間に、ねがいを3つ順に出す。2つ目の文の「申請には5つの壁」の所（文の4割ほど）から、道と壁を出す
-    const c0 = caps[0] !== undefined ? caps[0] : 0.4, c1 = caps[1] !== undefined ? caps[1] : 3.5;
-    const vEnd = T.road.voiceAt - T.road.start + T.road.voiceDur;
-    const tw = c1 + 0.4 * (vEnd - c1);
+    // 文の順：作者の実務（0）→ ねがい3つ（1〜3）→ 本当は、事業に集中したい（4）→ でも、5つの壁（5）。壁は語らず、絵で続けて出す
+    const cs = i => (caps[i] !== undefined ? caps[i] : 2 * i);
+    const tw = cs(5) + 0.3;
     // 壁を出す時刻（道が出てから、0.55 秒おき）
-    const c = i => (i < 6 ? tw - 0.6 : tw + 0.3 + (i - 6) * 0.55);
+    const c = i => (i < 5 ? cs(i) : i === 5 ? tw - 0.6 : tw + 0.2 + (i - 6) * 0.45);
+    // 作者の実務：「100件以上」を数え上げ、ねがいの文で消す
+    const ex = eOut(prog(l, 0.1, 0.6)) * (1 - prog(l, cs(1) - 0.4, cs(1) - 0.05));
+    $('road-exp').style.opacity = ex; $('road-exp').style.transform = `translateY(${(1 - eOut(prog(l, 0.1, 0.6))) * 30}px)`;
+    // 「100件以上」は作者の言葉どおりに（数え上げると途中で違う数が出るので、数は動かさず、弾ませて出す）
+    { const p = eBack(prog(l, 0.4, 0.9)); $('road-n').style.transform = `scale(${0.6 + 0.4 * p})`; }
     wishes.forEach((e, i) => {
-      const ti = lerp(c0, c1, i / 3) - 0.1;
+      const ti = cs(1 + i) - 0.1;
       const x = eBack(prog(l, ti, ti + 0.4)) * (1 - prog(l, tw - 0.8, tw - 0.3));
       e.style.opacity = clamp(x);
       e.style.left = (e.dataset.x - e.offsetWidth / 2) + 'px'; e.style.top = e.dataset.y + 'px';
       e.style.transform = `scale(${0.6 + 0.4 * clamp(x)}) translateY(${Math.sin(l * 2 + i) * 4}px)`;
     });
-    show($('road-l2'), eOut(prog(l, c1 - 0.1, c1 + 0.5)), 20);
-    // 「申請には5つの壁」で、「でも、申請には5つの壁がある。」に入れ替える
+    show($('road-l2'), eOut(prog(l, cs(4) - 0.1, cs(4) + 0.5)), 20);
+    // 「でも、5つの壁」で、「でも、補助金には5つの壁がある。」に入れ替える
     const up = eInOut(prog(l, tw - 0.7, tw - 0.2));
     $('road-lead').style.opacity = 1 - up;
     $('road-lead').style.transform = `translateY(${-up * 30}px)`;
@@ -409,7 +420,7 @@ const scenes = {};
     const sc = lerp(1.5, 0.62, mv);
     boss.style.left = (fx - 60) + 'px'; boss.style.top = (fy - 180) + 'px';
     boss.style.transform = `scale(${sc}) rotate(${shown ? Math.sin(l * 3) * 3 : 0}deg)`;
-    boss.style.opacity = eOut(prog(l, 0.2, 0.8));
+    boss.style.opacity = eOut(prog(l, cs(1) - 0.3, cs(1) + 0.3));
     // 汗（人手が足りない）と、問いが増えるほど増える「？」
     sweat.style.opacity = 0.5 + 0.5 * Math.sin(l * 4);
     sweat.style.transform = `translateY(${(l * 14) % 10}px)`;
@@ -761,14 +772,14 @@ async function seekTerm(local, d) {
     $('lm-fact').textContent = Math.round(D.learn.facts * eOut(prog(l, 2.4, 4.2)));
     $('lm-rule').textContent = Math.round(D.learn.ruleCount * eOut(prog(l, 2.4, 4.2)));
     rEls.forEach((e, i) => show(e, eOut(prog(l, 3.4 + i * 0.7, 3.9 + i * 0.7)), 15));
-    l2.forEach((e, i) => show(e, eOut(prog(l, 6.2 + i * 1.0, 6.7 + i * 1.0)), 0, 40));
+    l2.forEach((e, i) => show(e, eOut(prog(l, 5.0 + i * 0.9, 5.5 + i * 0.9)), 0, 40));
   };
 })();
 
 // ===== 始め方 =====
 scenes.start = (l, d) => {
   ['st1', 'st2', 'st3'].forEach((id, i) => { const x = eBack(prog(l, 0.5 + i * 1.6, 1.1 + i * 1.6)); const e = $(id); e.style.opacity = clamp(x); e.style.transform = `translateY(${(1 - x) * 80}px)`; });
-  show($('st-note'), eOut(prog(l, 6.0, 6.6)), 15);
+  show($('st-note'), eOut(prog(l, 4.6, 5.2)), 15);
 };
 
 // ===== 作り方 =====
@@ -782,9 +793,11 @@ scenes.start = (l, d) => {
       <div><div style="font-size:24px;font-weight:800;color:var(--sub)">なし</div><div id="bc-without" style="font-size:120px;font-weight:900;color:var(--sub);line-height:1">0%</div></div></div>
     <div style="font-size:21px;font-weight:600;color:var(--sub);margin-top:8px">${B.ablation.note}</div>
     <div style="font-size:26px;font-weight:800;color:var(--ink);margin-top:40px">自動のテスト（pytest）</div><div style="font-size:72px;font-weight:900;line-height:1.1"><span id="bc-tests">0</span><span style="font-size:32px">件が通過</span></div>`;
+  $('built-p').textContent = B.principle;
   scenes.built = (l, d) => {
     show($('built-no'), eOut(prog(l, 0, 0.4)), 10);
     show($('built-h'), eOut(prog(l, 0.1, 0.6)), 20);
+    show($('built-p'), eOut(prog(l, 0.3, 0.8)), 15);
     uses.forEach((e, i) => show(e, eOut(prog(l, 0.4 + i * 0.35, 0.8 + i * 0.35)), 0, -30));
     show($('built-checks'), eOut(prog(l, 1.2, 1.7)), 20);
     const x = eOut(prog(l, 1.4, 3.2));
@@ -798,12 +811,14 @@ scenes.start = (l, d) => {
 scenes.end = (l, d) => {
   // 1つ目の文（使い続ける場面）を先に、2つ目の文で締めの言葉とロゴを出す
   const caps = capsOf('end');
-  const t1 = (caps[1] !== undefined ? caps[1] : 4) - 0.2;
+  // 字幕の順：使い続ける（0）→ 締めの言葉（1・2。長いので2つに分かれる）→ 本業に、もっと力を（3）→ hojokin（4）
+  const at = i => (caps[i] !== undefined ? caps[i] : 3 * i) - 0.2;
   show($('end-use'), eOut(prog(l, 0.1, 0.7)), 20);
-  show($('end-lead'), eOut(prog(l, t1, t1 + 0.7)), 20);
-  const x = eOut(prog(l, t1 + 0.7, t1 + 1.4)); $('end-logo').style.opacity = x; $('end-logo').style.transform = `translateY(${(1 - x) * 30}px)`;
-  show($('end-url'), eOut(prog(l, t1 + 1.5, t1 + 2.1)), 15);
-  show($('end-by'), eOut(prog(l, t1 + 2.1, t1 + 2.7)), 15);
+  show($('end-lead'), eOut(prog(l, at(1), at(1) + 0.7)), 20);
+  const h = eBack(prog(l, at(3), at(3) + 0.5)); $('end-honbu').style.opacity = clamp(h); $('end-honbu').style.transform = `scale(${0.7 + 0.3 * h})`;
+  const x = eOut(prog(l, at(4), at(4) + 0.7)); $('end-logo').style.opacity = x; $('end-logo').style.transform = `translateY(${(1 - x) * 30}px)`;
+  show($('end-url'), eOut(prog(l, at(4) + 0.8, at(4) + 1.4)), 15);
+  show($('end-by'), eOut(prog(l, at(4) + 1.4, at(4) + 2.0)), 15);
 };
 
 // ===== 字幕 =====
