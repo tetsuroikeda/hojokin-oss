@@ -295,12 +295,3 @@ def threshold_literal(threshold: Decimal) -> str:
     except (InvalidOperation, ValueError):
         raise YoukenError(f"基準の数 {threshold} を式に書けません")
     return text
-
-
-def requirement_rows(reqs: Sequence[Requirement]) -> Dict[str, List[Requirement]]:
-    """指標ごとに、判定する要件を並べる。"""
-    out: Dict[str, List[Requirement]] = {}
-    for req in reqs:
-        if req.judged and req.indicator is not None:
-            out.setdefault(req.indicator, []).append(req)
-    return out

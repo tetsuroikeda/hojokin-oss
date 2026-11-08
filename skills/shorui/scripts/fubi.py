@@ -41,7 +41,6 @@ TYPES_FILE = PLUGIN_ROOT / "knowledge" / "不備の型.json"
 RECORD_PATH = "記録/不備の一覧.json"
 WEIGHTS = ("重大", "要確認", "助言")
 NAME_KEYS = ("社名", "所在地", "代表者")
-ORDER_KINDS = ("注文書", "発注書", "契約書", "注文請書", "発注")
 
 
 def nfc(text) -> str:

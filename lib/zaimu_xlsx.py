@@ -138,25 +138,3 @@ def read_values(path: Path) -> Dict[Tuple[str, str], Any]:
         return {(ws.title, c.coordinate): c.value for ws in wb.worksheets for row in ws.iter_rows() for c in row}
     finally:
         wb.close()
-
-
-def read_formulas(path: Path) -> Dict[Tuple[str, str], Any]:
-    """数式（と数式でない値）を、(シート, セル) ごとに読む。"""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        wb = openpyxl.load_workbook(str(path), data_only=False)
-    try:
-        return {(ws.title, c.coordinate): c.value for ws in wb.worksheets for row in ws.iter_rows() for c in row}
-    finally:
-        wb.close()
-
-
-def read_names(path: Path) -> Dict[str, str]:
-    """名前を付けたセル（名前 → 指す場所）。"""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        wb = openpyxl.load_workbook(str(path))
-    try:
-        return {name: dn.attr_text for name, dn in wb.defined_names.items()}
-    finally:
-        wb.close()
