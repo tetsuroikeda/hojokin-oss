@@ -1,6 +1,7 @@
 // video.html を 30fps で1コマずつ撮り、ffmpeg に流して音のない mp4 にする。
 // 使い方：node render.mjs <video.html> <出力.mp4> <全体の秒数> [始めの秒] [終わりの秒]
 // この Mac の Google Chrome を使う（Chromium を落とさない）。puppeteer-core は docs/video/ で npm install する。
+// 環境変数 HOJOKIN_VIDEO_SCALE=2 で、画面の倍率を 2 にして 3840×2160（4K）で撮る（拡大ではなく、細かく描く）。既定は 1（1920×1080）。
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import puppeteer from 'puppeteer-core';
@@ -11,12 +12,14 @@ const total = Number(totalArg);
 const from = Number(fromArg || 0);
 const to = Number(toArg || total);
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const SCALE = Number(process.env.HOJOKIN_VIDEO_SCALE || 1);
+if (![1, 2].includes(SCALE)) { console.error('HOJOKIN_VIDEO_SCALE は 1 か 2 にしてください'); process.exit(1); }
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
-  args: ['--allow-file-access-from-files', '--hide-scrollbars', '--force-device-scale-factor=1', '--font-render-hinting=none'],
-  defaultViewport: { width: 1920, height: 1080, deviceScaleFactor: 1 },
+  args: ['--allow-file-access-from-files', '--hide-scrollbars', `--force-device-scale-factor=${SCALE}`, '--font-render-hinting=none'],
+  defaultViewport: { width: 1920, height: 1080, deviceScaleFactor: SCALE },
 });
 const page = await browser.newPage();
 page.on('pageerror', e => { console.error('ページの誤り:', e.message); process.exit(1); });
