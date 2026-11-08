@@ -230,7 +230,7 @@ def is_draft(row: dict) -> bool:
     if tool == "Bash":
         command = str(given.get("command") or "")
         for m in DRAFT_BASH.finditer(command):
-            rest = re.split(r"\n|;|\||&&", command[m.start():], 1)[0]
+            rest = re.split(r"\n|;|\||&&", command[m.start():], maxsplit=1)[0]
             if "--help" not in rest:  # 使い方を見ただけのものは、書いたものに数えない
                 return True
         return False

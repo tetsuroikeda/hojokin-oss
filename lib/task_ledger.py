@@ -16,7 +16,14 @@
      "状態": "依頼した", "頼む人": "社長", "依頼した日": "2026-11-18", "届いた日": "", "届いた書類": "",
      "記録した日": "2026-11-18"}
 
-- 同じ案件・同じ種類・同じ書類の作業は1件。書くたびに、その1件を書き換える（前の中身は版の履歴に残る）。
+作業の1件（「提出」の種類。事務局などが日付で示した期限。差し戻しの出し直しの期限など。11/7 に足した）
+
+    {"種類": "提出", "案件": "2026_省力化（一般型）第9回", "名前": "差し戻しの出し直し", "期限": "2027-06-11",
+     "出典": "原本/役所からの通知/2027-06-02_差し戻し.txt", "状態": "まだ", "記録した日": "2027-06-03"}
+
+  計算できない日付（通知の中の事実）なので、出来事の日付と同じく、出典と一緒に台帳に残す。状態は、まだ・済み。
+
+- 同じ案件・同じ種類・同じ書類の作業は1件。書くたびに、その1件を書き換える（前の中身は版の履歴に残る）。「提出」は、同じ名前で1件。
 - 状態は、まだ・依頼した・待っている・届いた・済み（DESIGN 4.5）。だれがするかは、社長・担当者・外部。
   依頼では、頼む人（社長か担当者）を「頼む人」に、書く人（外部）を「依頼先」から示す。
 - ほかの欄・ほかの並び（出来事など）は、書くときに消さない。
@@ -135,6 +142,70 @@ def parse_request(entry: Any) -> Optional[Request]:
         extra={k: v for k, v in entry.items() if k not in KNOWN_FIELDS})
 
 
+SUBMIT = "提出"
+DUE_STATES = (NOT_YET, DONE)  # 日付で示された期限の状態
+
+
+@dataclass
+class FixedDue:
+    """事務局などが日付で示した期限の1件（台帳の「作業」のうち、種類が「提出」のもの。差し戻しの出し直しの期限など）。
+
+    制度データの期限の決め方から計算する期限と違い、日付そのものが通知の中の事実なので、出典と一緒に台帳に残す
+    （出来事の日付と同じ扱い。11/7 の採択後の通しで、差し戻しの出し直しの期限 6/11 が期限の一覧に出せなかった）。
+    """
+
+    case: str
+    name: str  # 期限の名前（「差し戻しの出し直し」）
+    day: date
+    source: str = ""  # 出典（通知の原本の場所か、社長の答え）
+    state: str = NOT_YET  # まだ・済み
+    recorded: str = ""
+    extra: Dict[str, Any] = field(default_factory=dict)  # ほかの欄（消さずに残す）
+
+    def to_json(self) -> Dict[str, Any]:
+        out = dict(self.extra)
+        out.update({"種類": SUBMIT, "案件": self.case, "名前": self.name, "期限": self.day.isoformat(),
+                    "出典": self.source, "状態": self.state, "記録した日": self.recorded})
+        return out
+
+    @property
+    def finished(self) -> bool:
+        return self.state in FINISHED
+
+
+DUE_FIELDS = ("種類", "案件", "名前", "期限", "出典", "状態", "記録した日")
+
+
+def parse_due(entry: Any) -> Optional[FixedDue]:
+    if not isinstance(entry, dict) or entry.get("種類") != SUBMIT:
+        return None
+    case, name, day = entry.get("案件"), entry.get("名前"), _date(entry.get("期限"))
+    if not isinstance(case, str) or not case.strip() or not isinstance(name, str) or not name.strip() or day is None:
+        return None
+    state = entry.get("状態") if entry.get("状態") in DUE_STATES else NOT_YET
+    return FixedDue(case=nfc(case.strip()), name=nfc(name.strip()), day=day, source=str(entry.get("出典") or ""),
+                    state=state, recorded=str(entry.get("記録した日") or ""),
+                    extra={k: v for k, v in entry.items() if k not in DUE_FIELDS})
+
+
+def dues_by_case(folder: Path) -> Tuple[Dict[str, List[FixedDue]], str]:
+    """案件ごとの、日付で示された期限と、読めなかったわけ（読めたら空）。例外は出さない。"""
+    try:
+        data = load(Path(folder))
+    except TaskLedgerError as error:
+        return {}, f"{error}（記録した期限を使わずに、期限を組み立てました）"
+    found: Dict[str, List[FixedDue]] = {}
+    for entry in data.get(TASKS_KEY) or []:
+        due = parse_due(entry)
+        if due is not None:
+            found.setdefault(due.case, []).append(due)
+    return found, ""
+
+
+def find_due(dues: List[FixedDue], name: str) -> Optional[FixedDue]:
+    return next((d for d in dues if same_doc(d.name, name)), None)
+
+
 def same_doc(a: str, b: str) -> bool:
     """台帳の1件を見分けるための、書類の名前の比べ方（NFKC と空白だけをそろえる。似た名前の別の書類と混ぜない）。"""
     def key(text: str) -> str:
@@ -188,6 +259,31 @@ def save_request(folder: Path, req: Request) -> Optional[Request]:
         raise TaskLedgerError(f"依頼の状態（{req.state}）は、{'・'.join(STATES)} のどれかにしてください")
     if req.asker and req.asker not in WHO:
         raise TaskLedgerError(f"頼む人（{req.asker}）は、{'・'.join(ASKERS)} のどちらかにしてください")
+
+    def same(entry: Any) -> Optional[Request]:
+        old = parse_request(entry)
+        return old if old is not None and old.case == nfc(req.case) and same_doc(old.doc, req.doc) else None
+
+    return _replace(folder, same, req.to_json())
+
+
+def save_due(folder: Path, due: FixedDue) -> Optional[FixedDue]:
+    """日付で示された期限を1件残す（同じ案件・同じ名前のものがあれば書き換える）。前に残っていた1件を返す。
+
+    別名があるとき、台帳が読めないときは、何も書かずに TaskLedgerError（save_request と同じ）。
+    """
+    if due.state not in DUE_STATES:
+        raise TaskLedgerError(f"期限の状態（{due.state}）は、{'・'.join(DUE_STATES)} のどちらかにしてください")
+
+    def same(entry: Any) -> Optional[FixedDue]:
+        old = parse_due(entry)
+        return old if old is not None and old.case == nfc(due.case) and same_doc(old.name, due.name) else None
+
+    return _replace(Path(folder), same, due.to_json())
+
+
+def _replace(folder: Path, same, new: Dict[str, Any]):
+    """台帳の作業のうち same が当たる件を new に置き換える（なければ足す）。前の1件（same の返した値）を返す。"""
     problem = place_text.write_problem(folder, event_ledger.LEDGER_FILE, LEDGER_ACTION)
     if problem:
         raise TaskLedgerError(problem)
@@ -195,12 +291,12 @@ def save_request(folder: Path, req: Request) -> Optional[Request]:
     kept: List[Any] = []
     previous = None
     for entry in _tasks(data):
-        old = parse_request(entry)
-        if old is not None and old.case == nfc(req.case) and same_doc(old.doc, req.doc):
+        old = same(entry)
+        if old is not None:
             previous = previous or old
             continue
         kept.append(entry)
-    kept.append(req.to_json())
+    kept.append(new)
     data[TASKS_KEY] = kept
     try:
         event_ledger.write(folder, data)

@@ -3,9 +3,12 @@
 
 画面（lib/status_view.py の render_page）と Excel（今の状態.xlsx）は、どちらもここの行から作るので、同じ値が入る。
 
-- 工程表：案件ごとに、期限の日付が出せる手続きの段階を横の帯で並べる（帯は、前の段階の期限の次の日から、その段階の期限まで。
-  いちばん前の段階は期限の日だけ）。繰り返しの報告（効果報告）は、回ごとに提出期間の帯にする。列は月ごと。期限の月に印（◆）、
-  今日の月の列に今日の線。複数の案件を1つの表に並べる。外の部品（ライブラリや外のサイト）は読まない。
+- 工程表：案件ごとに、期限の日付が出せる手続きの段階を横の帯で並べる。帯は、段階が始まる出来事（始まる条件の交付決定日、
+  期限の決め方の採択発表日など）の日付から、その段階の期限まで。始まる出来事の日付が分からなければ見込み（斜線の帯）とし、
+  前の段階の期限の次の日・台帳に残した出来事の日付・今日のうち遅い日から（確定した前の出来事より前には塗らない。_stage_start）。
+  始まる出来事のない段階は、前の段階の期限の次の日から（いちばん前の段階は期限の日だけ）。繰り返しの報告（効果報告）は、
+  回ごとに提出期間の帯にする。通知に日付で書かれた期限（差し戻しの出し直しなど）は、期限の月の印だけ。列は月ごと。
+  期限の月に印（◆）、今日の月の列に今日の線。複数の案件を1つの表に並べる。外の部品（ライブラリや外のサイト）は読まない。
 - 書類：原本（書類の台帳の原本。案件をまたいで1か所）、写し（書類の台帳の写し。元の原本と、その原本より新しい原本があるか）、
   申請書（段階のフォルダの「申請書」の中のファイル）。場所、提出版（その書類が入ったいちばん新しい提出版）、最後に変えた日
   （原本は整理した日、写しは作った日、申請書はファイルを最後に保存した日）。
@@ -277,6 +280,7 @@ class Bar:
     end: date
     due_label: str
     state: str  # 済み・今・これから・提出済み など
+    estimate: bool = False  # 始まりの日が見込み（始まる出来事の日付が未定か予定）。帯を斜線にして区別する
 
 
 def _month(day: date) -> Tuple[int, int]:
@@ -290,6 +294,31 @@ def _months(first: date, last: date) -> List[Tuple[int, int]]:
         out.append((y, m))
         y, m = (y + 1, 1) if m == 12 else (y, m + 1)
     return out
+
+
+ESTIMATE_STATE = "始まりは見込み"  # 状態の欄に添える語（始まる出来事の日付が未定か予定のとき）
+
+
+def _stage_start(row: deadlines.StageRow, d: deadlines.Due, previous: Optional[date], case: deadlines.CaseStatus,
+                 today: date) -> Tuple[date, bool]:
+    """段階の帯の始まりの日と、見込みか（11/7 の採択後の通し：補助事業の実施の帯が、採択より前の 2027-01 から塗られた）。
+
+    - 始まる出来事（交付決定日など）の日付が分かれば、その日から（予定の日付なら見込み）。
+    - 始まる出来事があるのに日付が分からなければ、見込み。前の段階の期限の次の日、期限の台帳に残した出来事の日付
+      （採択発表日など。確定した前の出来事より前には塗らない）、今日（期限が過ぎていなければ）のうち、いちばん遅い日から。
+    - 始まる出来事がない段階（申請など）は、今までどおり前の段階の期限の次の日から（いちばん前の段階は期限の日だけ）。
+    どの始まりも、期限の終わりの日より後にはしない。
+    """
+    if row.start is not None and row.start.dated:
+        return min(row.start.first, d.last), row.start.estimate
+    if row.start_event:
+        floor = [previous + timedelta(days=1)] if previous is not None else []
+        floor += list(case.event_days)
+        if today <= d.last:
+            floor.append(today)
+        return min(max(floor), d.last) if floor else d.first, True
+    start = previous + timedelta(days=1) if previous is not None and previous < d.last else d.first
+    return min(start, d.first), False
 
 
 def bars(ov: deadlines.Overview) -> List[Bar]:
@@ -306,10 +335,16 @@ def bars(ov: deadlines.Overview) -> List[Bar]:
             d = row.due
             if d is None or not d.dated:
                 continue
-            start = previous + timedelta(days=1) if previous is not None and previous < d.last else d.first
-            out.append(Bar(case=case.name, label=row.name, start=min(start, d.first), end=d.last, due_label=d.label(),
-                           state=row.state))
+            start, estimate = _stage_start(row, d, previous, case, ov.today)
+            state = f"{row.state}。{ESTIMATE_STATE}" if estimate and row.state != "済み" else row.state
+            out.append(Bar(case=case.name, label=row.name, start=start, end=d.last, due_label=d.label(), state=state,
+                           estimate=estimate and row.state != "済み"))
             previous = d.last
+        # 通知に日付で書かれた期限（差し戻しの出し直しなど。期限の台帳の「提出」）は、期限の月の印だけ
+        for t in sorted((t for t in case.tasks if t.fixed and t.due.dated), key=deadlines.Task.sort_key):
+            name = t.what[:-len("の期限")] if t.what.endswith("の期限") else t.what
+            out.append(Bar(case=case.name, label=name, start=t.due.first, end=t.due.last, due_label=t.due.label(),
+                           state="済み" if t.done else "これから"))
     return out
 
 
@@ -324,13 +359,13 @@ def gantt(ov: deadlines.Overview) -> Tuple[List[Tuple[int, int]], List[Bar]]:
 
 
 def cells(months: List[Tuple[int, int]], bar: Bar, today: date) -> List[str]:
-    """帯の1行の、月ごとの印（"" 空・"bar" 帯・"mark" 期限の月）。"""
+    """帯の1行の、月ごとの印（"" 空・"bar" 帯・"est" 見込みの帯・"mark" 期限の月）。"""
     out = []
     for ym in months:
         if ym == _month(bar.end):
             out.append("mark")
         elif _month(bar.start) <= ym < _month(bar.end):
-            out.append("bar")
+            out.append("est" if bar.estimate else "bar")
         else:
             out.append("")
     return out
@@ -407,7 +442,8 @@ def book(folder: Path, ov: deadlines.Overview) -> bytes:
         marks = cells(months, b, today)
         gantt_rows.append([b.case, b.label, b.due_label, b.state]
                           + [("◆", x.MARK) if m == "mark" else (("", x.BAR) if m == "bar" else
-                                                                 (("", x.TODAY) if months[i] == today_col else ""))
+                                                                 (("", x.ESTIMATE) if m == "est" else
+                                                                  (("", x.TODAY) if months[i] == today_col else "")))
                              for i, m in enumerate(marks)])
     if not found:
         gantt_rows.append(["期限の日付が出せる手続きの段階がまだありません"])
