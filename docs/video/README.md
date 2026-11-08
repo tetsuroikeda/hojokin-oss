@@ -67,7 +67,12 @@ hojokin の紹介動画を、コードで作る道具です。映像・字幕・
    ```
    出来たものは `docs/video/out/hojokin_demo.mp4`。
 
-旗：`--provider gemini|vertex|say`（声を作る先）、`--keep-voice`（out/voice/ の声をそのまま使う。人の声に差し替えるとき）、`--no-video`（映像を撮らない）、`--keep-video`（撮った映像を使い回し、音だけ重ね直す）。
+旗：`--provider gemini|vertex|say`（声を作る先）、`--keep-voice`（out/voice/ の声をそのまま使う。人の声に差し替えるとき）、`--no-video`（映像を撮らない）、`--keep-video`（撮った映像を使い回し、音だけ重ね直す）、`--4k`（3840×2160 で撮る。下の「4K で書き出す」）。
+
+4K で書き出す（YouTube に上げるとき。YouTube は 4K の動画に高い画質の圧縮を割り当てるので、1080p で見ても文字がにじみにくい）：
+- render.mjs が画面の倍率を 2 にして、本物の 4K で描きます（ffmpeg で拡大するのではない）。render.mjs だけを動かすときは、環境変数 `HOJOKIN_VIDEO_SCALE=2` を付けます。
+- PDF の画像は倍の細かさ（220dpi）で作ります。録画は、材料のフォルダの `sagasu_clip_4k.mp4`・`shirabe_clip_4k.mp4`・`nyuryoku_clip_4k.mp4` を使います。`_clip.mp4` と同じ区間・同じ速さで、縮めずに（入力は 2292×1620 に）切り出したもので、コマの数は同じです。無いときは `_clip.mp4` を拡大して出し、build.py が注意を出します。
+- 出来たものは `docs/video/out/hojokin_demo_4k.mp4`。1080p の `hojokin_demo.mp4` は上書きしません。声と時刻は 1080p と同じです。
 
 声の鍵：`gemini` は環境変数 `GEMINI_API_KEY`（無ければ `HOJOKIN_TTS_ENV` の .env）。`vertex` は `gcloud auth login` 済みで、`HOJOKIN_TTS_PROJECT` に Google Cloud のプロジェクト（Vertex AI の API を有効にしたもの）を渡す。gcloud の既定と別のアカウントで送るときは `HOJOKIN_TTS_ACCOUNT` にアカウントを渡す（gcloud の設定は変えない）。鍵はリポに置きません。
 
@@ -87,5 +92,5 @@ hojokin の紹介動画を、コードで作る道具です。映像・字幕・
 | tts.py | 台詞を声にする（本文だけを送る。1秒あたりの字数が外れたら作り直す） |
 | rec_terminal.py | 本物の Claude Code を疑似端末で動かして記録する（作者の全体の設定は読まない） |
 | make_bgm.py | BGM を numpy で作る（冒頭はマリンバの疎らな旋律、本編は D–A–Bm–G の明るい進行） |
-| render.mjs | video.html を 30fps で撮って mp4 にする |
+| render.mjs | video.html を 30fps で撮って mp4 にする（`HOJOKIN_VIDEO_SCALE=2` で 4K） |
 | stills.mjs | 確かめ用に、指定した秒の静止画を撮る |
