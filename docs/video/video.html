@@ -290,6 +290,8 @@
     <div class="abs" id="built-p" style="left:110px;top:252px;font-size:32px;font-weight:800;color:var(--coral)"></div>
     <div class="abs" id="built-uses" style="left:110px;top:320px;width:860px"></div>
     <div class="abs" id="built-checks" style="left:1060px;top:330px;width:760px"></div>
+    <!-- 確かめた制度（作者の直し） -->
+    <div class="abs" id="built-scope" style="left:110px;top:885px;width:1700px;font-size:25px;font-weight:700;color:var(--ink);background:var(--paper2);border-radius:12px;padding:12px 20px"></div>
   </div>
 
   <!-- 終わり -->
@@ -860,12 +862,14 @@ scenes.start = (l, d) => {
     <div style="font-size:21px;font-weight:600;color:var(--sub);margin-top:8px">${B.ablation.note}</div>
     <div style="font-size:26px;font-weight:800;color:var(--ink);margin-top:40px">自動のテスト（pytest）</div><div style="font-size:72px;font-weight:900;line-height:1.1"><span id="bc-tests">0</span><span style="font-size:32px">件が通過</span></div>`;
   $('built-p').textContent = B.principle;
+  $('built-scope').textContent = B.scope || '';
   scenes.built = (l, d) => {
     show($('built-no'), eOut(prog(l, 0, 0.4)), 10);
     show($('built-h'), eOut(prog(l, 0.1, 0.6)), 20);
     show($('built-p'), eOut(prog(l, 0.3, 0.8)), 15);
     uses.forEach((e, i) => show(e, eOut(prog(l, 0.4 + i * 0.35, 0.8 + i * 0.35)), 0, -30));
     show($('built-checks'), eOut(prog(l, 1.2, 1.7)), 20);
+    show($('built-scope'), eOut(prog(l, 2.4, 2.9)), 15);
     const x = eOut(prog(l, 1.4, 3.2));
     $('bc-with').textContent = Math.round(B.ablation.with * x) + '%';
     $('bc-without').textContent = Math.round(B.ablation.without * x) + '%';
